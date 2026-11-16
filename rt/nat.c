@@ -3,7 +3,7 @@ Natural numbers that fit in a machine word.
 
 Compiled Lean does small-number arithmetic inline and comes here only when a number is, or might become,
 too large for that. The operations below are the ones it calls for every operand, small or not. Their
-small cases are answered here; an operand or a result that is not small goes to the big-number code (big.c).
+small cases are answered here; an operand or a result that is not small goes to the big-number code (Mini/Number.lean).
 
 A small natural number is below 2^63 and travels as a tagged word, not a pointer.
 */

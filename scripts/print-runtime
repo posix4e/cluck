@@ -3,8 +3,8 @@
 #
 #   scripts/print-runtime <directory>
 #
-# The allocator and the freeing of objects are written in a small language in Lean (Mini/Alloc.lean,
-# Mini/Free.lean). Their C is printed whenever the runtime is built and is not kept in the repository, so
+# The allocator, the freeing of objects and what a big number is in memory are written in a small language in
+# Lean (Mini/Alloc.lean, Mini/Free.lean, Mini/Number.lean). Their C is printed whenever the runtime is built and is not kept in the repository, so
 # there is one text to read and change. Needs `lake build mini-print`, in this project or in the one that
 # has it as a dependency.
 set -euo pipefail
@@ -14,6 +14,6 @@ printer=.lake/build/bin/mini-print
 [ -x "$printer" ] || printer="$os/.lake/build/bin/mini-print"
 [ -x "$printer" ] || { echo "print-runtime: no mini-print (run: lake build mini-print)" >&2; exit 2; }
 mkdir -p "$to"
-for part in alloc free; do
+for part in alloc free number; do
   "$printer" "$part" > "$to/$part.c"
 done

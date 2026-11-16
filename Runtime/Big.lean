@@ -1,7 +1,7 @@
 /-! # Arithmetic on numbers too large for a machine word
 
 Compiled Lean keeps a natural number below 2^63 in a tagged word and does the arithmetic inline. For
-anything larger it calls the runtime. This is that arithmetic: `rt/big.c` knows how such a number is laid
+anything larger it calls the runtime. This is that arithmetic: `Mini/Number.lean` knows how such a number is laid
 out in memory and what a result has to look like, and hands the limbs here for everything else.
 
 A number is its limbs, 32 bits each, least significant first. A limb is widened to 64 bits to be worked on,

@@ -1,8 +1,8 @@
 /*
-What nat.c needs from big.c.
+What nat.c needs from the big-number code (Mini/Number.lean).
 
 nat.c answers `<<<`, `^`, `log2` and "a Nat as a size" itself when everything stays below 2^63, and comes
-here for the rest. Everything else in big.c is called by compiled Lean directly, under the names
+here for the rest. Everything else there is called by compiled Lean directly, under the names
 <lean/lean.h> declares.
 */
 #pragma once

@@ -96,8 +96,8 @@ the image.
 - [ ] Shifts, `and`, `or`, powers.
 - [ ] Division. Knuth's algorithm D; the long one.
 - [ ] `Runtime/Utf8.lean` against a plain statement of UTF-8.
-- [ ] That `rt/big.c` hands the arithmetic the right limbs and reads its answer rightly: that is C, and
-      tested, not proved.
+- [ ] That `Mini/Number.lean` hands the arithmetic the right limbs and reads its answer rightly: tested, not
+      proved.
 
 ### The code under Lean, written in Lean
 
@@ -118,7 +118,9 @@ printed. What is reasoned about and what is compiled are then the same text.
 - [ ] That the printer and the C compiler keep the meaning. Trusted; the printer is about 100 lines.
 - [x] Giving up references and freeing (`Mini/Free.lean`): the same checks as the allocator's
       printed C. Not yet run as the language defines it, and nothing proved.
-- [ ] Making objects permanent, and arrays (`rt/object.c`, `rt/array.c`) in it.
+- [x] What a number too large for a word is in memory (`Mini/Number.lean`), in place of `rt/big.c`.
+- [ ] The rest of `rt/`, a file at a time: making objects permanent, arrays, closures, strings, hashing.
+      Calling a function through its address, and floating-point bits, need the language to grow first.
 
 ### Hardening the OS, before anything secret runs on it
 

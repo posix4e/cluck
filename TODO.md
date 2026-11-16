@@ -124,10 +124,14 @@ printed. What is reasoned about and what is compiled are then the same text.
 - [x] `rt_free` for a block of a small class that is in use (`free_small`), for every such state: it marks
       the block free, writes zero over every byte it held (the loop, for any size: `zero_loop`), links it in
       front of its class's list, and changes nothing else.
+- [x] The first of the invariant (`Mini/AllocHeap.lean`): a heap is in order when the blocks handed out so far
+      lie one after another from where it began, each behind a header that says its class and state. A small
+      request served from fresh heap keeps it in order with the new block added (`malloc_fresh_in_order`):
+      so such a block shares no byte with any handed out before, and every earlier header is untouched.
 - [ ] The proofs that matter: that the allocator never fails for any sequence of requests, that blocks in
-      use never overlap, that a freed block is zero. They need an invariant over the heap and the free
-      lists, kept by `rt_malloc` and `rt_free`: the three theorems above say what each call does to a state,
-      and the invariant is what ties one call's result to the next call's conditions. Also unproved: large
+      use never overlap, that a freed block is zero. The invariant has to grow to cover the free lists (each
+      a chain of freed blocks of its class, each freed block on exactly one) and be shown to survive
+      `malloc_reuse` and `free_small`; then any sequence of calls is covered, not one call at a time. Also unproved: large
       blocks (the loop that finds a power of two), and the first use of the heap.
 - [ ] That the printer and the C compiler keep the meaning. Trusted; the printer is about 100 lines.
 - [x] Giving up references and freeing (`Mini/Free.lean`): the same checks as the allocator's

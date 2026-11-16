@@ -81,6 +81,24 @@ the image.
 - [x] Lean images build on any host, given an unpacked x86-64 Linux Lean release (`scripts/build-bare`). The
       measurements that count are those of the image built on x86-64 Linux, as CI does.
 
+### Proofs about the runtime's Lean
+
+`Runtime/BigProofs.lean`, checked by the build, on Lean's three standard axioms.
+
+- [x] What number a row of limbs is, and that `trim` leaves it as it was.
+- [x] `add` returns the limbs of the sum; `sub` of the difference where there is one; subtraction of
+      natural numbers stops at zero.
+- [x] `mul` returns the limbs of the product.
+- [x] `compare` says which of two numbers is larger.
+- [x] One more decimal digit is times ten plus the digit.
+- [x] Signed multiplication.
+- [ ] Signed addition and comparison: follow from the above; not written.
+- [ ] Shifts, `and`, `or`, powers.
+- [ ] Division. Knuth's algorithm D; the long one.
+- [ ] `Runtime/Utf8.lean` against a plain statement of UTF-8.
+- [ ] That `rt/big.c` hands the arithmetic the right limbs and reads its answer rightly: that is C, and
+      tested, not proved.
+
 ### Hardening the OS, before anything secret runs on it
 
 Nothing is open here.

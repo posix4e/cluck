@@ -393,4 +393,24 @@ theorem natSub_value (a b : Limbs) (ta : Trimmed a) (tb : Trimmed b) : value (na
     · simp only [h1, h2, ↓reduceIte, show ((2 : UInt8) == 2) = true from rfl]
       exact sub_value a b (by omega)
 
+/-! ## Integers -/
+
+/-- The integer with this sign and these limbs. -/
+def intOf (negative : Bool) (limbs : Limbs) : Int := if negative then -(value limbs : Int) else value limbs
+
+/-- The integer a result is: its limbs, then one more element that is not zero if it is below zero. -/
+def signedValue (r : Limbs) : Int := intOf (r.getD (r.size - 1) 0 != 0) r.pop
+
+theorem signedValue_signed (negative : Bool) (limbs : Limbs) :
+    signedValue (signed negative limbs) = intOf negative limbs := by
+  cases negative <;> simp [signedValue, signed, low, Array.getD]
+
+/-- A sign as the runtime passes it: 0, or 1 for a number below zero. -/
+def IsSign (s : UInt8) : Prop := s = 0 ∨ s = 1
+
+theorem intMul_value (an : UInt8) (a : Limbs) (bn : UInt8) (b : Limbs) (ha : IsSign an) (hb : IsSign bn) :
+    signedValue (intMul an a bn b) = intOf (an != 0) a * intOf (bn != 0) b := by
+  rw [intMul, signedValue_signed]
+  rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;> simp [intOf, mul_value, Int.natCast_mul, Int.mul_neg, Int.neg_mul]
+
 end Runtime.Big

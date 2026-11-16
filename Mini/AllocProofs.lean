@@ -1,4 +1,5 @@
 import Mini.Run
+import Mini.Memory
 import Mini.Alloc
 
 /-! # What is proved about the allocator
@@ -72,5 +73,44 @@ theorem malloc_fresh (outside : Outside) (fuel : Nat) (size : UInt64) (s : State
     bind, put, small, smallClasses, first, largeFirst, largeLast, Expr.lt, Expr.le, Expr.eq, Expr.ne, Expr.shl,
     Expr.shr, Expr.or, outOfMemory, nz, nh, hlists, hsize, hempty, asked, started, room', fold, nc]
   rfl
+
+/-- A block and the second word of its header, eight bytes before it, share no byte. -/
+theorem header_apart (block : UInt64) (i : Nat) (hi : i < 8) (k : Nat) (hk : k < 8) :
+    block + UInt64.ofNat k ≠ block - 16 + 8 + UInt64.ofNat i := by
+  intro h
+  have := congrArg UInt64.toNat h
+  simp only [UInt64.toNat_add, UInt64.toNat_sub, UInt64.toNat_ofNat', show (16 : UInt64).toNat = 16 from rfl,
+    show (8 : UInt64).toNat = 8 from rfl] at this
+  have := block.toNat_lt
+  omega
+
+/-- A small request when a freed block of its class is waiting: `rt_malloc` does nothing C leaves open,
+hands out that block, takes it off its list (the list now starts at the block it pointed to), clears the
+link it held, and marks it in use. Nothing else changes. What it needs of the state is what `rt_free`
+leaves: the block's first word is its link, and its header says it is free. -/
+theorem malloc_reuse (outside : Outside) (fuel : Nat) (size : UInt64) (s : State) (lists : Array UInt64)
+    (block link : UInt64) (low : 1 ≤ size) (high : size ≤ 4096)
+    (hlists : s.arrays "free_small" = some lists)
+    (hsize : (smallClass size).toNat < lists.size)
+    (hblock : lists[(smallClass size).toNat]'hsize = block)
+    (waiting : block ≠ 0)
+    (hlink : readBytes s.memory block 8 = .ok link)
+    (hstate : readBytes s.memory (block - 16 + 8) 8 = .ok (UInt64.ofNat freed)) :
+    program.call outside (fuel + 20) "rt_malloc" [size] s =
+      .ok (.gave (block - 16 + 16),
+        { s with
+          arrays := put s.arrays "free_small" (some (lists.setIfInBounds (smallClass size).toNat link))
+          memory := writeBytes (writeBytes s.memory block 0 8) (block - 16 + 8) (UInt64.ofNat inUse) 8 }) := by
+  have fits := smallClass_fits size low high
+  have nz : size ≠ 0 := by intro h; subst h; exact absurd low (by decide)
+  have nh : ¬ (4096 : UInt64) < size := by simpa [UInt64.not_lt] using high
+  have fold : (size + 15) / 16 = smallClass size := rfl
+  have nc : ¬ (257 : UInt64) ≤ smallClass size := by simpa [UInt64.not_le] using fits.1
+  have hstate' : readBytes (writeBytes s.memory block 0 8) (block - 16 + 8) 8 = .ok (UInt64.ofNat freed) := by
+    rw [readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => header_apart block i hi k hk)]; exact hstate
+  simp [Program.call, program, classBytes, listGet, listSet, malloc, free, runAll, Stmt.run, Expr.run, Op.run,
+    bind, put, small, smallClasses, first, largeFirst, largeLast, Expr.lt, Expr.le, Expr.eq, Expr.ne, Expr.shl,
+    Expr.shr, Expr.or, outOfMemory, nz, nh, hlists, hsize, hblock, waiting, hlink, hstate', fold, nc]
+  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put]
 
 end Mini.Alloc

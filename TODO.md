@@ -116,6 +116,11 @@ printed. What is reasoned about and what is compiled are then the same text.
       request of 1 to 4096 bytes, with no freed block of its class waiting and room on the heap, does
       nothing C leaves open, returns the front of the heap past a sixteen-byte header holding its class
       and "in use", and changes nothing else.
+- [x] Memory (`Mini/Memory.lean`): reading back a word just written gives the word, and a write leaves
+      every read of other bytes as it was.
+- [x] `rt_malloc`'s other path for a small request (`malloc_reuse`): with a freed block of its class waiting,
+      whose first word is its link and whose header says it is free, it hands out that block, takes it off
+      its list, clears the link, marks it in use, and changes nothing else.
 - [ ] The proofs that matter: that the allocator never fails for any sequence of requests, that blocks in
       use never overlap, that a freed block is zero. They need an invariant over the heap and the free
       lists, kept by `rt_malloc` and `rt_free`. Today those are tested, not proved.

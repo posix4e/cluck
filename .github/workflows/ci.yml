@@ -30,6 +30,12 @@ jobs:
       # when the runtime is built and is in the repository nowhere.
       - name: The allocator, run as its language defines it
         run: .lake/build/bin/mini-test
+      # The proofs are about the allocator as its language defines it. This holds the printer and the C
+      # compiler to that: made-up requests put to both, which have to agree on every answer. A short run
+      # here, with the commit as its seed so that a failure can be run again; long runs are left to whoever
+      # has a machine to spare (scripts/fuzz-alloc).
+      - name: The allocator as printed and compiled, against the same
+        run: scripts/fuzz-alloc 300 400 "$((16#${GITHUB_SHA:0:8}))"
       - name: Pure tests
         run: .lake/build/bin/demo-test
       - name: The command line and the queue layout

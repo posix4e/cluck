@@ -32,6 +32,12 @@ lean_exe «mini-print» where
 lean_exe «mini-test» where
   root := `MiniTest
 
+/-- Sets the allocator as its language defines it against the allocator as printed and compiled
+(`scripts/fuzz-alloc`). -/
+@[default_target]
+lean_exe «mini-fuzz» where
+  root := `MiniFuzz
+
 /-- What the service asks of the platform underneath it: three functions, implemented in C per platform. -/
 @[default_target]
 lean_lib Platform

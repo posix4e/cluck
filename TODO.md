@@ -150,7 +150,12 @@ printed. What is reasoned about and what is compiled are then the same text.
 - [ ] What the caller has to keep to, and nothing here checks: that it frees only what it was handed, once.
       Freeing a block twice is caught by the header and stops the machine; freeing an address that was
       never a block is not.
-- [ ] That the printer and the C compiler keep the meaning. Trusted; the printer is about 100 lines.
+- [ ] That the printer and the C compiler keep the meaning. Trusted, and now tested for the allocator:
+      `scripts/fuzz-alloc` puts made-up requests (every size, frees, words written and read back, a block
+      freed twice, running out) to the program as its language defines it and to the printed C compiled
+      under the sanitizers, and they have to agree on every answer. Three faults put into the C on purpose
+      were each caught within a few rounds. CI runs a short one. The other programs have nothing like it
+      yet: freeing, numbers and arrays need objects made up for them, which is the next harness.
 - [x] Giving up references and freeing (`Mini/Free.lean`): the same checks as the allocator's
       printed C. Not yet run as the language defines it, and nothing proved.
 - [x] What a number too large for a word is in memory (`Mini/Number.lean`), in place of `rt/big.c`.

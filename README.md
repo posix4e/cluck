@@ -61,6 +61,9 @@ each, and what is only tested, is in [TODO.md](TODO.md).
   proved about the allocator. `mini-print` prints a program's C, which is not kept in the repository;
   `scripts/print-runtime` prints them all when the runtime is built. `mini-test` runs the allocator and the
   hash as the language defines them, with no C involved.
+- `fuzz/`, `MiniFuzz.lean`, `scripts/fuzz-alloc`: the allocator as its language defines it set against the
+  allocator as printed and compiled, on made-up requests. This is what holds the printer and the C compiler
+  to what the proofs are about.
 - `Proofs.lean`: everything proved, built with the rest so that a proof that stops checking stops the build.
 - `rt/`: the minimal runtime's hand-written C; `rt/bare/`: its platform with no operating system;
   `rt/hosted/`: what only the builds that run as a process use.
@@ -83,6 +86,7 @@ lake build
 .lake/build/bin/nsm-test
 .lake/build/bin/driver-test
 .lake/build/bin/mini-test                                    # the allocator and the hash, as their language defines them
+scripts/fuzz-alloc 200 400                                   # the allocator as defined against as compiled; more rounds, longer
 .lake/build/bin/sim-test .lake/build/bin/demo-sim            # the service on Lean's own runtime
 
 scripts/build-min demo-sim                                   # the same compiled Lean on the minimal runtime (prints Mini/'s C first)

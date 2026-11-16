@@ -14,6 +14,10 @@ word and the rules of UTF-8 (`rt/big.c` and `rt/string.c` are the rest of each).
 @[default_target]
 lean_lib Runtime
 
+/-- What is proved about `Runtime`: that its arithmetic returns the limbs of the numbers it should. -/
+@[default_target]
+lean_lib Proofs
+
 /-- What the service asks of the platform underneath it: three functions, implemented in C per platform. -/
 @[default_target]
 lean_lib Platform

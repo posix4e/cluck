@@ -581,4 +581,127 @@ theorem reuse_sound (s : State) (base : Nat) (blocks : List Block) (lists : Arra
         simp [Array.getD_eq_getD_getElem?, Array.getElem?_setIfInBounds_ne (Ne.symm hsame)]
       rw [elsewhere]; exact moved
 
+/-- Zeroing words of a block leaves a word that ends at or before the block as it was. -/
+theorem zeros_below (block x : UInt64) (count : Nat) :
+    ∀ (memory : UInt64 → Option UInt8) (at_ : UInt64), x.toNat + 8 ≤ block.toNat →
+      block.toNat + at_.toNat + 8 * count ≤ 18446744073709551616 →
+      readBytes (zeros memory block at_ count) x 8 = readBytes memory x 8 := by
+  induction count with
+  | zero => intro memory at_ _ _; rfl
+  | succ count ih =>
+    intro memory at_ below room
+    have here : (block + at_).toNat = block.toNat + at_.toNat := by rw [UInt64.toNat_add]; omega
+    have next : (at_ + 8).toNat = at_.toNat + 8 := by
+      simp only [UInt64.toNat_add, show (8 : UInt64).toNat = 8 from rfl]; omega
+    rw [zeros, ih _ (at_ + 8) below (by omega)]
+    exact readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => below_apart _ _ (by omega) i hi k hk (by omega))
+
+/-- Zeroing words of one block leaves the list of any blocks that lie clear of it as it was. -/
+theorem ListFor.zeros {blocks : List Block} {head : UInt64} {size_class : Nat} {addresses : List UInt64}
+    (block : UInt64) (bytes : Nat) (low : 1 ≤ block.toNat) (top : block.toNat + bytes ≤ 18446744073709551616)
+    (clear : ∀ a, a ∈ addresses → 16 ≤ a.toNat ∧ a.toNat + 16 ≤ 18446744073709551616 ∧
+      (a.toNat + 32 ≤ block.toNat ∨ block.toNat + bytes + 16 ≤ a.toNat)) (count : Nat) :
+    ∀ (memory : UInt64 → Option UInt8) (at_ : UInt64), ListFor memory blocks head size_class addresses →
+      at_.toNat + 8 * count ≤ bytes →
+      ListFor (Mini.Alloc.zeros memory block at_ count) blocks head size_class addresses := by
+  induction count with
+  | zero => intro memory at_ h _; exact h
+  | succ count ih =>
+    intro memory at_ h fits
+    have here : (block + at_).toNat = block.toNat + at_.toNat := by rw [UInt64.toNat_add]; omega
+    have next : (at_ + 8).toNat = at_.toNat + 8 := by
+      simp only [UInt64.toNat_add, show (8 : UInt64).toNat = 8 from rfl]; omega
+    exact ih _ (at_ + 8)
+      (h.frame (block + at_) 0 (by omega) (fun a ha => by
+        obtain ⟨l, t, side⟩ := clear a ha
+        exact ⟨l, by omega, by omega⟩))
+      (by omega)
+
+theorem states_differ : UInt64.ofNat inUse ≠ UInt64.ofNat freed := by decide
+
+/-- Freeing a block that was handed out and is in use keeps the heap sound: the block joins the front of its
+class's list, and every list is still a chain of freed blocks. -/
+theorem free_sound (s : State) (base : Nat) (blocks : List Block) (b0 : Block) (m0 : b0 ∈ blocks)
+    (lists : Array UInt64) (hlists : s.arrays "free_small" = some lists) (sound : Sound s base blocks)
+    (live : readBytes s.memory (b0.address - 16 + 8) 8 = .ok (UInt64.ofNat inUse)) :
+    Sound
+      { s with
+        arrays := put s.arrays "free_small" (some (lists.setIfInBounds b0.size_class.toNat b0.address))
+        memory := writeBytes
+          (zeros (writeBytes s.memory (b0.address - 16 + 8) (UInt64.ofNat freed) 8) b0.address 0
+            (b0.size_class.toNat * 2))
+          b0.address (lists.getD b0.size_class.toNat 0) 8 }
+      base blocks := by
+  obtain ⟨order, lists', hlists', hsize, each⟩ := sound
+  have same : lists' = lists := Option.some.inj (hlists'.symm.trans hlists)
+  subst same
+  have laid := order.1
+  have top : (s.globals "heap_at").toNat ≤ 18446744073709551616 := by
+    have := (s.globals "heap_end").toNat_lt; have := order.2; omega
+  have inside := laid.inside b0 m0
+  have head0 := laid.header b0 m0
+  simp only [Block.bytes] at inside
+  have written : (b0.address - 16 + 8).toNat = b0.address.toNat - 8 := by
+    simp only [UInt64.toNat_add, UInt64.toNat_sub, show (16 : UInt64).toNat = 16 from rfl,
+      show (8 : UInt64).toNat = 8 from rfl]
+    have := b0.address.toNat_lt; omega
+  -- No block on any list is the one being freed: those are free, and this one is in use.
+  have away : ∀ c addresses, ListFor s.memory blocks (lists'.getD c 0) c addresses →
+      ∀ a, a ∈ addresses → a ≠ b0.address := by
+    intro c addresses listed a ha e
+    obtain ⟨_, _, _, _, state⟩ := listed.2.2 a ha
+    rw [e, live] at state
+    exact states_differ (Except.ok.inj state)
+  -- So every listed block lies clear of it, and the three kinds of write leave every list as it was.
+  have carried : ∀ c addresses, ListFor s.memory blocks (lists'.getD c 0) c addresses →
+      ListFor
+        (writeBytes
+          (zeros (writeBytes s.memory (b0.address - 16 + 8) (UInt64.ofNat freed) 8) b0.address 0
+            (b0.size_class.toNat * 2))
+          b0.address (lists'.getD b0.size_class.toNat 0) 8)
+        blocks (lists'.getD c 0) c addresses := by
+    intro c addresses listed
+    have place : ∀ a, a ∈ addresses → 16 ≤ a.toNat ∧ a.toNat + 16 ≤ 18446744073709551616 ∧
+        (a.toNat + 32 ≤ b0.address.toNat ∨ b0.address.toNat + b0.size_class.toNat * 16 + 16 ≤ a.toNat) := by
+      intro a ha
+      obtain ⟨b, member, where_, _, _⟩ := listed.2.2 a ha
+      have := laid.clear top b0 m0 b member (by rw [where_]; exact away c addresses listed a ha)
+      simp only [Block.bytes] at this
+      rw [where_] at this
+      exact ⟨this.1, this.2.1, this.2.2.2.2⟩
+    have marked := listed.frame (b0.address - 16 + 8) (UInt64.ofNat freed) (by rw [written]; omega)
+      (fun a ha => by obtain ⟨l, t, side⟩ := place a ha; rw [written]; exact ⟨l, by omega, by omega⟩)
+    have wiped := ListFor.zeros b0.address (b0.size_class.toNat * 16) (by omega) (by omega) place
+      (b0.size_class.toNat * 2) _ 0 marked (by simp only [show (0 : UInt64).toNat = 0 from rfl]; omega)
+    exact wiped.frame b0.address _ (by omega)
+      (fun a ha => by obtain ⟨l, t, side⟩ := place a ha; exact ⟨l, by omega, by omega⟩)
+  refine ⟨free_keeps s base blocks b0 m0 _ lists' order, lists'.setIfInBounds b0.size_class.toNat b0.address,
+    by simp [put], by simpa using hsize, fun c hc => ?_⟩
+  obtain ⟨addresses, listed⟩ := each c hc
+  have moved := carried c addresses listed
+  by_cases hsame : c = b0.size_class.toNat
+  · subst hsame
+    refine ⟨b0.address :: addresses, ?_⟩
+    have at_head : (lists'.setIfInBounds b0.size_class.toNat b0.address).getD b0.size_class.toNat 0 = b0.address := by
+      simp [Array.getD_eq_getD_getElem?, hsize, hc]
+    rw [at_head]
+    refine ⟨⟨rfl, ?_, lists'.getD b0.size_class.toNat 0, readBytes_writeBytes_word _ _ _, moved.1⟩,
+      List.nodup_cons.mpr ⟨fun inList => away _ addresses listed _ inList rfl, moved.2.1⟩, fun a ha => ?_⟩
+    · intro zero
+      have := congrArg UInt64.toNat zero
+      simp only [show (0 : UInt64).toNat = 0 from rfl] at this
+      omega
+    · rcases List.mem_cons.mp ha with rfl | later
+      · refine ⟨b0, m0, rfl, rfl, ?_⟩
+        rw [readBytes_writeBytes_other _ _ _ _ _ _
+            (fun i hi k hk => below_apart _ _ (by rw [written]; omega) i hi k hk (by omega)),
+          zeros_below _ _ _ _ _ (by rw [written]; omega)
+            (by simp only [show (0 : UInt64).toNat = 0 from rfl]; omega)]
+        exact readBytes_writeBytes_word _ _ _
+      · exact moved.2.2 a later
+  · refine ⟨addresses, ?_⟩
+    have elsewhere : (lists'.setIfInBounds b0.size_class.toNat b0.address).getD c 0 = lists'.getD c 0 := by
+      simp [Array.getD_eq_getD_getElem?, Array.getElem?_setIfInBounds_ne (Ne.symm hsame)]
+    rw [elsewhere]; exact moved
+
 end Mini.Alloc

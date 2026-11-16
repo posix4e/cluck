@@ -112,6 +112,10 @@ printed. What is reasoned about and what is compiled are then the same text.
 - [x] First proofs about the allocator, for every input (`Mini/AllocProofs.lean`): what `class_bytes` gives
       for a small class, and that a request of 1 to 4096 bytes is given a class whose block holds it with
       fewer than sixteen bytes to spare.
+- [x] `rt_malloc` itself, on one path, for every state and size that meet its conditions (`malloc_fresh`): a
+      request of 1 to 4096 bytes, with no freed block of its class waiting and room on the heap, does
+      nothing C leaves open, returns the front of the heap past a sixteen-byte header holding its class
+      and "in use", and changes nothing else.
 - [ ] The proofs that matter: that the allocator never fails for any sequence of requests, that blocks in
       use never overlap, that a freed block is zero. They need an invariant over the heap and the free
       lists, kept by `rt_malloc` and `rt_free`. Today those are tested, not proved.

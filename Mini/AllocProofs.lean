@@ -44,4 +44,33 @@ theorem small_request_fits (outside : Outside) (fuel : Nat) (size : UInt64) (s :
   ⟨smallClass size * 16, classBytes_small outside fuel _ s (smallClass_fits size low high).1,
     (smallClass_fits size low high).2.1⟩
 
+/-- A small request when no freed block of its class is waiting and the heap has room: `rt_malloc` does
+nothing C leaves open, takes the block from the front of the heap, writes its class and "in use" in the
+sixteen bytes before it, and moves the front of the heap past it. Nothing else changes. -/
+theorem malloc_fresh (outside : Outside) (fuel : Nat) (size : UInt64) (s : State) (lists : Array UInt64)
+    (low : 1 ≤ size) (high : size ≤ 4096)
+    (hlists : s.arrays "free_small" = some lists)
+    (hsize : (smallClass size).toNat < lists.size)
+    (hempty : lists[(smallClass size).toNat]'hsize = 0)
+    (asked : s.globals "heap_asked" = 1)
+    (started : s.globals "heap_at" ≠ 0)
+    (room : ¬ s.globals "heap_end" - s.globals "heap_at" < 16 + smallClass size * 16) :
+    program.call outside (fuel + 20) "rt_malloc" [size] s =
+      .ok (.gave (s.globals "heap_at" + 16),
+        { s with
+          globals := put s.globals "heap_at" (s.globals "heap_at" + (16 + smallClass size * 16))
+          memory := writeBytes (writeBytes s.memory (s.globals "heap_at") (smallClass size) 8)
+            (s.globals "heap_at" + 8) (UInt64.ofNat inUse) 8 }) := by
+  have fits := smallClass_fits size low high
+  have nz : size ≠ 0 := by intro h; subst h; exact absurd low (by decide)
+  have nh : ¬ (4096 : UInt64) < size := by simpa [UInt64.not_lt] using high
+  have fold : (size + 15) / 16 = smallClass size := rfl
+  have room' : 16 + smallClass size * 16 ≤ s.globals "heap_end" - s.globals "heap_at" := by
+    simpa [UInt64.not_lt] using room
+  have nc : ¬ (257 : UInt64) ≤ smallClass size := by simpa [UInt64.not_le] using fits.1
+  simp [Program.call, program, classBytes, listGet, listSet, malloc, free, runAll, Stmt.run, Expr.run, Op.run,
+    bind, put, small, smallClasses, first, largeFirst, largeLast, Expr.lt, Expr.le, Expr.eq, Expr.ne, Expr.shl,
+    Expr.shr, Expr.or, outOfMemory, nz, nh, hlists, hsize, hempty, asked, started, room', fold, nc]
+  rfl
+
 end Mini.Alloc

@@ -21,6 +21,14 @@ data cannot be run, nothing else is mapped at all, and the page under the stack 
 
 Exceptions are fatal: there is one small stub per vector, which records which one it was and goes to C to
 say so and stop. No interrupt is ever enabled.
+
+Elsewhere. Linux does the same climb in arch/x86/boot/compressed/head_64.S and then
+arch/x86/kernel/head_64.S: tables that map memory to itself, long mode, a jump. FreeBSD's amd64 kernel never
+sees 32-bit mode: its loader switches to long mode itself (amd64_tramp.S) and enters locore.S already there.
+Where they part from this is the exceptions. A general-purpose kernel installs a handler for every vector and
+expects to come back from most of them, because a page fault is how it pages memory in and copies on write.
+Here no memory is ever paged in, so every exception is a bug, and the only handler says so and stops, the way
+a seL4 kernel stops on a fault in itself.
 */
 
 #define MSR_EFER 0xC0000080

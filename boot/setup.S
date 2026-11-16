@@ -27,6 +27,16 @@ Offsets and meanings are from Linux's Documentation/arch/x86/boot.rst. mkimage f
 that depend on the image: `setup_sects`, `syssize` and `init_size`.
 
 This file is linked on its own, at address zero, into a flat run of bytes (scripts/build-bare).
+
+Elsewhere. Linux's arch/x86/boot/header.S is this header; its real-mode C (arch/x86/boot/main.c and
+memory.c) asks the BIOS for the same memory map with the same call. FreeBSD climbs from the BIOS in stages
+instead (boot0, boot2 under its BTX monitor, then loader(8)), and for some twenty years the last stage was
+programmable in Forth: loader(8) carried FICL, a small Forth, and its menus and configuration were Forth
+words, until Lua replaced it. Open Firmware (Sun, Apple's PowerPC Macs, OLPC) went further, with the whole
+firmware a Forth system and device drivers shipped as Forth bytecode. The idea worth keeping from them: the
+first code to run is a small language a person can read whole, not compiled C. This project's version of that
+is the small language in Mini/, whose first boot code is the real mapping (Mini/Map.lean); see TODO.md for
+giving it a translator to machine code of its own.
 */
 
 #define PARAMS 0x4000          /* where in this segment `boot_params` is built; the stack ENTER_LONG uses is below */

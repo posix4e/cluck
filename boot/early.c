@@ -14,6 +14,12 @@ program's `main` (the one Lean generates) runs, this:
 
 Nothing here interprets anything the parent instance sends. The memory map and the command line come from the
 boot loader, which is on the trusted side.
+
+Elsewhere. This is the part of Linux's start_kernel and setup_arch that a single program needs. Device
+windows are announced the way Linux's drivers/virtio/virtio_mmio.c reads them from its command line
+(`virtio_mmio.device=`), but here they are only noted, to be mapped and later checked against; nothing
+probes or binds a driver. The real mapping is decided by a program in the small language (Mini/Map.lean); see
+there for how Linux and seL4 arrange theirs.
 */
 #include <stdbool.h>
 #include <stddef.h>
@@ -432,88 +438,27 @@ static void windows_from_microvm_slots(void) {
 
 extern uint64_t boot_pd[2048];   /* the four page directories of entry.S, one entry per 2 MiB */
 
-#define SMALL 0x1000ull            /* the image and device registers are mapped in 4 KiB pages */
-
-#define PAGE_PRESENT 0x1ull
-#define PAGE_WRITE 0x2ull
-#define PAGE_WRITE_THROUGH 0x8ull
-#define PAGE_NO_CACHE 0x10ull
-#define PAGE_LARGE 0x80ull
-#define PAGE_NO_EXECUTE (1ull << 63)
-
 /* Page tables for the 2 MiB stretches that are mapped in 4 KiB pages: the image's own, and any that holds
 device registers. A machine with more of those than there are tables here is not started. */
 #define TABLES 48
 static uint64_t tables[TABLES][512] __attribute__((aligned(4096)));
-static size_t tables_used;
 
-static bool in(uint64_t address, char const * start, char const * end) {
-    return address >= address_of(start) && address < address_of(end);
-}
-
-/* Whether the memory set aside for devices or the heap holds `address`. */
-static bool in_heap(uint64_t address) {
-    uint64_t device = (uint64_t)(uintptr_t)boot_device_start;
-    uint64_t heap_end = (uint64_t)(uintptr_t)boot_heap_start + boot_heap_size;
-    return address >= device && address < heap_end;
-}
-
-/* Whether any device's registers are in the `size` bytes at `address`. */
-static bool has_registers(uint64_t address, uint64_t size) {
-    for (size_t i = 0; i < boot_window_count; i++) {
-        uint64_t first = boot_windows[i].base;
-        uint64_t last = boot_windows[i].base + boot_windows[i].size - 1;
-        if (first <= address + size - 1 && last >= address) return true;
-    }
-    return false;
-}
-
-/* What the 4 KiB page at `address` is for, and so how it is mapped: zero for not at all. The pieces of the
-image begin and end on 4 KiB boundaries, by link.ld. Device registers are mapped so that the processor never
-keeps a copy of what it reads from them or puts off what it writes. */
-static uint64_t small_entry(uint64_t address) {
-    uint64_t data = address | PAGE_PRESENT | PAGE_WRITE | PAGE_NO_EXECUTE;
-    if (in(address, boot_text_start, boot_text_end)) return address | PAGE_PRESENT;
-    if (in(address, boot_rodata_start, boot_rodata_end)) return address | PAGE_PRESENT | PAGE_NO_EXECUTE;
-    if (in(address, boot_data_start, boot_data_end)) return data;
-    if (in(address, boot_stack_guard, boot_stack_bottom)) return 0;
-    if (in(address, boot_stack_bottom, boot_stack_top)) return data;
-    if (in_heap(address)) return data;
-    if (has_registers(address, SMALL)) return data | PAGE_NO_CACHE | PAGE_WRITE_THROUGH;
-    return 0;
-}
-
-/* Whether the 2 MiB at `address` has to be mapped in 4 KiB pages: it holds part of the image, whose pieces
-have different rights, or device registers, which are a page or two with nothing of ours beside them. */
-static bool wants_small(uint64_t address) {
-    if (address < address_of(boot_image_end) && address + PAGE > address_of(boot_text_start)) return true;
-    return has_registers(address, PAGE);
-}
-
-/* The rest is the heap and the memory shared with devices, in 2 MiB pages, or nothing. The heap begins and
-ends on 2 MiB boundaries, by link.ld and memory_init. */
-static uint64_t large_entry(uint64_t address) {
-    if (in_heap(address)) return address | PAGE_PRESENT | PAGE_LARGE | PAGE_WRITE | PAGE_NO_EXECUTE;
-    return 0;
-}
-
-/* Rewrites the page directories in place. A table of 4 KiB pages is filled in before the directory points
-at it, so a page in use (this code, this stack) goes straight from its old mapping to its new one and is
-never missing in between; reloading the root then makes the processor forget what it had cached. */
+/* What goes in the tables is decided by a program in the small language (Mini/Map.lean), printed as C when
+the image is built. This only hands it the layout and makes the processor take up the result: reloading the
+root makes it forget what it had cached of the old mapping. */
 static void mapping_init(void) {
-    for (uint64_t i = 0; i < 2048; i++) {
-        uint64_t address = i * PAGE;
-        if (!wants_small(address)) {
-            boot_pd[i] = large_entry(address);
-            continue;
-        }
-        if (tables_used == TABLES) {
-            print("silo boot: more memory to map in small pages than there are tables for\n");
-            boot_halt(4);
-        }
-        uint64_t * table = tables[tables_used++];
-        for (uint64_t j = 0; j < 512; j++) table[j] = small_entry(address + j * SMALL);
-        boot_pd[i] = (uint64_t)(uintptr_t)table | PAGE_PRESENT | PAGE_WRITE;
+    uint64_t const layout[14] = {
+        address_of(boot_text_start), address_of(boot_text_end),
+        address_of(boot_rodata_start), address_of(boot_rodata_end),
+        address_of(boot_data_start), address_of(boot_data_end),
+        address_of(boot_stack_guard), address_of(boot_stack_bottom), address_of(boot_stack_top),
+        address_of(boot_image_end),
+        (uint64_t)(uintptr_t)boot_device_start, (uint64_t)(uintptr_t)boot_heap_start + boot_heap_size,
+        (uint64_t)(uintptr_t)boot_windows, boot_window_count,
+    };
+    if (boot_map(layout, boot_pd, &tables[0][0], TABLES) != 0) {
+        print("silo boot: more memory to map in small pages than there are tables for\n");
+        boot_halt(4);
     }
     uint64_t root;
     __asm__ volatile("mov %%cr3, %0" : "=r"(root));

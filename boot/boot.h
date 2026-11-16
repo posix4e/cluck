@@ -2,6 +2,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* How the machine was entered (entry.S records it). */
 #define BOOT_KIND_PVH 1
@@ -34,3 +35,7 @@ struct boot_window {
 #define BOOT_MAX_WINDOWS 32
 extern struct boot_window boot_windows[BOOT_MAX_WINDOWS];
 extern size_t boot_window_count;
+
+/* The real mapping (Mini/Map.lean, printed as C when the image is built): rewrites the page directories at
+`directories` from `layout`, taking 4 KiB tables from the `count` at `tables`. 0, or 1 if there were too few. */
+int boot_map(uint64_t const * layout, uint64_t * directories, uint64_t * tables, size_t count);

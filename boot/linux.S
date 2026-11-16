@@ -22,6 +22,10 @@ with a line on the serial port.
 The 64-bit entry relies on the loader's tables mapping the image's home. The protocol promises that for
 `init_size` bytes from where the image was loaded, which mkimage sets to reach from 1 MiB to the end of the
 image at home; a loader that puts the image higher than its home and maps only what it must is not served.
+
+Elsewhere. Linux's own arch/x86/boot/compressed/head_64.S also starts at the protocol's two entries
+and moves itself before it goes on, but to make room to decompress the kernel and then to relocate it.
+Nothing here is compressed or relocated: the image is linked to run at one address and goes there.
 */
 
 #define COM1 0x3F8

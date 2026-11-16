@@ -4,6 +4,10 @@ Start-up, and the few questions compiled Lean asks about where it is running.
 The entry point Lean generates for a program calls these in order: prepare the runtime, initialise every
 module, run `main`, report an uncaught error. With one thread and no event loop most of them have nothing
 to do.
+
+Elsewhere. Lean's own runtime brings libuv and a pool of task threads; MirageOS on Solo5 gets by with one
+core and one loop, as this does. Here there is not even the loop: the server polls its device queues
+(Kernel/Server.lean), so start-up has nothing to start.
 */
 #include "rt.h"
 

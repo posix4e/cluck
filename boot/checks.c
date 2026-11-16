@@ -8,6 +8,10 @@ nothing forbidden and returns 0, to show the checks are not failing for some oth
 
 This file is included by boot/tests/faultcheck.c, an image that is nothing else, and by rt/bare/checks.c, which
 lets a Lean image try the same things once it has done what a Nitro Enclave's parent wants first.
+
+Elsewhere. Linux's LKDTM (drivers/misc/lkdtm) does the same on purpose: it writes to read-only data,
+runs data and the stack, and overflows the stack, so that a kernel's protections can be seen to hold. Here the
+checks are part of every build's tests and of a run in a real enclave.
 */
 #include <stdint.h>
 

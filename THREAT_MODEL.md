@@ -110,7 +110,9 @@ The only input. The aim would be memory corruption: turn an attested image into 
   data below it. The image and device registers are mapped in 4 KiB pages, so each piece of the image has
   its own rights to the page and the memory beside a device's registers is not there; the registers are
   mapped uncached. Exceptions are reported on a stack of their own. `scripts/check-protection` boots the
-  machine once per forbidden thing and requires each to be refused. The same ten checks have been refused
+  machine once per forbidden thing and requires each to be refused. What goes in the page tables is decided by a
+  program in the small language (`Mini/Map.lean`), and every entry it decides is checked as the language
+  defines it: none both writable and runnable, each mapping a page to itself. The same ten checks have been refused
   in a real enclave (`scripts/enclave-checks`).
 - **Not addressed:** that closes off injecting code, not reusing the code that is there. Everything runs in
   one address space at the processor's highest privilege, at fixed addresses, so a memory-safety bug in the

@@ -9,6 +9,12 @@ Two kinds of thing can be reached from Lean, and only these:
 Every address is checked against those before it is used, and an address outside them stops the machine.
 Lean never gets a pointer, so nothing a driver computes, and nothing a device reports, can be turned into a
 read or write of the Lean heap, the stack or the code.
+
+Elsewhere. In Linux a driver gets a raw pointer from ioremap() and is trusted with it. A seL4 user-level
+driver can touch only the frames it holds capabilities for. Microsoft Research's Singularity gave drivers,
+written in a safe language, IoMemory and IoPort objects whose every access was checked against what the
+driver's manifest declared. This is that last one in miniature: the windows are the manifest, and every access
+is checked against them.
 */
 #include "../rt.h"
 

@@ -6,6 +6,9 @@ the boot stub, and what `Platform.lean` asks for, as far as it exists without a 
 to the serial port, there is nothing to read, and random bytes come from the processor.
 
 This is enough to run a program that only prints. The vsock driver replaces the reading and writing.
+
+Elsewhere. Solo5 gives MirageOS and other unikernels a platform of about the same size: a console, a
+heap, a clock, a few devices, and a way to stop.
 */
 #include <lean/lean.h>
 

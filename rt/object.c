@@ -1,6 +1,10 @@
 /*
 Objects: making permanent, constants that are built on first use, and a few kinds of object. Giving up
 references and freeing is Mini/Free.lean.
+
+Elsewhere. Lean's own runtime makes a value permanent the same way (lean_mark_persistent): its reference
+count becomes zero, which counting then leaves alone. GHC's static closures and compact regions are the same
+idea, memory the collector never looks at again.
 */
 #include "rt.h"
 

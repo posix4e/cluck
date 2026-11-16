@@ -3,6 +3,9 @@ The five functions the runtime and compiled code expect of a C library, for a ma
 
 Plain loops, a byte at a time. The compiler is told not to recognise them (-fno-builtin), or it would turn
 each loop back into a call to the function it is in.
+
+Elsewhere. Linux's lib/string.c has the same plain loops, as the fallback behind its assembly versions.
+Here the loops are all there is: they are short enough to read, and nothing they copy is large.
 */
 #include <stddef.h>
 

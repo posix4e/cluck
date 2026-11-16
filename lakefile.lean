@@ -30,6 +30,9 @@ lean_exe «mini-print» where
 /-- The string program run as its language defines it, against Lean's own strings. -/
 lean_lib MiniStringTest
 
+/-- The real mapping run as its language defines it, and every entry it writes checked. -/
+lean_lib MiniMapTest
+
 /-- The allocator, the byte hash and strings run as the language defines them, with no C involved. -/
 @[default_target]
 lean_exe «mini-test» where

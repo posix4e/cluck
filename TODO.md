@@ -175,6 +175,16 @@ printed. What is reasoned about and what is compiled are then the same text.
       polling instead of interrupts (Solo5, DPDK), size classes (Linux's SLUB, seL4 has no kernel heap at
       all), closures (`caml_applyN` in OCaml), one address space at full privilege (MirageOS, Unikraft).
       References by file and function, never copied code.
+- [x] The real mapping (`Mini/Map.lean`), in place of the page-table code in `boot/early.c`, which keeps
+      only the reload of the root. `mini-test` asks it about every 2 MiB stretch of the first four
+      gigabytes and every 4 KiB page of those mapped small: none is both writable and runnable, each maps to
+      itself, and the code, constants, data, the stack's hole, heap and registers each get what they should.
+      Faults put in on purpose (data runnable, the hole mapped, registers cached) were each caught. The whole
+      `boot_map` is run only under QEMU (`scripts/check-protection`): the interpreter keeps memory as a
+      chain of single-byte writes, and 3,500 words of page tables make that take minutes.
+- [ ] Prove the mapping: every entry `boot_map` writes is inside the directories or the tables it was
+      given, and no entry is both writable and runnable.
+- [ ] Memory in the interpreter that does not slow down with every write, without changing what it means.
 - [ ] A back end for the small language that writes x86-64 machine code itself, no C compiler, starting with
       the boot path (a stage0 / Forth-style bootstrap: a tiny, checkable translator instead of clang for the
       code that runs before memory protection is on). Then the translator, being small, can be checked

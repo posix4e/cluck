@@ -7,6 +7,11 @@ the function), or over-completes it (call the function, then apply what it retur
 
 Functions of up to sixteen arguments take them as separate C arguments; above that they take one array.
 Lean's runtime writes every combination out by hand for speed. This is the same behaviour in one function.
+
+Elsewhere. This is the eval/apply model of Marlow and Peyton Jones's "Making a fast curry" (GHC's
+stg_ap_* functions), and OCaml's caml_applyN and caml_curryN do the same for OCaml closures. Lean's own runtime
+(src/runtime/apply.cpp) spells out one case per pair of arities. Here it is one function, read in one
+sitting, because nothing it would save is worth a few hundred more lines under a secret.
 */
 #include "rt.h"
 

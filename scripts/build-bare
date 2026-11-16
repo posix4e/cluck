@@ -65,6 +65,13 @@ compile() {
 compile boot/linux.S
 compile boot/entry.S
 compile boot/early.c
+# The real mapping, printed from Mini/Map.lean. Not part of the runtime: the boot stub's, and in every image.
+printer=.lake/build/bin/mini-print
+[ -x "$printer" ] || printer="$os/.lake/build/bin/mini-print"
+[ -x "$printer" ] || { echo "build-bare: no mini-print (run: lake build mini-print)" >&2; exit 2; }
+mkdir -p "$out/boot-printed"
+"$printer" map > "$out/boot-printed/map.c"
+compile "$PWD/$out/boot-printed/map.c"
 
 # Makes a kernel image from the linked image and boot/setup.S, the latter built with the flags given.
 kernel_image() {

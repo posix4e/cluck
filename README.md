@@ -57,10 +57,10 @@ each, and what is only tested, is in [TODO.md](TODO.md).
   `Run.lean` its meaning (an interpreter that fails wherever C leaves the outcome open), `Print.lean` its
   printer to C. The programs: `Alloc.lean` (the allocator), `Free.lean` (giving up references and freeing),
   `Number.lean` (what a big number is in memory), `Array.lean` (arrays and byte arrays), `Small.lean` (shifts,
-  powers and logarithms of small numbers), `Hash.lean` (Lean's byte hash), `String.lean` (strings). `AllocProofs.lean`: what is
+  powers and logarithms of small numbers), `Hash.lean` (Lean's byte hash), `String.lean` (strings), `Map.lean` (the page tables put in place at boot, printed into the boot stub rather than the runtime). `AllocProofs.lean`: what is
   proved about the allocator. `mini-print` prints a program's C, which is not kept in the repository;
   `scripts/print-runtime` prints them all when the runtime is built. `mini-test` runs the allocator, the
-  hash and strings as the language defines them, with no C involved (`MiniStringTest.lean` plays what is
+  hash, strings and the mapping as the language defines them, with no C involved (`MiniStringTest.lean` plays what is
   outside the string program and checks every byte it touches).
 - `fuzz/`, `MiniFuzz.lean`, `scripts/fuzz-alloc`: the allocator as its language defines it set against the
   allocator as printed and compiled, on made-up requests. This is what holds the printer and the C compiler

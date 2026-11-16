@@ -163,4 +163,71 @@ theorem zero_loop (p : Program) (outside : Outside) (block bytes : UInt64) (coun
       (.loop (Expr.lt "at" "bytes") [.store ("block" + "at") 0, .set "at" ("at" + 8)]) = round at hrun ⊢
     simp [Stmt.run, runAll, Expr.run, Op.run, Expr.lt, hat, hblock, hbytes, less, zeros, hrun]
 
+/-- The zeroing loop under a name of its own, so that a proof can step over it. -/
+def zeroLoop (p : Program) (outside : Outside) (fuel : Nat) (s : State) (locals : Locals) :=
+  Stmt.run p outside fuel (.loop (Expr.lt "at" "bytes") [.store ("block" + "at") 0, .set "at" ("at" + 8)]) s locals
+
+theorem zeroLoop_fold (p : Program) (outside : Outside) (fuel : Nat) (s : State) (locals : Locals) :
+    Stmt.run p outside fuel (.loop (.op .lt (.var "at") (.var "bytes"))
+      [.store (.op .add (.var "block") (.var "at")) (.lit 0), .set "at" (.op .add (.var "at") (.lit 8))]) s locals =
+    zeroLoop p outside fuel s locals := rfl
+
+theorem find_free : program.functions.find? (fun f => f.name == "rt_free") = some free := rfl
+theorem find_classBytes : program.functions.find? (fun f => f.name == "class_bytes") = some classBytes := rfl
+theorem find_listGet : program.functions.find? (fun f => f.name == "list_get") = some listGet := rfl
+theorem find_listSet : program.functions.find? (fun f => f.name == "list_set") = some listSet := rfl
+
+/-- The two words of a block's header share no byte: the state, eight bytes on, and the class. -/
+theorem state_apart (header : UInt64) (i : Nat) (hi : i < 8) (k : Nat) (hk : k < 8) :
+    header + 8 + UInt64.ofNat k ≠ header + UInt64.ofNat i := by
+  intro h
+  have := congrArg UInt64.toNat h
+  simp only [UInt64.toNat_add, UInt64.toNat_ofNat', show (8 : UInt64).toNat = 8 from rfl] at this
+  have := header.toNat_lt
+  omega
+
+/-- Freeing a block of a small class that is in use: `rt_free` does nothing C leaves open, marks the block
+free, writes zero over every byte it held, links it in front of its class's list, and makes it the head of
+that list. Nothing else changes. -/
+theorem free_small (outside : Outside) (extra : Nat) (block c : UInt64) (s : State) (lists : Array UInt64)
+    (hstate : readBytes s.memory (block - 16 + 8) 8 = .ok (UInt64.ofNat inUse))
+    (hclass : readBytes s.memory (block - 16) 8 = .ok c)
+    (small : c < 257)
+    (hlists : s.arrays "free_small" = some lists)
+    (hsize : c.toNat < lists.size) :
+    program.call outside (c.toNat * 2 + extra + 30) "rt_free" [block] s =
+      .ok (.on,
+        { s with
+          arrays := put s.arrays "free_small" (some (lists.setIfInBounds c.toNat block))
+          memory := writeBytes
+            (zeros (writeBytes s.memory (block - 16 + 8) (UInt64.ofNat freed) 8) block 0 (c.toNat * 2))
+            block (lists[c.toNat]'hsize) 8 }) := by
+  have hclass' : readBytes (writeBytes s.memory (block - 16 + 8) (UInt64.ofNat freed) 8) (block - 16) 8 = .ok c := by
+    rw [readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => state_apart (block - 16) i hi k hk)]; exact hclass
+  have nc : ¬ (257 : UInt64) ≤ c := by simpa [UInt64.not_le] using small
+  have csmall : c.toNat < 257 := by simpa [UInt64.lt_iff_toNat_lt] using small
+  have bytes : (0 : UInt64).toNat + 8 * (c.toNat * 2) = (c * 16).toNat := by
+    simp only [UInt64.toNat_mul, show (16 : UInt64).toNat = 16 from rfl, show (0 : UInt64).toNat = 0 from rfl]; omega
+  obtain ⟨after, hrun, hkeep⟩ := zero_loop program outside block (c * 16) (c.toNat * 2) 0
+    { s with memory := writeBytes s.memory (block - 16 + 8) (UInt64.ofNat freed) 8 }
+    (put (put (put (put (put (fun _ => none) "block" (some block)) "header" (some (block - 16))) "size_class" (some c))
+      "bytes" (some (c * 16))) "at" (some 0))
+    (extra + 18) (by simp [put]) (by simp [put]) (by simp [put]) bytes
+  have hrun' : zeroLoop program outside (c.toNat * 2 + extra + 23)
+      { s with memory := writeBytes s.memory (block - 16 + 8) (UInt64.ofNat freed) 8 }
+      (put (put (put (put (put (fun _ => none) "block" (some block)) "header" (some (block - 16))) "size_class" (some c))
+        "bytes" (some (c * 16))) "at" (some 0)) =
+      .ok (.on, (⟨s.globals, s.arrays,
+        zeros (writeBytes s.memory (block - 16 + 8) (UInt64.ofNat freed) 8) block 0 (c.toNat * 2)⟩ : State),
+        after) := by
+    rw [show c.toNat * 2 + extra + 23 = c.toNat * 2 + (extra + 18) + 5 from by omega]; exact hrun
+  have kclass := hkeep "size_class" (by decide)
+  have kblock := hkeep "block" (by decide)
+  simp [put] at kclass kblock
+  simp [Program.call, find_free, find_classBytes, find_listGet, find_listSet, classBytes, listGet, listSet, free,
+    runAll, Stmt.run, Expr.run, Op.run, bind, put, Mini.Alloc.small, smallClasses, Expr.lt, Expr.ne, hstate,
+    nc, hlists, hsize, ↓zeroLoop_fold]
+  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hclass', nc, hrun', kclass,
+    kblock, hlists, hsize]
+
 end Mini.Alloc

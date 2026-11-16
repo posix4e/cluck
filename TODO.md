@@ -121,9 +121,14 @@ printed. What is reasoned about and what is compiled are then the same text.
 - [x] `rt_malloc`'s other path for a small request (`malloc_reuse`): with a freed block of its class waiting,
       whose first word is its link and whose header says it is free, it hands out that block, takes it off
       its list, clears the link, marks it in use, and changes nothing else.
+- [x] `rt_free` for a block of a small class that is in use (`free_small`), for every such state: it marks
+      the block free, writes zero over every byte it held (the loop, for any size: `zero_loop`), links it in
+      front of its class's list, and changes nothing else.
 - [ ] The proofs that matter: that the allocator never fails for any sequence of requests, that blocks in
       use never overlap, that a freed block is zero. They need an invariant over the heap and the free
-      lists, kept by `rt_malloc` and `rt_free`. Today those are tested, not proved.
+      lists, kept by `rt_malloc` and `rt_free`: the three theorems above say what each call does to a state,
+      and the invariant is what ties one call's result to the next call's conditions. Also unproved: large
+      blocks (the loop that finds a power of two), and the first use of the heap.
 - [ ] That the printer and the C compiler keep the meaning. Trusted; the printer is about 100 lines.
 - [x] Giving up references and freeing (`Mini/Free.lean`): the same checks as the allocator's
       printed C. Not yet run as the language defines it, and nothing proved.

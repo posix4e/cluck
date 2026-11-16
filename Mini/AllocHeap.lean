@@ -704,4 +704,77 @@ theorem free_sound (s : State) (base : Nat) (blocks : List Block) (b0 : Block) (
       simp [Array.getD_eq_getD_getElem?, Array.getElem?_setIfInBounds_ne (Ne.symm hsame)]
     rw [elsewhere]; exact moved
 
+/-! ## The program, on a sound heap
+
+The three things the allocator does with a small block, each about the program itself: it does nothing C
+leaves open, and it leaves a sound heap sound. One call's result meets the next call's conditions, so these
+cover any sequence of small requests and frees, as long as there is room and what is freed is a block that
+was handed out and is in use. -/
+
+theorem getD_of_lt (lists : Array UInt64) (i : Nat) (h : i < lists.size) : lists.getD i 0 = lists[i] := by
+  simp [Array.getD, h]
+
+/-- A small request, when a freed block of its class is waiting. -/
+theorem malloc_reuse_sound (outside : Outside) (fuel : Nat) (size : UInt64) (s : State) (base : Nat)
+    (blocks : List Block) (lists : Array UInt64) (low : 1 ≤ size) (high : size ≤ 4096)
+    (sound : Sound s base blocks) (hlists : s.arrays "free_small" = some lists)
+    (waiting : lists.getD (smallClass size).toNat 0 ≠ 0) :
+    ∃ b after, b ∈ blocks ∧ b.size_class = smallClass size ∧
+      program.call outside (fuel + 20) "rt_malloc" [size] s = .ok (.gave (b.address - 16 + 16), after) ∧
+      Sound after base blocks := by
+  have fits := smallClass_fits size low high
+  have csmall : (smallClass size).toNat < 257 := by simpa [UInt64.lt_iff_toNat_lt] using fits.1
+  have hsize : (smallClass size).toNat < lists.size := by
+    obtain ⟨_, lists', hlists', size', _⟩ := sound
+    rw [← Option.some.inj (hlists'.symm.trans hlists)]; omega
+  obtain ⟨b0, link, m0, where0, class0, hlink, hstate, kept⟩ :=
+    reuse_sound s base blocks lists (smallClass size).toNat csmall sound hlists waiting
+  refine ⟨b0, _, m0, UInt64.toNat_inj.mp class0, ?_, kept⟩
+  exact malloc_reuse outside fuel size s lists b0.address link low high hlists hsize
+    (by rw [← getD_of_lt lists _ hsize, where0])
+    (by rw [where0]; exact waiting) hlink hstate
+
+/-- A small request, when no freed block of its class is waiting and the heap has room. -/
+theorem malloc_fresh_sound (outside : Outside) (fuel : Nat) (size : UInt64) (s : State) (base : Nat)
+    (blocks : List Block) (lists : Array UInt64) (low : 1 ≤ size) (high : size ≤ 4096)
+    (sound : Sound s base blocks) (hlists : s.arrays "free_small" = some lists)
+    (empty : lists.getD (smallClass size).toNat 0 = 0)
+    (asked : s.globals "heap_asked" = 1) (started : s.globals "heap_at" ≠ 0)
+    (room : ¬ s.globals "heap_end" - s.globals "heap_at" < 16 + smallClass size * 16) :
+    ∃ after, program.call outside (fuel + 20) "rt_malloc" [size] s = .ok (.gave (s.globals "heap_at" + 16), after) ∧
+      Sound after base (blocks ++ [⟨s.globals "heap_at" + 16, smallClass size⟩]) := by
+  have fits := smallClass_fits size low high
+  have csmall : (smallClass size).toNat < 257 := by simpa [UInt64.lt_iff_toNat_lt] using fits.1
+  have hsize : (smallClass size).toNat < lists.size := by
+    obtain ⟨_, lists', hlists', size', _⟩ := sound
+    rw [← Option.some.inj (hlists'.symm.trans hlists)]; omega
+  exact ⟨afterFresh s size,
+    malloc_fresh outside fuel size s lists low high hlists hsize (by rw [← getD_of_lt lists _ hsize]; exact empty)
+      asked started room,
+    fresh_sound s base blocks size low high sound room⟩
+
+/-- Freeing a block that was handed out and is in use. -/
+theorem free_small_sound (outside : Outside) (extra : Nat) (s : State) (base : Nat) (blocks : List Block)
+    (lists : Array UInt64) (b : Block) (member : b ∈ blocks) (sound : Sound s base blocks)
+    (hlists : s.arrays "free_small" = some lists)
+    (live : readBytes s.memory (b.address - 16 + 8) 8 = .ok (UInt64.ofNat inUse)) :
+    ∃ after, program.call outside (b.size_class.toNat * 2 + extra + 30) "rt_free" [b.address] s = .ok (.on, after) ∧
+      Sound after base blocks := by
+  have head := sound.1.1.header b member
+  have small : b.size_class < 257 := by
+    simp only [UInt64.lt_iff_toNat_lt, show (257 : UInt64).toNat = 257 from rfl]; exact head.2.2
+  have hsize : b.size_class.toNat < lists.size := by
+    obtain ⟨_, lists', hlists', size', _⟩ := sound
+    rw [← Option.some.inj (hlists'.symm.trans hlists)]; omega
+  refine ⟨_, free_small outside extra b.address b.size_class s lists live head.1 small hlists hsize, ?_⟩
+  rw [← getD_of_lt lists _ hsize]
+  exact free_sound s base blocks b member lists hlists sound live
+
+/-- Where it starts: a heap from which nothing has been handed out, with every list empty, is sound. -/
+theorem empty_sound (s : State) (within : (s.globals "heap_at").toNat ≤ (s.globals "heap_end").toNat)
+    (hlists : s.arrays "free_small" = some (Array.replicate 257 0)) :
+    Sound s (s.globals "heap_at").toNat [] :=
+  ⟨⟨rfl, within⟩, Array.replicate 257 0, hlists, by simp, fun c hc =>
+    ⟨[], by simp [ListFor, Chain, Array.getD, hc]⟩⟩
+
 end Mini.Alloc

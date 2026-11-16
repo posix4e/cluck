@@ -132,12 +132,24 @@ printed. What is reasoned about and what is compiled are then the same text.
       block in use or free, and zeroing it leave every header as it was (`Laid.frame_body`, `Laid.mark`,
       `Laid.zeros`); so freeing a block that was handed out (`free_small_in_order`, about the program
       itself) and handing one out again (`reuse_keeps`) keep the same blocks laid as they were.
-- [ ] The proofs that matter: that the allocator never fails for any sequence of requests, that blocks in
-      use never overlap, that a freed block is zero. What is missing is the free lists: that each is a
-      chain of freed blocks of its class, each of them a block that was handed out. With that, the head
-      `rt_malloc` reuses is known to be such a block and `malloc_reuse`'s conditions follow from the
-      invariant; then any sequence of calls is covered, and "a freed block is zero" can be stated. Also unproved: large
-      blocks (the loop that finds a power of two), and the first use of the heap.
+- [x] The allocator on small blocks, for any sequence of calls (`Mini/AllocHeap.lean`). A heap is sound when
+      the blocks handed out so far lie one after another, each behind a header that says its class and
+      state, and every class's list is a chain of freed blocks of that class, none on it twice. Proved:
+      - no two blocks that were handed out share a byte, headers included (`Laid.separate`);
+      - whatever is written inside a block's own bytes, every header stays as it was (`Laid.frame_body`);
+      - a heap from which nothing has been handed out is sound (`empty_sound`);
+      - `rt_malloc` for 1 to 4096 bytes, from a waiting freed block or from fresh heap, and `rt_free` of a
+        block that was handed out and is in use, each do nothing C leaves open and leave a sound heap sound
+        (`malloc_reuse_sound`, `malloc_fresh_sound`, `free_small_sound`). These are about the program
+        itself, and one call's result meets the next call's conditions.
+- [ ] Still outside those theorems: blocks over 4096 bytes (the loop that finds a power of two, and their
+      lists), the first call (which asks the platform for the heap), and running out of room, which stops
+      the machine through a call out of the program. That a freed block is all zero is shown for the
+      moment it is freed (`free_small`); it is not yet part of what "sound" says, so it is not shown to
+      still hold later.
+- [ ] What the caller has to keep to, and nothing here checks: that it frees only what it was handed, once.
+      Freeing a block twice is caught by the header and stops the machine; freeing an address that was
+      never a block is not.
 - [ ] That the printer and the C compiler keep the meaning. Trusted; the printer is about 100 lines.
 - [x] Giving up references and freeing (`Mini/Free.lean`): the same checks as the allocator's
       printed C. Not yet run as the language defines it, and nothing proved.

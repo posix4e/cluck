@@ -97,8 +97,10 @@ The only input. The aim would be memory corruption: turn an attested image into 
     language. Sums, differences, products and comparison are proved to be what they should; division,
     shifts and UTF-8 are not yet.
   - Programs in a small language (`Mini/`), printed as C: the allocator, freeing, arrays, big numbers in
-    memory, hashing. The language has a definition that fails wherever C leaves the outcome open, and one
-    path of the allocator is proved against it. The rest is tested. The printer, about 150 lines, and the C
+    memory, hashing. The language has a definition that fails wherever C leaves the outcome open. Against
+    it the allocator is proved, for blocks up to 4096 bytes and any sequence of requests and frees: no two
+    blocks share a byte, and a caller writing inside its block cannot damage a header. Large blocks, and
+    the other programs, are tested. The printer, about 150 lines, and the C
     compiler are trusted to keep the meaning; nothing checks that they do but the tests.
   - C by hand (`rt/`), about 660 lines that reach an image: closures, strings, making constants permanent,
     start-up, stopping, device access. Tested only.

@@ -8,6 +8,8 @@ What is done and what is left is in [TODO.md](TODO.md). What it defends against,
 [THREAT_MODEL.md](THREAT_MODEL.md). How to work on it is in [CONTRIBUTING.md](CONTRIBUTING.md). To build a
 service of your own on it, see "Building on it" below.
 
+Licensed under the GNU Affero General Public License, version 3 ([LICENSE](LICENSE)).
+
 ## The stack
 
 | Layer | Language | Contents |

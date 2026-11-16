@@ -281,4 +281,116 @@ theorem mul_value (a b : Limbs) : value (mul a b) = value a * value b := by
   rw [mul, mulLoop_value a b 0 _ (by simp [zeros]) (fun m _ => digit_zeros _ m), value_zeros, tail_zero]
   simp
 
+/-! ## Comparison -/
+
+/-- The number the limbs below `i` are. -/
+def lower (a : Limbs) : Nat → Nat
+  | 0 => 0
+  | i + 1 => lower a i + B ^ i * digit a i
+
+theorem value_split (a : Limbs) (i : Nat) : value a = lower a i + B ^ i * tail a i := by
+  induction i with
+  | zero => simp [lower, tail_zero]
+  | succ i ih =>
+    rw [ih, tail_step a i, lower, Nat.pow_succ]
+    generalize B ^ i = P
+    simp only [Nat.mul_add, Nat.mul_assoc]
+    omega
+
+theorem lower_lt (a : Limbs) (i : Nat) : lower a i < B ^ i := by
+  induction i with
+  | zero => simp [lower]
+  | succ i ih =>
+    have d := digit_lt a i
+    have : B ^ i * digit a i ≤ B ^ i * 4294967295 := Nat.mul_le_mul_left _ (by omega)
+    rw [lower, Nat.pow_succ]
+    generalize B ^ i = P at *
+    omega
+
+/-- 0, 1 or 2 as the first is smaller than, equal to or larger than the second: what `compare` answers. -/
+def order (x y : Nat) : UInt8 := if x < y then 0 else if x = y then 1 else 2
+
+theorem compareFrom_order (a b : Limbs) (i : Nat) (same : tail a i = tail b i) :
+    compareFrom a b i = order (value a) (value b) := by
+  induction i with
+  | zero => simp [compareFrom, order, ← tail_zero, same]
+  | succ i ih =>
+    have sa := value_split a (i + 1); have sb := value_split b (i + 1)
+    have la := lower_lt a i; have lb := lower_lt b i
+    have da := digit_lt a i; have db := digit_lt b i
+    rw [same] at sa
+    simp only [lower, Nat.pow_succ] at sa sb
+    simp only [compareFrom, UInt64.lt_iff_toNat_lt, limb_toNat]
+    by_cases h1 : digit a i < digit b i
+    · have : B ^ i * (digit a i + 1) ≤ B ^ i * digit b i := Nat.mul_le_mul_left _ (by omega)
+      simp only [h1, ↓reduceIte, order]
+      generalize B ^ i = P at *
+      generalize P * B * tail b (i + 1) = high at *
+      simp only [Nat.mul_add, Nat.mul_one] at this
+      have : value a < value b := by omega
+      simp [this]
+    · by_cases h2 : digit b i < digit a i
+      · have : B ^ i * (digit b i + 1) ≤ B ^ i * digit a i := Nat.mul_le_mul_left _ (by omega)
+        simp only [h1, h2, ↓reduceIte, order]
+        generalize B ^ i = P at *
+        generalize P * B * tail b (i + 1) = high at *
+        simp only [Nat.mul_add, Nat.mul_one] at this
+        have : value b < value a := by omega
+        have h3 : ¬ value a < value b := by omega
+        have h4 : value a ≠ value b := by omega
+        simp [h3, h4]
+      · have eq : digit a i = digit b i := by omega
+        simp only [h1, h2, ↓reduceIte]
+        exact ih (by rw [tail_step a i, tail_step b i, eq, same])
+
+/-- No zero limb on top: how a number arrives, and what `trim` leaves. -/
+def Trimmed (a : Limbs) : Prop := a.size = 0 ∨ digit a (a.size - 1) ≠ 0
+
+theorem value_lt_pow (a : Limbs) : value a < B ^ a.size := by
+  have := value_split a a.size
+  rw [tail_of_le a _ (Nat.le_refl _)] at this
+  have := lower_lt a a.size
+  omega
+
+theorem pow_le_value (a : Limbs) (h : a.size ≠ 0) (t : Trimmed a) : B ^ (a.size - 1) ≤ value a := by
+  have top : digit a (a.size - 1) ≠ 0 := by rcases t with z | nz; exact absurd z h; exact nz
+  have s := value_split a (a.size - 1)
+  rw [tail_step a (a.size - 1)] at s
+  have : B ^ (a.size - 1) * 1 ≤ B ^ (a.size - 1) * (digit a (a.size - 1) + B * tail a (a.size - 1 + 1)) :=
+    Nat.mul_le_mul_left _ (by omega)
+  omega
+
+theorem value_lt_of_shorter (a b : Limbs) (h : a.size < b.size) (t : Trimmed b) : value a < value b := by
+  have ha := value_lt_pow a
+  have hb := pow_le_value b (by omega) t
+  have : B ^ a.size ≤ B ^ (b.size - 1) := Nat.pow_le_pow_right (by decide) (by omega)
+  omega
+
+/-- On numbers with no zero limb on top, `compare` says which is larger. -/
+theorem compare_order (a b : Limbs) (ta : Trimmed a) (tb : Trimmed b) : compare a b = order (value a) (value b) := by
+  simp only [compare]
+  by_cases h1 : a.size < b.size
+  · simp [h1, order, value_lt_of_shorter a b h1 tb]
+  · by_cases h2 : b.size < a.size
+    · have := value_lt_of_shorter b a h2 ta
+      have h3 : ¬ value a < value b := by omega
+      have h4 : value a ≠ value b := by omega
+      simp [h1, h2, order, h3, h4]
+    · simp only [h1, h2, ↓reduceIte]
+      exact compareFrom_order a b a.size (by rw [tail_of_le a _ (Nat.le_refl _), tail_of_le b _ (by omega)])
+
+/-- Subtraction of natural numbers: the difference, or zero where there is none. -/
+theorem natSub_value (a b : Limbs) (ta : Trimmed a) (tb : Trimmed b) : value (natSub a b) = value a - value b := by
+  simp only [natSub, compare_order a b ta tb, order]
+  by_cases h1 : value a < value b
+  · have z : value a - value b = 0 := by omega
+    simp only [h1, ↓reduceIte, show ((0 : UInt8) == 2) = false from rfl, Bool.false_eq_true, z]
+    rfl
+  · by_cases h2 : value a = value b
+    · simp only [h2, Nat.lt_irrefl, ↓reduceIte, show ((1 : UInt8) == 2) = false from rfl, Bool.false_eq_true,
+        Nat.sub_self]
+      rfl
+    · simp only [h1, h2, ↓reduceIte, show ((2 : UInt8) == 2) = true from rfl]
+      exact sub_value a b (by omega)
+
 end Runtime.Big

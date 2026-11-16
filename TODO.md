@@ -119,7 +119,8 @@ printed. What is reasoned about and what is compiled are then the same text.
 - [x] Giving up references and freeing (`Mini/Free.lean`): the same checks as the allocator's
       printed C. Not yet run as the language defines it, and nothing proved.
 - [x] What a number too large for a word is in memory (`Mini/Number.lean`), in place of `rt/big.c`.
-- [ ] The rest of `rt/`, a file at a time: making objects permanent, arrays, closures, strings, hashing.
+- [x] Arrays and byte arrays (`Mini/Array.lean`), in place of `rt/array.c`.
+- [ ] The rest of `rt/`, a file at a time: making objects permanent, closures, strings, hashing.
       Calling a function through its address, and floating-point bits, need the language to grow first.
 
 ### Hardening the OS, before anything secret runs on it

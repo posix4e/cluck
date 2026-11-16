@@ -4,3 +4,4 @@ import Mini.Run
 import Mini.Alloc
 import Mini.Free
 import Mini.Number
+import Mini.Array

@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# Builds an image that boots on a bare x86-64 machine.
+#
+#   scripts/build-bare hello          the boot stub with a few lines of C, no Lean (boot/hello.c)
+#   scripts/build-bare faultcheck     the same, for scripts/check-protection (boot/faultcheck.c)
+#   scripts/build-bare <executable>   a built Lean executable on the minimal runtime
+#
+# The second form links the program's compiled Lean and Lean's own Init and Std with rt/, rt/bare/ and boot/
+# into one statically linked image that runs at 16 MiB. No C library is involved. Everything is compiled and linked by
+# the compiler and linker Lean ships.
+#
+# Init and Std have to be the x86-64 Linux build (x86-64 ELF that needs nothing from an operating system):
+#   - on an x86-64 Linux host they are the toolchain's own, and the program's objects are the ones Lake built;
+#   - on any other host they come from an unpacked Linux toolchain, by default
+#     ~/.elan/cross/lean-<version>-linux (set SILO_LINUX_TOOLCHAIN to point elsewhere), and the program's
+#     modules are compiled for x86-64 here from the C that Lean generated for them.
+#
+# The result is the same image in two shapes, and scripts/run-qemu runs either:
+#   .lake/build/bare/<name>.elf       for a PVH loader, which reads ELF;
+#   .lake/build/bare/<name>.bzImage   for a Linux boot protocol loader, as a Nitro Enclave's is: the setup
+#                                     sectors of boot/setup.S, then the image as one run of bytes (mkimage).
+# Three more files are for testing only (see boot/setup.S). Under a BIOS-style loader such as QEMU's:
+#   <name>.long.bzImage    enters the image at its 64-bit entry instead of its 32-bit one;
+#   <name>.moved.bzImage   first moves the image to 48 MiB, as a loader might put it there;
+#   <name>.onto.bzImage    first moves it to 64 KiB above where it is linked to run, on top of where it has
+#                          to go, which an image larger than that has to refuse.
+set -euo pipefail
+
+# The OS's own files (boot/, rt/, the other scripts) are found beside this script, so a project that has
+# silo-os as a dependency runs it from its own directory: .lake/packages/silo-os/scripts/build-bare ...
+os="$(cd "$(dirname "$0")/.." && pwd)"
+
+name="${1:?usage: scripts/build-bare hello | faultcheck | <executable>}"
+toolchain="$(lean --print-prefix)"
+cc="$toolchain/bin/clang"
+out=".lake/build/bare"
+mkdir -p "$out/obj"
+
+# The linker Lean ships is lld under the name its platform uses; called by its ELF name it links ELF.
+if [ -x "$toolchain/bin/ld.lld" ]; then
+  ld="$toolchain/bin/ld.lld"
+else
+  ln -sf "$toolchain/bin/ld64.lld" "$out/ld.lld"
+  ld="$out/ld.lld"
+fi
+
+# Freestanding x86-64, with only the compiler's own headers. No red zone, since exception stubs run on the
+# same stack; no stack protector, which wants thread-local storage that does not exist here.
+cflags=(--target=x86_64-unknown-none-elf -ffreestanding -nostdinc -isystem "$toolchain/include/clang"
+  -O2 -Wall -Wextra -Werror -fno-stack-protector -mno-red-zone -fno-pic -fdata-sections -ffunction-sections)
+
+objects=()
+compile() {
+  local source="$1"; shift
+  local object="$out/obj/$(echo "${source%.*}" | tr '/' '_').o"
+  "$cc" -c "${cflags[@]}" "$@" -o "$object" "$os/$source"
+  objects+=("$object")
+}
+
+compile boot/linux.S
+compile boot/entry.S
+compile boot/early.c
+
+# Makes a kernel image from the linked image and boot/setup.S, the latter built with the flags given.
+kernel_image() {
+  local setup="$1" image="$2"; shift 2
+  "$cc" -c --target=x86_64-unknown-none-elf -Wall -Werror "$@" -o "$out/obj/boot_$setup.o" "$os/boot/setup.S"
+  "$ld" -static -nostdlib --oformat binary -T "$os/boot/setup.ld" -o "$out/$setup.bin" "$out/obj/boot_$setup.o"
+  "$mkimage" "$out/$name.elf" "$out/$setup.bin" "$image" 2> "$out/$name.mkimage.txt" || {
+    cat "$out/$name.mkimage.txt" >&2
+    exit 2
+  }
+}
+
+# Links the image from `objects` and whatever else is passed, then makes the kernel image from it.
+finish() {
+  "$ld" -static -nostdlib --gc-sections --strip-all --orphan-handling=error -z max-page-size=0x1000 -T "$os/boot/link.ld" -o "$out/$name.elf" \
+    -Map="$out/$name.map" \
+    "${objects[@]}" "$@"
+  mkimage=.lake/build/bin/mkimage
+  [ -x "$mkimage" ] || mkimage="$os/.lake/build/bin/mkimage"
+  [ -x "$mkimage" ] || { echo "build-bare: no mkimage (run: lake build mkimage)" >&2; exit 2; }
+  kernel_image setup "$out/$name.bzImage"
+  kernel_image setup-long "$out/$name.long.bzImage" -DENTER_LONG
+  kernel_image setup-moved "$out/$name.moved.bzImage" -DMOVE_TO=0x3000000
+  kernel_image setup-onto "$out/$name.onto.bzImage" -DMOVE_TO=0x1010000
+  echo "$out/$name.elf"
+  echo "$out/$name.bzImage"
+  echo "$out/$name.long.bzImage"
+}
+
+# A program that is C alone lives in boot/ under its own name.
+if [ -f "$os/boot/$name.c" ] && [ "$name" != early ]; then
+  compile "boot/$name.c"
+  finish
+  exit 0
+fi
+
+rsp=".lake/build/bin/$name.rsp"
+[ -f "$rsp" ] || { echo "build-bare: no $rsp (run: lake build $name)" >&2; exit 2; }
+if [ "$(uname -s)-$(uname -m)" = "Linux-x86_64" ]; then
+  cross=""
+  lean_libs="$toolchain/lib/lean"
+else
+  version="$(lean --version | sed -E 's/.*version ([0-9.]+).*/\1/')"
+  cross="${SILO_LINUX_TOOLCHAIN:-$HOME/.elan/cross/lean-$version-linux}"
+  lean_libs="$cross/lib/lean"
+  [ -f "$lean_libs/libInit.a" ] || {
+    echo "build-bare: no x86-64 Linux build of Lean's Init and Std at $cross (set SILO_LINUX_TOOLCHAIN)" >&2
+    exit 2
+  }
+fi
+
+for source in "$os"/rt/*.c; do
+  source="${source#"$os"/}"
+  case "$source" in rt/platform_*.c) continue ;; esac
+  compile "$source" -I "$toolchain/include"
+done
+compile rt/bare/platform.c -I "$toolchain/include"
+compile rt/bare/hw.c -I "$toolchain/include"
+compile rt/bare/checks.c -I "$toolchain/include"
+compile rt/bare/libc.c -fno-builtin
+
+# The program's own compiled Lean, from Lake's link line, without the hosted platform's object. Where Lake's
+# objects are for another machine, the C beside each one is compiled for this one instead; that C is the
+# compiler's output, so it is not held to the warnings the hand-written C is.
+lean_objects=()
+while IFS= read -r line; do
+  arg="${line#\"}"
+  arg="${arg%\"}"
+  case "$arg" in
+    */rt/platform_*.o) ;;
+    *.c.o.export)
+      if [ -z "$cross" ]; then
+        lean_objects+=("$arg")
+      else
+        source="${arg%.o.export}"
+        object="$out/obj/lean_$(echo "${source#"$PWD"/}" | tr '/' '_').o"
+        "$cc" -c --target=x86_64-unknown-none-elf -ffreestanding -nostdinc -isystem "$toolchain/include/clang" \
+          -I "$toolchain/include" -O2 -DNDEBUG -fno-stack-protector -fno-pic -fdata-sections -ffunction-sections \
+          -w -o "$object" "$source"
+        lean_objects+=("$object")
+      fi ;;
+  esac
+done < "$rsp"
+
+finish "${lean_objects[@]}" --start-group "$lean_libs/libInit.a" "$lean_libs/libStd.a" --end-group

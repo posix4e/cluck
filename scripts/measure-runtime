@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# What a Lean executable's live code needs from outside compiled Lean.
+#
+#   scripts/measure-runtime <executable> [<response file>]
+#
+# Repeats the link Lake did for a built executable, but with nothing except compiled Lean on the link line
+# (the program's own objects and the toolchain's Init and Std), lets every missing symbol stay missing, and
+# prints the ones that survive dead-code removal. That list is exactly what a replacement for Lean's runtime
+# has to provide for this program. One name per line, sorted, without the platform's leading underscore.
+#
+# The response file defaults to .lake/build/bin/<executable>.rsp, which Lake writes when it links.
+set -euo pipefail
+
+exe="${1:?usage: scripts/measure-runtime <executable> [<response file>]}"
+rsp="${2:-.lake/build/bin/$exe.rsp}"
+[ -f "$rsp" ] || { echo "measure-runtime: no $rsp (run: lake build $exe)" >&2; exit 2; }
+
+toolchain="$(lean --print-prefix)"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+
+# Lake's link line, keeping the objects, the search paths and compiled Lean; dropping every other library.
+args=()
+while IFS= read -r line; do
+  arg="${line#\"}"
+  arg="${arg%\"}"
+  case "$arg" in
+    -lInit | -lStd) args+=("$arg") ;;
+    # On Linux, Lean's toolchain carries its own C library and names its pieces on the link line; the C
+    # start-up code needs them. They stay: this is the hosted platform, which does stand on a C library.
+    -lc | -lc_nonshared | -l:ld.so | -lpthread_nonshared) args+=("$arg") ;;
+    -l* | -pthread) ;;
+    */rt/platform_*.o) ;;   # the platform's C is not compiled Lean; what it provides shows up as needed
+    *) args+=("$arg") ;;
+  esac
+done < "$rsp"
+
+case "$(uname -s)" in
+  Darwin)
+    MACOSX_DEPLOYMENT_TARGET=99.0 "$toolchain/bin/clang" -o "$work/out" "${args[@]}" \
+      -Wl,-dead_strip -Wl,-undefined,dynamic_lookup
+    nm -u "$work/out" | sed 's/^ *U *//; s/^ *//; s/^_//' | grep -v '^dyld_stub_binder$' | sort -u
+    ;;
+  *)
+    "$toolchain/bin/clang" -o "$work/out" "${args[@]}" \
+      -Wl,--gc-sections -Wl,--unresolved-symbols=ignore-all
+    # Symbols the C library answers are not part of the question: bare metal has no C library, so they are
+    # listed too, marked by where they would have come from.
+    nm -u "$work/out" | sed 's/^ *[Uw] *//; s/^ *//; s/@.*$//' | grep -v '^$' | sort -u
+    ;;
+esac

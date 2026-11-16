@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""What an image is made of: the inputs that take the most room, from the linker's map.
+
+  scripts/image-contents <name> [how many]
+  scripts/image-contents <name> --total     only the number of bytes linked in, for a check
+
+scripts/build-bare writes .lake/build/bare/<name>.map beside the image. This adds up, for each object file
+and each library, the bytes of it that ended up in the image, and prints the largest. It is for when an image
+grows and the question is what was linked in.
+
+The total is what the inputs put into the image; the image's file is that plus a little padding between
+its pieces.
+"""
+import collections, re, sys
+
+name = sys.argv[1]
+total_only = len(sys.argv) > 2 and sys.argv[2] == "--total"
+count = int(sys.argv[2]) if len(sys.argv) > 2 and not total_only else 25
+sizes = collections.Counter()
+members = collections.Counter()
+for line in open(f".lake/build/bare/{name}.map"):
+    m = re.match(r"\s*[0-9a-f]+\s+[0-9a-f]+\s+([0-9a-f]+)\s+\d+\s+(\S.*):\((\.[^)]*)\)$", line)
+    if not m or m.group(3).startswith((".bss", ".stack")):
+        continue
+    size, origin = int(m.group(1), 16), m.group(2)
+    archive = re.match(r"(.*\.a)\((.*)\)$", origin)
+    if archive:
+        sizes[archive.group(1).split("/")[-1]] += size
+        members[archive.group(1).split("/")[-1] + ": " + archive.group(2)] += size
+    else:
+        sizes[origin.split("/")[-1]] += size
+if total_only:
+    print(sum(sizes.values()))
+    sys.exit(0)
+print(f"linked in: {sum(sizes.values())} bytes")
+print("by input:")
+for origin, size in sizes.most_common(count):
+    print(f"{size:10d}  {origin}")
+print("by member of a library:")
+for origin, size in members.most_common(count):
+    print(f"{size:10d}  {origin}")

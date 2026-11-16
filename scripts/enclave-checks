@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# What can only be learned in a real Nitro Enclave, in one go. Run on an enclave's parent.
+#
+#   scripts/enclave-checks <directory with the files CI keeps>
+#
+# CI keeps, beside the images that are served from (`silo-os-enclave-image`): `virtio-probe.eif`; one
+# `probe-check-<check>.eif` for each thing the memory mapping must refuse (the same checks
+# scripts/check-protection runs under QEMU) and one for the big-number test; and `big-test.txt`, what that
+# test prints on Lean's own runtime.
+#
+# Each is the probe, started in debug mode with its console attached, which is the only way to read what an
+# enclave prints; an enclave in debug mode attests to nothing. The probe answers the boot heartbeat first,
+# because an enclave's parent shows nothing of an image that has not (learned on 2026-11-16, with images
+# that could not), and then tries the one thing its command line names.
+#
+# Run on 2026-11-16, everything passed. An enclave that has stopped itself stays up with its console attached
+# until it is ended, so the whole run takes about twenty-five minutes.
+#
+# It needs aws-nitro-enclaves-cli with its allocator running, and prints one line per thing established,
+# starting "ok" or "FAIL"; the exit status is 1 if any failed. Everything the enclaves printed is left in
+# ./enclave-checks.out/.
+set -uo pipefail
+
+files="${1:?usage: scripts/enclave-checks <directory with the files CI keeps>}"
+mkdir -p enclave-checks.out
+failed=0
+
+# Starts an image and keeps what it prints, for at most two minutes.
+console() {
+  local name="$1"
+  sudo nitro-cli terminate-enclave --all > /dev/null 2>&1 || true
+  timeout 120 sudo nitro-cli run-enclave --eif-path "$files/$name.eif" --cpu-count 2 --memory 512 \
+    --debug-mode --attach-console > "enclave-checks.out/$name.txt" 2>&1 || true
+  sudo nitro-cli terminate-enclave --all > /dev/null 2>&1 || true
+}
+
+expect() {
+  local name="$1" needle="$2"
+  console "probe-check-$name"
+  if grep -q -- "$needle" "enclave-checks.out/probe-check-$name.txt"; then
+    echo "ok    $name: $(grep -- "$needle" "enclave-checks.out/probe-check-$name.txt" | head -1)"
+  else
+    echo "FAIL  $name: the console did not show: $needle"
+    failed=1
+  fi
+}
+
+# What the machine looks like, and whether its processor offers timing that does not depend on data.
+console virtio-probe
+for line in "entered by the Linux boot protocol" "timing that does not depend on data" "the secure module works"; do
+  if grep -q -- "$line" enclave-checks.out/virtio-probe.txt; then
+    echo "ok    probe: $(grep -- "$line" enclave-checks.out/virtio-probe.txt | head -1)"
+  else
+    echo "FAIL  probe: the console did not show: $line"
+    failed=1
+  fi
+done
+
+# What the memory mapping must refuse, as scripts/check-protection has it.
+expect none            "nothing forbidden was tried"
+expect write-code      "writing .* which that memory does not allow"
+expect write-constant  "writing .* which that memory does not allow"
+expect run-data        "running .* which that memory does not allow"
+expect run-heap        "running .* which that memory does not allow"
+expect run-stack       "running .* which that memory does not allow"
+expect read-zero       "reading .* which is not mapped"
+expect read-low        "reading .* which is not mapped"
+expect overflow        "the stack overflowed"
+expect beside-device   "reading .* which is not mapped"
+
+# The big-number test: every line it prints on Lean's own runtime has to be on the console, in order.
+console probe-check-big
+if grep -v '^$' "$files/big-test.txt" | diff -q - <(tr -d '\r' < enclave-checks.out/probe-check-big.txt | grep -F -x -f "$files/big-test.txt") > /dev/null; then
+  echo "ok    big-test: the console shows the $(grep -c . "$files/big-test.txt") lines Lean's own runtime prints"
+else
+  echo "FAIL  big-test: the console does not show what Lean's own runtime prints"
+  failed=1
+fi
+
+exit "$failed"

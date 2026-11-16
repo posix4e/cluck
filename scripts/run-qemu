@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Boots an image from scripts/build-bare under QEMU and passes on what it prints.
+#
+#   scripts/run-qemu [--microvm | --enclave <socket>] <image> [seconds] [extra QEMU arguments...]
+#
+# The image is any of the shapes build-bare makes: QEMU loads an .elf as a PVH loader and a .bzImage as a
+# BIOS-era Linux loader.
+#
+# The image's serial output goes to standard output, untouched. The exit status is the image's own: 0 if its
+# `main` returned 0. An image stops by writing its code plus 16 to a debug device, which QEMU turns into the
+# status (value * 2 + 1); this undoes both. Anything else (QEMU failing to start, which is status 1, or the
+# time running out) is reported and becomes status 100.
+#
+# The default machine is an ordinary PC (q35). --microvm is QEMU's minimal machine, whose devices are virtio
+# behind memory-mapped registers, as in a Nitro Enclave; devices are added with extra arguments, for example
+# -device virtio-rng-device.
+#
+# --enclave is QEMU's emulation of a Nitro Enclave itself: the image is an .eif (scripts/build-eif), which
+# QEMU unpacks and measures, and the machine has a Secure Module and a vsock device. The vsock device is
+# served by another program, vhost-device-vsock, listening on the given socket. Few QEMUs are built with
+# this machine; SILO_QEMU names the one to run when it is not the qemu-system-x86_64 on the path.
+set -uo pipefail
+
+qemu="${SILO_QEMU:-qemu-system-x86_64}"
+usage="usage: scripts/run-qemu [--microvm | --enclave <socket>] <image> [seconds] [extra QEMU arguments...]"
+# Without ACPI these machines announce their virtio devices on the kernel command line, the way an enclave's
+# loader does; version 2 of the register layout is the one the drivers speak.
+machine=(-machine q35)
+case "${1:-}" in
+  --microvm)
+    shift
+    machine=(-machine microvm,acpi=off -global virtio-mmio.force-legacy=false) ;;
+  --enclave)
+    socket="${2:?$usage}"
+    shift 2
+    machine=(-machine nitro-enclave,vsock=silo-vsock -chardev "socket,id=silo-vsock,path=$socket"
+      -global virtio-mmio.force-legacy=false) ;;
+esac
+
+image="${1:?$usage}"
+seconds="${2:-120}"
+shift
+[ $# -gt 0 ] && shift
+
+timeout "$seconds" "$qemu" \
+  "${machine[@]}" -accel tcg -cpu max -m 1G \
+  -display none -monitor none -serial stdio -no-reboot \
+  -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+  -kernel "$image" "$@"
+status=$?
+if [ $((status % 2)) -eq 1 ] && [ "$status" -ge 33 ]; then exit $(((status - 33) / 2)); fi
+echo "run-qemu: QEMU ended with status $status without the image reporting an exit" >&2
+exit 100

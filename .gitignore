@@ -1,0 +1,4 @@
+.lake/
+*.eif
+*.o
+.wrangler/

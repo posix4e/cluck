@@ -1,0 +1,444 @@
+#!/usr/bin/env python3
+"""Decides whether an attestation document says what it must before anyone trusts the enclave it came from.
+
+    verify-attestation --document FILE --nonce HEX --pcrs FILE [--at UNIX_SECONDS] [--root PEM]
+                       [--public-key TEXT] [--user-data HEX] [--crl FILE]...
+
+It accepts the document only if all of this holds:
+
+  - it is a COSE_Sign1 message, signed with ECDSA over P-384 and SHA-384, and nothing else follows it;
+  - the certificate that signed it chains, certificate by certificate, to the AWS Nitro Enclaves root, and
+    every certificate in the chain is within its validity at the time of checking;
+  - its content has the shape AWS documents (docs.aws.amazon.com/enclaves/latest/user/verify-root.html);
+  - it carries the nonce given here, which the verifier chose and sent with its request: that is what makes
+    the document an answer to this request and not a recording of an earlier one;
+  - its measurements PCR0, PCR1 and PCR2 are the ones in the given file (scripts/build-eif writes it from
+    the image built from source), and are not all zeros, which is what an enclave started in debug mode has.
+
+A service can have its enclave put two things of its own in the document: a public key and some user data,
+such as a digest of what it was configured with. Given --public-key or --user-data, the document is accepted
+only if it carries exactly that. What they mean is the service's to say; a document that carries either
+without being held to it is reported as such.
+
+It prints what it found and exits 0, or prints why it refused and exits 1.
+
+The AWS root is the file beside this script; its SHA-256 fingerprint is checked against the one AWS
+publishes, which is written below. --root replaces it, for tests with a made-up authority, and says so.
+
+This runs outside the enclave, but an operator acts on its answer, so it is as trusted as anything inside.
+It depends on one library, `cryptography`, for certificates and signatures. The CBOR it reads is decoded
+here, strictly: only the forms an attestation document uses.
+"""
+import argparse
+import hashlib
+import json
+import os
+import sys
+import time
+
+from cryptography import x509
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+
+# The SHA-256 fingerprint of the AWS Nitro Enclaves root certificate, as published on the page above.
+AWS_ROOT_FINGERPRINT = "641a0321a3e244efe456463195d606317ed7cdcc3c1756e09893f3c68f79bb5b"
+
+
+class Refused(Exception):
+    pass
+
+
+def require(holds, why):
+    if not holds:
+        raise Refused(why)
+
+
+# ---- CBOR, as much of it as an attestation document uses ----
+
+class Tagged:
+    def __init__(self, tag, value):
+        self.tag = tag
+        self.value = value
+
+
+def cbor_item(data, at, depth=0):
+    """The item starting at data[at], and where the next one starts. Numbers are unsigned or negative
+    integers and the only simple value is null. A string, list or map may give its length up front or be
+    open-ended and closed by a break, which is how a real document's content is written."""
+    require(depth < 16, "the document is nested too deeply")
+    require(at < len(data), "the document ends in the middle of an item")
+    major, low = data[at] >> 5, data[at] & 0x1F
+    at += 1
+    if major == 7:
+        require(low == 22, "the document uses a kind of value an attestation document does not")
+        return None, at
+    open_ended = low == 31 and major in (2, 3, 4, 5)
+    if low < 24:
+        argument = low
+    elif low <= 27:
+        size = 1 << (low - 24)
+        require(at + size <= len(data), "the document ends in the middle of a number")
+        argument = int.from_bytes(data[at:at + size], "big")
+        at += size
+    else:
+        require(open_ended, "the document uses a length an attestation document does not")
+        argument = None
+
+    def more(position, taken):
+        """Whether another item of this string, list or map starts at `position`."""
+        if not open_ended:
+            return taken < argument
+        require(position < len(data), "the document ends inside something that was never closed")
+        return data[position] != 0xFF
+
+    if major == 0:
+        return argument, at
+    if major == 1:
+        return -1 - argument, at
+    if major in (2, 3):
+        if open_ended:
+            # Pieces, each a string of the same kind with its length up front.
+            chunk = b""
+            while more(at, 0):
+                require(data[at] >> 5 == major and data[at] & 0x1F != 31, "a string in the document is malformed")
+                piece, at = cbor_item(data, at, depth + 1)
+                chunk += piece if major == 2 else piece.encode("utf-8")
+            at += 1
+        else:
+            require(at + argument <= len(data), "the document ends in the middle of a string")
+            chunk = bytes(data[at:at + argument])
+            at += argument
+        if major == 3:
+            try:
+                chunk = chunk.decode("utf-8")
+            except UnicodeDecodeError:
+                raise Refused("a text string in the document is not text")
+        return chunk, at
+    if major == 4:
+        require(open_ended or argument <= len(data), "the document claims more items than it has bytes")
+        items = []
+        while more(at, len(items)):
+            item, at = cbor_item(data, at, depth + 1)
+            items.append(item)
+        return items, at + 1 if open_ended else at
+    if major == 5:
+        require(open_ended or argument <= len(data), "the document claims more entries than it has bytes")
+        entries = {}
+        while more(at, len(entries)):
+            key, at = cbor_item(data, at, depth + 1)
+            require(isinstance(key, (int, str)), "a map in the document has a key that is not a name or a number")
+            require(key not in entries, "a map in the document has the same key twice")
+            entries[key], at = cbor_item(data, at, depth + 1)
+        return entries, at + 1 if open_ended else at
+    item, at = cbor_item(data, at, depth + 1)
+    return Tagged(argument, item), at
+
+
+def cbor_whole(data, what):
+    item, at = cbor_item(data, 0)
+    require(at == len(data), f"something follows {what}")
+    return item
+
+
+def cbor_head(major, argument):
+    if argument < 24:
+        return bytes([major << 5 | argument])
+    for low, size in ((24, 1), (25, 2), (26, 4), (27, 8)):
+        if argument < 1 << (8 * size):
+            return bytes([major << 5 | low]) + argument.to_bytes(size, "big")
+    raise ValueError("too large")
+
+
+def cbor_bytes(value):
+    return cbor_head(2, len(value)) + value
+
+
+def cbor_text(value):
+    encoded = value.encode("utf-8")
+    return cbor_head(3, len(encoded)) + encoded
+
+
+# ---- The document ----
+
+def is_bytes(value, least, most):
+    return isinstance(value, bytes) and least <= len(value) <= most
+
+
+def parse(document):
+    """The four parts of the signed message and its content, checked for shape only."""
+    message = cbor_whole(document, "the signed message")
+    if isinstance(message, Tagged):
+        require(message.tag == 18, "the message is tagged as something other than COSE_Sign1")
+        message = message.value
+    require(isinstance(message, list) and len(message) == 4, "the message is not a COSE_Sign1 structure")
+    protected, unprotected, payload, signature = message
+    require(isinstance(protected, bytes) and isinstance(payload, bytes) and isinstance(signature, bytes),
+            "the message is not a COSE_Sign1 structure")
+    require(isinstance(unprotected, dict), "the message is not a COSE_Sign1 structure")
+    headers = cbor_whole(protected, "the signed headers")
+    require(isinstance(headers, dict) and headers.get(1) == -35,
+            "the message is not signed with ECDSA over P-384 and SHA-384")
+    require(len(signature) == 96, "the signature is not the size a P-384 signature is")
+
+    content = cbor_whole(payload, "the attestation document")
+    require(isinstance(content, dict), "the attestation document is not a map")
+    known = {"module_id", "digest", "timestamp", "pcrs", "certificate", "cabundle", "public_key", "user_data",
+             "nonce"}
+    require(set(content) <= known, "the attestation document has fields this verifier does not know")
+    for field in ("module_id", "digest", "timestamp", "pcrs", "certificate", "cabundle"):
+        require(field in content, f"the attestation document has no {field}")
+    require(isinstance(content["module_id"], str) and content["module_id"] != "", "module_id is not a name")
+    require(content["digest"] == "SHA384", "the measurements are not SHA-384")
+    require(isinstance(content["timestamp"], int) and 0 < content["timestamp"] < 1 << 64,
+            "timestamp is not a time")
+    pcrs = content["pcrs"]
+    require(isinstance(pcrs, dict) and 1 <= len(pcrs) <= 32, "pcrs is not a table of measurements")
+    for index, value in pcrs.items():
+        require(isinstance(index, int) and 0 <= index < 32, "pcrs has an index that is not 0 to 31")
+        require(isinstance(value, bytes) and len(value) in (32, 48, 64), "a measurement has the wrong size")
+    require(is_bytes(content["certificate"], 1, 1024), "certificate is not a certificate")
+    bundle = content["cabundle"]
+    require(isinstance(bundle, list) and len(bundle) >= 1, "cabundle is empty")
+    for entry in bundle:
+        require(is_bytes(entry, 1, 1024), "cabundle has an entry that is not a certificate")
+    for field in ("public_key", "user_data", "nonce"):
+        value = content.get(field)
+        require(value is None or is_bytes(value, 0, 1024), f"{field} is not bytes")
+    return protected, payload, signature, content
+
+
+# ---- Certificates ----
+
+def load_certificate(der, what):
+    try:
+        return x509.load_der_x509_certificate(der)
+    except Exception:
+        raise Refused(f"{what} is not a certificate")
+
+
+def extension(certificate, kind):
+    try:
+        return certificate.extensions.get_extension_for_class(kind).value
+    except x509.ExtensionNotFound:
+        return None
+
+
+def check_certificate(certificate, what, at):
+    require(certificate.not_valid_before_utc.timestamp() <= at <= certificate.not_valid_after_utc.timestamp(),
+            f"{what} is not valid at the time of checking")
+    for found in certificate.extensions:
+        require(not found.critical or isinstance(found.value, (x509.BasicConstraints, x509.KeyUsage)),
+                f"{what} has a critical extension this verifier does not understand")
+
+
+def check_issued_by(certificate, what, issuer, below):
+    """`certificate` was issued by `issuer`, which is allowed to issue it. `below` is how many more
+    authorities there are between `certificate` and the one that signed the document."""
+    require(certificate.issuer == issuer.subject, f"{what} does not name its issuer")
+    constraints = extension(issuer, x509.BasicConstraints)
+    require(constraints is not None and constraints.ca, f"{what} was issued by something that is not an authority")
+    require(constraints.path_length is None or constraints.path_length >= below,
+            f"{what} is further down the chain than its issuer allows")
+    usage = extension(issuer, x509.KeyUsage)
+    require(usage is None or usage.key_cert_sign, f"{what} was issued by a key that may not sign certificates")
+    key = issuer.public_key()
+    require(isinstance(key, ec.EllipticCurvePublicKey), f"{what} was issued by a key of an unexpected kind")
+    try:
+        key.verify(certificate.signature, certificate.tbs_certificate_bytes,
+                   ec.ECDSA(certificate.signature_hash_algorithm))
+    except (InvalidSignature, TypeError, ValueError):
+        raise Refused(f"{what} was not signed by its issuer")
+
+
+def load_revocation_list(path):
+    with open(path, "rb") as file:
+        data = file.read()
+    for load in (x509.load_der_x509_crl, x509.load_pem_x509_crl):
+        try:
+            return load(data)
+        except Exception:
+            pass
+    raise Refused(f"{path} is not a certificate revocation list")
+
+
+def published_at(certificate):
+    """Where the certificate says its issuer's revocation list is published."""
+    points = extension(certificate, x509.CRLDistributionPoints) or []
+    return [name.value for point in points for name in (point.full_name or [])
+            if isinstance(name, x509.UniformResourceIdentifier)]
+
+
+def check_not_revoked(certificate, what, issuer, lists, at):
+    """Holds `certificate` to every one of `lists` that its issuer issued. Returns how many that was."""
+    used = 0
+    for revoked in lists:
+        if revoked.issuer != issuer.subject:
+            continue
+        usage = extension(issuer, x509.KeyUsage)
+        require(usage is None or usage.crl_sign, f"the revocation list for {what} is from a key that may not sign one")
+        key = issuer.public_key()
+        require(isinstance(key, ec.EllipticCurvePublicKey), f"{what} was issued by a key of an unexpected kind")
+        try:
+            key.verify(revoked.signature, revoked.tbs_certlist_bytes, ec.ECDSA(revoked.signature_hash_algorithm))
+        except (InvalidSignature, TypeError, ValueError):
+            raise Refused(f"the revocation list for {what} was not signed by its issuer")
+        for found in revoked.extensions:
+            require(not found.critical, f"the revocation list for {what} has a critical extension this verifier "
+                                        "does not understand")
+        require(revoked.last_update_utc.timestamp() <= at,
+                f"the revocation list for {what} is dated after the time of checking")
+        require(revoked.next_update_utc is not None and at <= revoked.next_update_utc.timestamp(),
+                f"the revocation list for {what} is out of date at the time of checking")
+        require(revoked.get_revoked_certificate_by_serial_number(certificate.serial_number) is None,
+                f"{what} has been revoked")
+        used += 1
+    return used
+
+
+def check_chain(content, root, at, lists=(), notes=None):
+    """The certificate that signed the document, once it is known to chain to `root`. Certificates are held
+    to the revocation `lists` given; what was and was not checked that way is added to `notes`."""
+    bundle = [load_certificate(der, "an entry of cabundle") for der in content["cabundle"]]
+    leaf = load_certificate(content["certificate"], "certificate")
+    require(content["cabundle"][0] == root.public_bytes(serialization.Encoding.DER),
+            "the chain does not start at the trusted root")
+    chain = bundle + [leaf]
+    applied = 0
+    for position, certificate in enumerate(chain):
+        what = "the root" if position == 0 else "the signing certificate" if certificate is leaf \
+            else f"authority {position} of the chain"
+        check_certificate(certificate, what, at)
+        if position > 0:
+            check_issued_by(certificate, what, chain[position - 1], len(chain) - 1 - position)
+            used = check_not_revoked(certificate, what, chain[position - 1], lists, at)
+            applied += used
+            if notes is not None:
+                where = published_at(certificate)
+                if used:
+                    notes.append(f"verified: {what} is not on its issuer's revocation list")
+                elif where:
+                    notes.append(f"NOTE: {what} was NOT checked for revocation; its issuer's list is published "
+                                 f"at {' '.join(where)} (see --crl)")
+    require(applied == len(lists), "a revocation list was given that no issuer in the chain issued")
+    usage = extension(leaf, x509.KeyUsage)
+    require(usage is None or usage.digital_signature, "the signing certificate's key may not sign")
+    return leaf
+
+
+def check_signature(leaf, protected, payload, signature):
+    key = leaf.public_key()
+    require(isinstance(key, ec.EllipticCurvePublicKey) and isinstance(key.curve, ec.SECP384R1),
+            "the signing certificate's key is not on P-384")
+    # What COSE signs: ["Signature1", the protected headers, no external data, the payload].
+    signed = b"\x84" + cbor_text("Signature1") + cbor_bytes(protected) + cbor_bytes(b"") + cbor_bytes(payload)
+    r = int.from_bytes(signature[:48], "big")
+    s = int.from_bytes(signature[48:], "big")
+    try:
+        key.verify(encode_dss_signature(r, s), signed, ec.ECDSA(hashes.SHA384()))
+    except InvalidSignature:
+        raise Refused("the document's signature does not verify")
+
+
+# ---- What was expected ----
+
+def load_expected_pcrs(path):
+    with open(path) as file:
+        listed = json.load(file)
+    expected = {}
+    for index in (0, 1, 2):
+        value = listed.get(f"PCR{index}")
+        require(isinstance(value, str), f"{path} does not give PCR{index}")
+        expected[index] = bytes.fromhex(value)
+    return expected
+
+
+def load_root(path):
+    """The trusted root, and whether it is the AWS one."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    with open(path or os.path.join(here, "aws-nitro-enclaves-root-g1.pem"), "rb") as file:
+        root = x509.load_pem_x509_certificate(file.read())
+    is_aws = root.fingerprint(hashes.SHA256()).hex() == AWS_ROOT_FINGERPRINT
+    require(path is not None or is_aws, "the root certificate beside this script is not the AWS Nitro Enclaves root")
+    return root, is_aws
+
+
+def check_carried(content, public_key=None, user_data=None):
+    """The document carries exactly this public key and this user data, where either is given."""
+    if public_key is not None:
+        require(content.get("public_key") == public_key, "the document does not carry the expected public key")
+    if user_data is not None:
+        require(content.get("user_data") is not None, "the document carries no user data")
+        require(content["user_data"] == user_data, "the document's user data is not what was expected")
+
+
+def verify(document, nonce, expected, root, at, public_key=None, user_data=None, lists=(), notes=None):
+    protected, payload, signature, content = parse(document)
+    leaf = check_chain(content, root, at, lists, notes)
+    check_signature(leaf, protected, payload, signature)
+    require(content.get("nonce") == nonce, "the document does not carry the nonce that was sent")
+    pcrs = content["pcrs"]
+    for index in (0, 1, 2):
+        require(index in pcrs, f"the document has no PCR{index}")
+        require(any(pcrs[index]), f"PCR{index} is all zeros: the enclave was started in debug mode")
+        require(pcrs[index] == expected[index], f"PCR{index} is not the measurement of the expected image")
+    check_carried(content, public_key, user_data)
+    return content
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Verify a Nitro Enclave attestation document.")
+    parser.add_argument("--document", required=True, help="the attestation document, as the enclave returned it")
+    parser.add_argument("--nonce", required=True, help="the nonce sent with the request, in hexadecimal")
+    parser.add_argument("--pcrs", required=True, help="the expected measurements (scripts/build-eif writes them)")
+    parser.add_argument("--at", type=int, help="check certificates as of this time, in seconds since 1970")
+    parser.add_argument("--root", help="trust this root certificate instead of the AWS one (for tests)")
+    parser.add_argument("--public-key", help="the public key the document must carry, as text")
+    parser.add_argument("--user-data", help="the user data the document must carry, in hexadecimal")
+    parser.add_argument("--crl", action="append", default=[], metavar="FILE",
+                        help="a certificate revocation list fetched from where a certificate in the chain "
+                             "says its issuer publishes one; may be given more than once")
+    arguments = parser.parse_args()
+    try:
+        with open(arguments.document, "rb") as file:
+            document = file.read()
+        try:
+            nonce = bytes.fromhex(arguments.nonce)
+        except ValueError:
+            raise Refused("the nonce given is not hexadecimal")
+        public_key = arguments.public_key.encode("utf-8") if arguments.public_key is not None else None
+        try:
+            user_data = bytes.fromhex(arguments.user_data) if arguments.user_data is not None else None
+        except ValueError:
+            raise Refused("the user data given is not hexadecimal")
+        root, is_aws = load_root(arguments.root)
+        at = arguments.at if arguments.at is not None else int(time.time())
+        notes = []
+        lists = [load_revocation_list(path) for path in arguments.crl]
+        content = verify(document, nonce, load_expected_pcrs(arguments.pcrs), root, at, public_key, user_data, lists, notes)
+    except Refused as refusal:
+        print(f"refused: {refusal}")
+        return 1
+    if not is_aws:
+        print("NOTE: checked against a root that is NOT the AWS Nitro Enclaves root")
+    print(f"verified: module {content['module_id']}")
+    print(f"verified: signed {content['timestamp'] // 1000} (seconds since 1970), checked as of {at}")
+    for index in sorted(content["pcrs"]):
+        note = "  as expected" if index in (0, 1, 2) else ""
+        print(f"verified: PCR{index} {content['pcrs'][index].hex()}{note}")
+    print(f"verified: nonce {nonce.hex()}")
+    for note in notes:
+        print(note)
+    for field, given, what, option in (("public_key", arguments.public_key, "public key", "--public-key"),
+                                       ("user_data", arguments.user_data, "user data", "--user-data")):
+        if given is not None:
+            shown = given if field == "public_key" else content[field].hex()
+            print(f"verified: {what} {shown}")
+        elif content.get(field) is not None:
+            print(f"NOTE: the document also carries a {what}, which was NOT checked (see {option})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

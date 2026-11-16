@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Checks that the machine refuses what its memory mapping is meant to forbid.
+#
+#   scripts/check-protection [--microvm] [elf | bzImage | long.bzImage]
+#
+# The second argument is which shape of the image to boot (scripts/build-bare makes all three); elf if none.
+#
+# Boots boot/faultcheck.c once per forbidden thing (writing code, running data, reading address zero,
+# overflowing the stack, ...) and requires each to end in a reported processor exception, status 3, with the
+# right explanation. One more boot tries nothing forbidden and must end normally.
+set -uo pipefail
+
+machine=()
+if [ "${1:-}" = --microvm ]; then machine=(--microvm); shift; fi
+
+# SILO_CHECK_IMAGE names another image that tries the same things when asked (virtio-probe does, after the
+# boot heartbeat a Nitro Enclave's parent waits for); the default is the image that is nothing else.
+program="${SILO_CHECK_IMAGE:-faultcheck}"
+"$(dirname "$0")/build-bare" "$program" > /dev/null || exit 2
+image=".lake/build/bare/$program.${1:-elf}"
+failed=0
+
+expect() {
+  local name="$1" status="$2" needle="$3"
+  local out got
+  out="$("$(dirname "$0")/run-qemu" ${machine[@]+"${machine[@]}"} "$image" 60 -append "check=$name" 2>&1)"
+  got=$?
+  if [ "$got" = "$status" ] && printf '%s' "$out" | grep -q -- "$needle"; then
+    echo "ok    $name: $(printf '%s' "$out" | grep -- "$needle" | head -1)"
+  else
+    echo "FAIL  $name: status $got (wanted $status), output:"
+    printf '%s\n' "$out" | sed 's/^/        /'
+    failed=1
+  fi
+}
+
+expect none            0 "nothing forbidden was tried"
+expect write-code      3 "writing .* which that memory does not allow"
+expect write-constant  3 "writing .* which that memory does not allow"
+expect run-data        3 "running .* which that memory does not allow"
+expect run-heap        3 "running .* which that memory does not allow"
+expect run-stack       3 "running .* which that memory does not allow"
+expect read-zero       3 "reading .* which is not mapped"
+expect read-low        3 "reading .* which is not mapped"
+expect overflow        3 "the stack overflowed"
+# Device registers are mapped a 4 KiB page at a time, so the page beside them is not there. Only a machine
+# that announces devices has any to look beside.
+if [ ${#machine[@]} -gt 0 ]; then expect beside-device 3 "reading .* which is not mapped"; fi
+
+exit $failed

@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+"""Tests verify-attestation against documents made here, under a certificate authority made here.
+
+    test-verify-attestation
+
+What this checks is that the verifier accepts a document that is right in every respect and refuses one that
+is wrong in any single one. Each case runs the verifier as a separate program, as an operator would, with
+--root pointing at the made-up authority; one case runs it without --root on the same good document, which
+must then be refused, because the made-up authority is not AWS.
+
+Forged documents can be wrong in ways a real one cannot be made to be, which is why most cases use them. The
+last few cases use documents a real enclave returned (vectors/), against the AWS root itself.
+"""
+import datetime
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
+from cryptography.x509.oid import NameOID
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+VERIFIER = os.path.join(HERE, "verify-attestation")
+NOW = 1_800_000_000   # the time every case is checked at, well inside the certificates' validity
+
+
+def head(major, argument):
+    if argument < 24:
+        return bytes([major << 5 | argument])
+    for low, size in ((24, 1), (25, 2), (26, 4), (27, 8)):
+        if argument < 1 << (8 * size):
+            return bytes([major << 5 | low]) + argument.to_bytes(size, "big")
+    raise ValueError(argument)
+
+
+class OpenEnded(dict):
+    """A map to be written without its length up front and closed by a break, as a real document's is."""
+
+
+def encode(value):
+    """CBOR for the handful of types an attestation document is made of."""
+    if isinstance(value, OpenEnded):
+        return b"\xbf" + b"".join(encode(key) + encode(item) for key, item in value.items()) + b"\xff"
+    if value is None:
+        return b"\xf6"
+    if isinstance(value, bool):
+        raise ValueError(value)
+    if isinstance(value, int):
+        return head(0, value) if value >= 0 else head(1, -1 - value)
+    if isinstance(value, bytes):
+        return head(2, len(value)) + value
+    if isinstance(value, str):
+        return head(3, len(value.encode())) + value.encode()
+    if isinstance(value, list):
+        return head(4, len(value)) + b"".join(encode(item) for item in value)
+    if isinstance(value, dict):
+        return head(5, len(value)) + b"".join(encode(key) + encode(item) for key, item in value.items())
+    raise ValueError(value)
+
+
+def certificate(name, key, issuer_name, issuer_key, authority, path_length=None, start=NOW - 3600, end=NOW + 3600):
+    builder = (x509.CertificateBuilder()
+               .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)]))
+               .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer_name)]))
+               .public_key(key.public_key())
+               .serial_number(x509.random_serial_number())
+               .not_valid_before(datetime.datetime.fromtimestamp(start, datetime.timezone.utc))
+               .not_valid_after(datetime.datetime.fromtimestamp(end, datetime.timezone.utc))
+               .add_extension(x509.BasicConstraints(ca=authority, path_length=path_length if authority else None),
+                              critical=True))
+    return builder.sign(issuer_key, hashes.SHA384())
+
+
+def der(cert):
+    return cert.public_bytes(serialization.Encoding.DER)
+
+
+def revocation_list(issuer_name, issuer_key, serials=(), start=NOW - 600, end=NOW + 600):
+    """A revocation list from `issuer_name`, signed with `issuer_key`, naming the certificates in `serials`."""
+    def moment(seconds):
+        return datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc)
+    builder = (x509.CertificateRevocationListBuilder()
+               .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, issuer_name)]))
+               .last_update(moment(start))
+               .next_update(moment(end)))
+    for serial in serials:
+        builder = builder.add_revoked_certificate(
+            x509.RevokedCertificateBuilder().serial_number(serial).revocation_date(moment(start)).build())
+    return builder.sign(issuer_key, hashes.SHA384()).public_bytes(serialization.Encoding.DER)
+
+
+class Authority:
+    """A root, one authority under it, and a signing certificate under that, as a real document has."""
+
+    def __init__(self, middle_is_authority=True, leaf_end=NOW + 3600, middle_path_length=0):
+        self.root_key = ec.generate_private_key(ec.SECP384R1())
+        self.middle_key = ec.generate_private_key(ec.SECP384R1())
+        self.leaf_key = ec.generate_private_key(ec.SECP384R1())
+        self.root = certificate("test root", self.root_key, "test root", self.root_key, True)
+        self.middle = certificate("test middle", self.middle_key, "test root", self.root_key, middle_is_authority,
+                                  path_length=middle_path_length)
+        self.leaf = certificate("test enclave", self.leaf_key, "test middle", self.middle_key, False, end=leaf_end)
+
+    def document(self, content, algorithm=-35, signing_key=None):
+        protected = encode({1: algorithm})
+        payload = encode(content)
+        signed = b"\x84" + encode("Signature1") + encode(protected) + encode(b"") + encode(payload)
+        r, s = decode_dss_signature((signing_key or self.leaf_key).sign(signed, ec.ECDSA(hashes.SHA384())))
+        return encode([protected, {}, payload, r.to_bytes(48, "big") + s.to_bytes(48, "big")])
+
+    def content(self, nonce, pcrs):
+        return {
+            "module_id": "i-0123456789abcdef0-enc0123456789abcdef",
+            "digest": "SHA384",
+            "timestamp": NOW * 1000,
+            "pcrs": dict(pcrs),
+            "certificate": der(self.leaf),
+            "cabundle": [der(self.root), der(self.middle)],
+            "public_key": None,
+            "user_data": None,
+            "nonce": nonce,
+        }
+
+
+def main():
+    nonce = bytes(range(32))
+    measured = {index: bytes([index + 1]) * 48 for index in range(3)}
+    pcrs = dict(measured)
+    pcrs.update({3: bytes(48), 4: bytes([9]) * 48, 8: bytes(48)})
+    failures = 0
+
+    with tempfile.TemporaryDirectory() as scratch:
+        def path(name):
+            return os.path.join(scratch, name)
+
+        def write(name, data):
+            with open(path(name), "wb") as file:
+                file.write(data)
+            return path(name)
+
+        def expected_file(name, values):
+            with open(path(name), "w") as file:
+                json.dump({f"PCR{index}": value.hex() for index, value in values.items()}, file)
+            return path(name)
+
+        def run(document, root, sent_nonce=nonce, expected=None, at=NOW, lists=()):
+            command = [sys.executable, VERIFIER, "--document", write("document", document),
+                       "--nonce", sent_nonce.hex(), "--pcrs", expected or expected_file("expected", measured),
+                       "--at", str(at)]
+            for number, revoked in enumerate(lists):
+                command += ["--crl", write(f"list{number}", revoked)]
+            if root is not None:
+                command += ["--root", write("root.pem", root.public_bytes(serialization.Encoding.PEM))]
+            done = subprocess.run(command, capture_output=True, text=True)
+            return done.returncode, done.stdout + done.stderr
+
+        def case(name, outcome, want_status, want_text):
+            nonlocal failures
+            status, output = outcome
+            if status == want_status and want_text in output:
+                print(f"ok    {name}")
+            else:
+                failures += 1
+                print(f"FAIL  {name}: status {status}, wanted {want_status} and {want_text!r}; it said:")
+                print("        " + output.strip().replace("\n", "\n        "))
+
+        good = Authority()
+        document = good.document(good.content(nonce, pcrs))
+
+        case("a document that is right is accepted", run(document, good.root), 0, "PCR0 " + measured[0].hex())
+        case("and the made-up authority is called out", run(document, good.root), 0, "NOT the AWS")
+        case("the made-up authority is not AWS", run(document, None), 1, "does not start at the trusted root")
+        open_ended = good.document(OpenEnded(good.content(nonce, pcrs)))
+        case("content written open-ended, as a real document's is", run(open_ended, good.root), 0,
+             "PCR0 " + measured[0].hex())
+        case("open-ended content that is never closed", run(good.document(OpenEnded(good.content(nonce, pcrs)))[:-98]
+             + b"\x58\x60" + bytes(96), good.root), 1, "refused")
+        case("another nonce", run(document, good.root, sent_nonce=bytes(32)), 1, "nonce")
+        case("no nonce in the document", run(good.document(good.content(None, pcrs)), good.root), 1, "nonce")
+
+        other = dict(measured)
+        other[1] = bytes([7]) * 48
+        case("another image", run(document, good.root, expected=expected_file("other", other)), 1, "PCR1 is not")
+        zeros = {index: bytes(48) for index in range(3)}
+        case("an enclave in debug mode",
+             run(good.document(good.content(nonce, zeros)), good.root, expected=expected_file("zeros", zeros)),
+             1, "debug mode")
+        missing = {index: value for index, value in pcrs.items() if index != 2}
+        case("a measurement left out", run(good.document(good.content(nonce, missing)), good.root), 1, "no PCR2")
+
+        flipped = bytearray(document)
+        flipped[document.index(b"i-0123")] ^= 1
+        case("one bit of the content changed", run(bytes(flipped), good.root), 1, "signature does not verify")
+        stranger = ec.generate_private_key(ec.SECP384R1())
+        case("signed by a key that is not the certificate's",
+             run(good.document(good.content(nonce, pcrs), signing_key=stranger), good.root), 1,
+             "signature does not verify")
+        case("another signature algorithm",
+             run(good.document(good.content(nonce, pcrs), algorithm=-7), good.root), 1, "not signed with ECDSA")
+        case("something after the document", run(document + b"\x00", good.root), 1, "something follows")
+        case("a document cut short", run(document[:-10], good.root), 1, "ends in the middle")
+        case("not a document at all", run(b"hello", good.root), 1, "refused")
+        extra = good.content(nonce, pcrs)
+        extra["debug"] = 1
+        case("a field nobody documented", run(good.document(extra), good.root), 1, "does not know")
+
+        elsewhere = Authority()
+        case("a chain to some other root", run(document, elsewhere.root), 1, "does not start at the trusted root")
+        swapped = good.content(nonce, pcrs)
+        swapped["cabundle"] = [der(good.root), der(elsewhere.middle)]
+        case("an authority the root did not issue", run(good.document(swapped), good.root), 1,
+             "was not signed by its issuer")
+        short = good.content(nonce, pcrs)
+        short["cabundle"] = [der(good.root)]
+        case("a link of the chain left out", run(good.document(short), good.root), 1, "does not name its issuer")
+        brief = Authority(leaf_end=NOW + 60)
+        case("checked after the signing certificate ran out",
+             run(brief.document(brief.content(nonce, pcrs)), brief.root, at=NOW + 120), 1,
+             "the signing certificate is not valid")
+        case("checked before the certificates began", run(document, good.root, at=NOW - 7200), 1, "is not valid")
+
+        impostor = Authority(middle_is_authority=False)
+        case("issued by a certificate that is not an authority",
+             run(impostor.document(impostor.content(nonce, pcrs)), impostor.root), 1, "not an authority")
+
+        # A chain one authority longer than its middle certificate allows.
+        deep = Authority()
+        extra_key = ec.generate_private_key(ec.SECP384R1())
+        extra_cert = certificate("test extra", extra_key, "test middle", deep.middle_key, True, path_length=0)
+        deep_leaf = certificate("test enclave", deep.leaf_key, "test extra", extra_key, False)
+        too_deep = deep.content(nonce, pcrs)
+        too_deep["certificate"] = der(deep_leaf)
+        too_deep["cabundle"] = [der(deep.root), der(deep.middle), der(extra_cert)]
+        case("a chain longer than an authority allows", run(deep.document(too_deep), deep.root), 1,
+             "further down the chain")
+
+    # A document that carries a public key and user data of the service's own.
+    carried_key = "a key of the service's own"
+    carried_data = hashlib.sha256(b"what the service was configured with").digest()
+
+    with tempfile.TemporaryDirectory() as scratch:
+        def carried_case(name, content_changes, key, expected_data, want_status, want_text):
+            nonlocal failures
+            authority = Authority()
+            content = authority.content(nonce, pcrs)
+            content["public_key"] = carried_key.encode()
+            content["user_data"] = carried_data
+            content.update(content_changes)
+            files = {}
+            for label, data in (("document", authority.document(content)),
+                                ("root.pem", authority.root.public_bytes(serialization.Encoding.PEM)),
+                                ("expected", json.dumps({f"PCR{i}": v.hex() for i, v in measured.items()}).encode())):
+                files[label] = os.path.join(scratch, label)
+                with open(files[label], "wb") as file:
+                    file.write(data)
+            command = [sys.executable, VERIFIER, "--document", files["document"], "--nonce", nonce.hex(),
+                       "--pcrs", files["expected"], "--at", str(NOW), "--root", files["root.pem"]]
+            if key is not None:
+                command += ["--public-key", key]
+            if expected_data is not None:
+                command += ["--user-data", expected_data.hex()]
+            done = subprocess.run(command, capture_output=True, text=True)
+            output = done.stdout + done.stderr
+            if done.returncode == want_status and want_text in output:
+                print(f"ok    {name}")
+            else:
+                failures += 1
+                print(f"FAIL  {name}: status {done.returncode}, wanted {want_status} and {want_text!r}; it said:")
+                print("        " + output.strip().replace("\n", "\n        "))
+
+        carried_case("a document with the expected public key and user data", {}, carried_key, carried_data,
+                     0, "verified: user data " + carried_data.hex())
+        carried_case("the same, checked without saying what to expect", {}, None, None,
+                     0, "which was NOT checked")
+        carried_case("the same, held to the key alone", {}, carried_key, None, 0, "carries a user data, which was NOT checked")
+        carried_case("another public key than expected", {}, carried_key + "?", carried_data,
+                     1, "does not carry the expected public key")
+        carried_case("other user data than expected", {}, carried_key, hashlib.sha256(b"something else").digest(),
+                     1, "user data is not what was expected")
+        carried_case("user data expected of a document with none", {"user_data": None}, carried_key, carried_data,
+                     1, "carries no user data")
+        carried_case("a public key expected of a document with none", {"public_key": None}, carried_key, carried_data,
+                     1, "does not carry the expected public key")
+
+    # Documents from a real enclave (verify/vectors/README.md), checked against the AWS root itself.
+    vectors = os.path.join(HERE, "vectors")
+    real_nonce = "4fae66f91d89c3177d2af9ce33bce1ebb91783f42805b40c2859dd90184248b2"
+    debug_nonce = "2cf96176623863ca589de4e3cea906dfaa8fc1368ed0cfd85dc8be554985dc72"
+    real_time = 1794770000
+
+    def real(name, sent_nonce, at=real_time, document=None):
+        command = [sys.executable, VERIFIER, "--document", document or os.path.join(vectors, name),
+                   "--nonce", sent_nonce, "--pcrs", os.path.join(vectors, "enclave.pcrs.json"), "--at", str(at)]
+        done = subprocess.run(command, capture_output=True, text=True)
+        return done.returncode, done.stdout + done.stderr
+
+    def real_case(name, outcome, want_status, want_text):
+        nonlocal failures
+        status, output = outcome
+        if status == want_status and want_text in output and "NOT the AWS" not in output:
+            print(f"ok    {name}")
+        else:
+            failures += 1
+            print(f"FAIL  {name}: status {status}, wanted {want_status} and {want_text!r}; it said:")
+            print("        " + output.strip().replace("\n", "\n        "))
+
+    real_case("a real enclave's document is accepted", real("enclave.bin", real_nonce), 0, "PCR0 37a71f04")
+    real_case("a real document, another nonce", real("enclave.bin", debug_nonce), 1, "nonce")
+    real_case("a real document, long after its certificates ran out",
+              real("enclave.bin", real_nonce, at=real_time + 30 * 86400), 1, "is not valid at the time")
+    real_case("a real enclave in debug mode is refused", real("enclave-debug.bin", debug_nonce), 1, "debug mode")
+    with open(os.path.join(vectors, "enclave.bin"), "rb") as file:
+        altered = bytearray(file.read())
+    altered[40] ^= 1
+    with tempfile.NamedTemporaryFile() as scratch_file:
+        scratch_file.write(altered)
+        scratch_file.flush()
+        real_case("a real document with one bit changed", real(None, real_nonce, document=scratch_file.name), 1,
+                  "signature does not verify")
+
+    if failures:
+        print(f"test-verify-attestation: {failures} case(s) failed")
+        return 1
+    print("test-verify-attestation: all cases passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

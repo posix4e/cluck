@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Checks what an emulated enclave's attestation document says against what was expected. For tests only.
+
+    compare-measurements <document> <nonce in hex> <pcrs.json> [<public key> <user data in hex>]
+
+QEMU's emulation of a Nitro Enclave measures the enclave image file it is started from and has its Secure
+Module report those measurements, but signs nothing. verify/verify-attestation rightly refuses such a
+document outright, so it cannot be used to ask the one question the emulation can answer: does QEMU's reading
+of the image file give the same PCR0, PCR1 and PCR2 as AWS's builder wrote down (scripts/build-eif)?
+
+This reads the document with the verifier's own decoder, checks the nonce and those three measurements, and
+verifies nothing else. Given a public key and user data, it also holds the document to carrying exactly
+those, with the verifier's own check. It says nothing about whether a document is to be believed.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+import sys
+
+
+def load_verifier():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "verify", "verify-attestation")
+    loader = importlib.machinery.SourceFileLoader("verifier", path)
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader("verifier", loader))
+    loader.exec_module(module)
+    return module
+
+
+def main():
+    if len(sys.argv) not in (4, 6):
+        print("usage: compare-measurements <document> <nonce in hex> <pcrs.json> [<public key> <user data in hex>]")
+        return 2
+    verifier = load_verifier()
+    with open(sys.argv[1], "rb") as file:
+        message = verifier.cbor_whole(file.read(), "the signed message")
+    content = verifier.cbor_whole(message[2], "the attestation document")
+    with open(sys.argv[3]) as file:
+        expected = json.load(file)
+    wrong = 0
+    if content.get("nonce") != bytes.fromhex(sys.argv[2]):
+        print("the document does not carry the nonce that was sent")
+        wrong += 1
+    for index in range(3):
+        found = content["pcrs"][index].hex()
+        same = found == expected[f"PCR{index}"]
+        print(f"PCR{index} {found} {'as expected' if same else 'NOT ' + expected[f'PCR{index}']}")
+        wrong += not same
+    if len(sys.argv) == 6:
+        try:
+            verifier.check_carried(content, sys.argv[4].encode("utf-8"), bytes.fromhex(sys.argv[5]))
+            print("the document carries the expected public key and user data")
+        except verifier.Refused as refusal:
+            print(f"about what the document carries: {refusal}")
+            wrong += 1
+    return 1 if wrong else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

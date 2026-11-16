@@ -1,0 +1,437 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  # The programs as ordinary processes on Linux, first on Lean's own runtime and then on the minimal one.
+  test:
+    runs-on: ${{ vars.SILO_RUNNER || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - run: lake build
+      - name: Pure tests
+        run: .lake/build/bin/demo-test
+      - name: The command line and the queue layout
+        run: .lake/build/bin/kernel-test
+      - name: The vsock protocol, scenarios and fuzzer
+        run: .lake/build/bin/vsock-test
+      # The driver under the protocol, on a machine made of ordinary memory where the test is the device and
+      # writes what it likes into the queues: buffers that do not exist, lengths no buffer has, noise.
+      - name: The drivers against a device that lies
+        run: .lake/build/bin/driver-test
+      - name: The attestation device's messages
+        run: .lake/build/bin/nsm-test
+      - name: The service on Lean's runtime
+        run: .lake/build/bin/sim-test .lake/build/bin/demo-sim
+      - name: What the binary depends on
+        run: |
+          ls -l .lake/build/bin/demo-sim
+          ldd .lake/build/bin/demo-sim
+          echo "Link line Lake used:"
+          tr '\n' ' ' < .lake/build/bin/demo-sim.rsp
+      # The same compiled Lean, linked against rt/ instead of Lean's runtime. A function the runtime lacks is
+      # a link error here.
+      - name: Link against the minimal runtime
+        run: |
+          for exe in rt-test big-test demo-sim; do scripts/build-min "$exe"; done
+      - name: Self-test and big-number test give the same output on both runtimes
+        run: |
+          .lake/build/bin/rt-test > rt-reference.txt
+          .lake/build/bin/rt-test-min | cmp - rt-reference.txt
+          .lake/build/bin/big-test > big-reference.txt
+          .lake/build/bin/big-test-min | cmp - big-reference.txt
+          tail -1 big-reference.txt
+      - name: The service on the minimal runtime
+        run: .lake/build/bin/sim-test .lake/build/bin/demo-sim-min
+      # The runtime's C under AddressSanitizer and UBSan, with every block guarded. Any report fails the step.
+      - name: The same again with memory checking
+        env:
+          CC: clang
+          ASAN_OPTIONS: detect_leaks=0
+        run: |
+          for exe in rt-test big-test demo-sim; do scripts/build-checked "$exe"; done
+          .lake/build/bin/rt-test-checked | cmp - rt-reference.txt
+          .lake/build/bin/big-test-checked | cmp - big-reference.txt
+          .lake/build/bin/sim-test .lake/build/bin/demo-sim-checked
+      - name: The parent's client, against the simulator
+        run: |
+          .lake/build/bin/ask ping hello -- .lake/build/bin/demo-sim | grep -q "ping: hello"
+          .lake/build/bin/ask selftest -- .lake/build/bin/demo-sim
+          .lake/build/bin/ask random 32 -- .lake/build/bin/demo-sim
+          # The simulator has no attestation device, and says so.
+          ! .lake/build/bin/ask attest 00ff document.bin -- .lake/build/bin/demo-sim
+      # The program that decides whether an attestation document is to be believed, against documents forged
+      # for the purpose: one that is right, and many that are each wrong in one way.
+      - name: The attestation verifier
+        run: |
+          python3 -m venv verifier-python
+          verifier-python/bin/pip install -q -r verify/requirements.txt
+          verifier-python/bin/python verify/test-verify-attestation
+      # What the live code needs from a runtime, next to the list in the repository (taken on a Mac, where
+      # the C start-up symbols differ). Printed, not enforced.
+      - name: Runtime symbols the demo service keeps live
+        run: |
+          scripts/measure-runtime demo-sim > live.txt
+          wc -l < live.txt
+          diff rt/live-symbols/demo-sim.txt live.txt && echo "same as rt/live-symbols/demo-sim.txt" || echo "differs from rt/live-symbols/demo-sim.txt (see above)"
+
+  # The same compiled Lean with no operating system under it: boot stub, minimal runtime, and an emulated
+  # x86-64 machine. What the image prints on its serial port must be what the program prints as a process.
+  bare:
+    runs-on: ${{ vars.SILO_RUNNER || 'ubuntu-24.04' }}
+    # One at a time. On a machine that jobs share, two of these would use the same vsock addresses and
+    # ports, and each ends every QEMU it can see when it is done with its own.
+    concurrency:
+      group: bare-${{ vars.SILO_RUNNER || github.run_id }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Install QEMU
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=300 update -qq
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq qemu-system-x86 socat
+          qemu-system-x86_64 --version | head -1
+      # What this runner can emulate, for whoever extends this job. Informational.
+      - name: What the runner offers
+        run: |
+          ls -l /dev/kvm 2>&1 || true
+          qemu-system-x86_64 -M help | grep -E "microvm|nitro|q35 " || true
+          qemu-system-x86_64 -device help 2>&1 | grep -iE "vsock|virtio-rng|virtio-serial-device|nsm" || true
+          (modinfo vhost_vsock 2>&1 | head -3) || true
+          ls -l /dev/vhost-vsock 2>&1 || true
+          uname -r
+      - run: lake build
+      # Every image is built in three shapes (scripts/build-bare): an ELF file for a PVH loader; a Linux
+      # kernel image, which is what a Nitro Enclave is given, entered here the way QEMU's BIOS-era loader
+      # does, through its 32-bit entry; and the same image entered through its 64-bit entry.
+      - name: The boot stub reaches C, however the machine is entered
+        run: |
+          scripts/build-bare hello
+          for shape in elf bzImage long.bzImage; do
+            for machine in "" --microvm; do
+              echo "--- $shape $machine"
+              scripts/run-qemu $machine .lake/build/bare/hello.$shape 60 | tee hello.txt
+              grep -q "reached C in long mode" hello.txt
+              grep -q "memory after the image is usable" hello.txt
+            done
+          done
+          # Asked to, the boot stub says how it was entered: each shape must have come in its own way.
+          scripts/run-qemu .lake/build/bare/hello.elf 60 -append silo.report | grep "entered by a PVH loader"
+          # And whether the processor offers timing that does not depend on data; this one does not.
+          scripts/run-qemu .lake/build/bare/hello.bzImage 60 -append silo.report | grep "timing that does not depend on data: not offered"
+          scripts/run-qemu .lake/build/bare/hello.bzImage 60 -append silo.report | grep "at its 32-bit entry, loaded at"
+          scripts/run-qemu .lake/build/bare/hello.long.bzImage 60 -append silo.report | grep "at its 64-bit entry, loaded at"
+          # No loader here puts an image anywhere but 1 MiB, so a fourth shape moves itself to 48 MiB first,
+          # as a loader might: the image has to find its way home from there and say where it was.
+          scripts/run-qemu .lake/build/bare/hello.moved.bzImage 60 -append silo.report | tee hello.txt
+          grep -q "at its 32-bit entry, loaded at 0x0000000003000000" hello.txt
+          grep -q "reached C in long mode" hello.txt
+      - name: The self-test on bare metal prints the reference transcript
+        run: |
+          .lake/build/bin/rt-test > rt-reference.txt
+          scripts/build-bare rt-test
+          ls -l .lake/build/bare/rt-test.*
+          for shape in elf bzImage long.bzImage moved.bzImage; do
+            scripts/run-qemu .lake/build/bare/rt-test.$shape 300 > rt-bare.txt || { echo "$shape: exit status $?"; tail -5 rt-bare.txt; exit 1; }
+            cmp rt-bare.txt rt-reference.txt
+          done
+          # Put on top of where it has to go, the image must say so and stop, not copy itself over itself.
+          scripts/run-qemu .lake/build/bare/rt-test.onto.bzImage 20 > rt-onto.txt 2>&1 || true
+          cat rt-onto.txt
+          grep -q "silo boot: loaded on top of where the image has to go" rt-onto.txt
+          if grep -q "run-qemu: QEMU ended with status 124" rt-onto.txt; then true; else echo "the machine did not stop and stay stopped"; exit 1; fi
+          wc -l < rt-bare.txt
+      - name: The big-number test on bare metal prints the reference output
+        run: |
+          .lake/build/bin/big-test > big-reference.txt
+          scripts/build-bare big-test
+          scripts/run-qemu .lake/build/bare/big-test.bzImage 900 > big-bare.txt || { echo "exit status $?"; tail -5 big-bare.txt; exit 1; }
+          cmp big-bare.txt big-reference.txt
+          tail -1 big-bare.txt
+      # Code cannot be written, data cannot be run, address zero is not there, and a stack that overflows is
+      # caught: one boot per forbidden thing.
+      - name: The machine refuses what it should
+        run: |
+          scripts/check-protection
+          scripts/check-protection bzImage
+          scripts/check-protection long.bzImage
+          scripts/check-protection --microvm
+          scripts/check-protection --microvm bzImage
+          # The probe tries the same things when asked, after the heartbeat: that is the image a real enclave
+          # is given for these checks.
+          SILO_CHECK_IMAGE=virtio-probe scripts/check-protection --microvm bzImage
+      # The device layer against a real device model: QEMU's microvm, an entropy device behind memory-mapped
+      # registers, announced on the kernel command line.
+      - name: A virtio entropy device, driven from Lean
+        run: |
+          scripts/build-bare virtio-probe
+          for shape in elf bzImage; do
+            scripts/run-qemu --microvm .lake/build/bare/virtio-probe.$shape 120 -device virtio-rng-device | tee probe.txt
+            grep -q "the entropy device works" probe.txt
+          done
+      # The whole thing: the demo service as a machine of its own, and this runner as the parent instance,
+      # talking over a real vsock. socat relays between the test's pipes and the socket, and plays the parent's
+      # side of the boot heartbeat (it echoes the byte back). From inside the machine the host is address 2.
+      #
+      # The host's vsock module is loaded before the device's permissions are changed: loaded later, on first
+      # use, it would put the device back as it was.
+      - name: The host's side of vsock
+        run: |
+          sudo modprobe vhost_vsock
+          sudo udevadm settle
+          sudo chmod 666 /dev/vhost-vsock
+          ls -l /dev/vhost-vsock
+      - name: A heartbeat nobody answers stops the machine
+        run: |
+          scripts/build-bare silo-os
+          ls -l .lake/build/bare/silo-os.*
+          status=0
+          scripts/run-qemu --microvm .lake/build/bare/silo-os.long.bzImage 120 -device vhost-vsock-device,guest-cid=16 \
+            -append "silo.heartbeat=2:9000" > unanswered.txt 2>&1 || status=$?
+          cat unanswered.txt
+          grep -q "no heartbeat answer from 2:9000" unanswered.txt
+          test "$status" = 5
+      - name: The demo service on bare metal, over a real vsock, after its heartbeat
+        run: |
+          socat VSOCK-LISTEN:9000,fork EXEC:cat &
+          sleep 1
+          # First the probe, which is what a real enclave will be asked to report with: heartbeat, then what
+          # it finds.
+          scripts/run-qemu --microvm .lake/build/bare/virtio-probe.bzImage 120 -device vhost-vsock-device,guest-cid=16 \
+            -device virtio-rng-device -append "silo.heartbeat=2:9000" | tee probe-vsock.txt
+          grep -q "probe: heartbeat answered by 2:9000" probe-vsock.txt
+          grep -q "probe: socket device with address 16" probe-vsock.txt
+          grep -q "the entropy device works" probe-vsock.txt
+          scripts/run-qemu --microvm .lake/build/bare/silo-os.bzImage 300 -device vhost-vsock-device,guest-cid=16 \
+            -append "silo.heartbeat=2:9000" > os.txt 2>&1 &
+          for attempt in $(seq 1 150); do grep -qE "listening|no heartbeat|run-qemu" os.txt && break; sleep 0.2; done
+          cat os.txt
+          grep -q "heartbeat answered by 2:9000" os.txt
+          grep -q "listening on port 5005 as address 16" os.txt
+          status=0
+          timeout 180 .lake/build/bin/sim-test --socket socat - VSOCK-CONNECT:16:5005 || status=$?
+          # The parent's client over the same socket. This emulator has no Secure Module, so `attest` must be
+          # refused; the machine says which random source it is using when it starts.
+          timeout 60 .lake/build/bin/ask selftest -- socat - VSOCK-CONNECT:16:5005 || status=$?
+          if timeout 60 .lake/build/bin/ask attest 00ff document.bin -- socat - VSOCK-CONNECT:16:5005; then status=1; fi
+          pkill -f qemu-system-x86_64 || true
+          pkill -f "VSOCK-LISTEN:9000" || true
+          sleep 1
+          echo "--- what the machine printed:"
+          cat os.txt
+          exit $status
+      # The file a Nitro Enclave is started from, packed by AWS's own builder, and the measurements an enclave
+      # started from it will attest to. Everything is then thrown away and built again from the source: the
+      # kernel image, the enclave image and the measurements must come out the same, byte for byte.
+      - name: AWS's enclave image builder, kept from earlier runs
+        id: eif-build
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/eif_build
+          key: eif_build-v0.8.1-${{ hashFiles('third_party/eif_build/Cargo.lock') }}-rust-1.99.1-ubuntu-24.04-${{ vars.SILO_RUNNER || 'github' }}
+      # Built from source at a fixed commit, with the dependency versions this repository fixes
+      # (third_party/eif_build) and a fixed compiler.
+      - name: AWS's enclave image builder
+        if: steps.eif-build.outputs.cache-hit != 'true'
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --no-self-update
+          git clone --quiet --depth 1 --branch v0.8.1 https://github.com/aws/aws-nitro-enclaves-image-format "$RUNNER_TEMP/eif-src"
+          test "$(git -C "$RUNNER_TEMP/eif-src" rev-parse HEAD)" = 6a5fdad1adb981769da31c51377fb82efbb27d97
+          cp third_party/eif_build/Cargo.lock "$RUNNER_TEMP/eif-src/Cargo.lock"
+          cargo +1.99.1 install --locked --path "$RUNNER_TEMP/eif-src/eif_build"
+      - name: The enclave images, built twice
+        run: |
+          # The service, and the probe that a real enclave will first be asked to report with.
+          build() {
+            for name in silo-os virtio-probe; do scripts/build-bare "$name" > /dev/null; done
+            scripts/build-eif silo-os
+            scripts/build-eif virtio-probe "silo.heartbeat=3:9000 silo.report"
+          }
+          files="silo-os.bzImage silo-os.eif silo-os.pcrs.json virtio-probe.bzImage virtio-probe.eif virtio-probe.pcrs.json"
+          build
+          mkdir first
+          for file in $files; do cp ".lake/build/bare/$file" first/; done
+          rm -rf .lake/build
+          lake build
+          build
+          for file in $files; do cmp "first/$file" ".lake/build/bare/$file"; done
+          ls -l .lake/build/bare/*.eif
+          # About 1.3 MB of code and data are linked into the service's image. Much more means something that
+          # has no business in an enclave was linked in: an import of proofs, or of Lean's own tooling.
+          linked="$(scripts/image-contents silo-os --total)"
+          echo "linked into the service's image: $linked bytes"
+          test "$linked" -lt 1700000 || { scripts/image-contents silo-os 40; exit 1; }
+          sha256sum .lake/build/bare/silo-os.bzImage .lake/build/bare/*.eif
+          cat .lake/build/bare/silo-os.pcrs.json
+      # Some things can only be learned in a real enclave: that the memory mapping refuses there what it
+      # refuses under QEMU, what the big-number test prints there, and what the processor offers. An enclave's
+      # parent shows nothing of an image that has not sent it the boot heartbeat, so these are the probe,
+      # which sends it, told on its command line which one thing to try afterwards. scripts/enclave-checks
+      # starts them on an enclave's parent.
+      - name: Images for the checks that need a real enclave
+        run: |
+          for check in none write-code write-constant run-data run-heap run-stack read-zero read-low overflow beside-device big; do
+            scripts/build-eif virtio-probe "silo.heartbeat=3:9000 check=$check" "probe-check-$check" > /dev/null
+          done
+          .lake/build/bin/big-test > .lake/build/bare/big-test.txt
+          ls -l .lake/build/bare/probe-check-*.eif
+      # What to take to a real enclave's parent: the images, what they should measure, and the two programs
+      # that talk to the service.
+      - name: Keep the enclave images and their measurements
+        uses: actions/upload-artifact@v4
+        with:
+          name: silo-os-enclave-image
+          path: |
+            .lake/build/bare/silo-os.eif
+            .lake/build/bare/silo-os.pcrs.json
+            .lake/build/bare/silo-os.bzImage
+            .lake/build/bare/virtio-probe.eif
+            .lake/build/bare/virtio-probe.pcrs.json
+            .lake/build/bare/probe-check-*.eif
+            .lake/build/bare/big-test.txt
+            .lake/build/bin/ask
+            .lake/build/bin/sim-test
+      # A rehearsal for a real enclave. QEMU can emulate a Nitro Enclave's Secure Module, and a whole enclave
+      # started from an enclave image file, but no packaged QEMU is built with either. So one is built here
+      # from a pinned release and kept, along with the program that serves its enclave's vsock device.
+      - name: What building QEMU needs
+        run: sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq ninja-build libglib2.0-dev libcbor-dev libgnutls28-dev libfdt-dev python3-venv
+      - name: A QEMU that emulates a Nitro Enclave, kept from earlier runs
+        id: qemu-nitro
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/qemu-nitro
+          key: qemu-v11.1.3-nitro-ubuntu-24.04-${{ vars.SILO_RUNNER || 'github' }}
+      - name: A QEMU that emulates a Nitro Enclave
+        if: steps.qemu-nitro.outputs.cache-hit != 'true'
+        run: |
+          git clone --quiet --depth 1 --branch v11.1.3 https://github.com/qemu/qemu.git "$RUNNER_TEMP/qemu"
+          cd "$RUNNER_TEMP/qemu"
+          test "$(git rev-parse HEAD)" = 005c61c0ef6f6ae615283440b4bb7be51b2c6ddd
+          ./configure --target-list=x86_64-softmmu --prefix="$HOME/qemu-nitro" --enable-libcbor --enable-gnutls \
+            --enable-vhost-user --enable-vhost-kernel --enable-fdt=system --disable-docs --disable-tools \
+            --disable-guest-agent --disable-werror > configure.log 2>&1 || { tail -60 configure.log; exit 1; }
+          make -j"$(nproc)" install > make.log 2>&1 || { tail -80 make.log; exit 1; }
+          "$HOME/qemu-nitro/bin/qemu-system-x86_64" --version | head -1
+          "$HOME/qemu-nitro/bin/qemu-system-x86_64" -M help | grep nitro-enclave
+          "$HOME/qemu-nitro/bin/qemu-system-x86_64" -device help | grep -E "virtio-nsm|vhost-vsock-device|vhost-user-vsock-device"
+      # Kept as soon as it is built, whether or not the steps after this one pass.
+      - name: Keep that QEMU
+        if: steps.qemu-nitro.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/qemu-nitro
+          key: qemu-v11.1.3-nitro-ubuntu-24.04-${{ vars.SILO_RUNNER || 'github' }}
+      # The daemon is built from a commit, not from its last release (0.3.0): that release resets a connection
+      # from the host whose first bytes arrive before the guest has accepted it, and leaves the host waiting
+      # for ever. This commit is the fix.
+      - name: The vsock daemon QEMU's enclave needs, kept from earlier runs
+        id: vsock-daemon
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cargo/bin/vhost-device-vsock
+          key: vhost-device-vsock-c0bfee92d2-ubuntu-24.04-${{ vars.SILO_RUNNER || 'github' }}
+      - name: The vsock daemon QEMU's enclave needs
+        if: steps.vsock-daemon.outputs.cache-hit != 'true'
+        run: |
+          cargo install --git https://github.com/rust-vmm/vhost-device --rev c0bfee92d28ffa7199ebe894c16d877a6f216fc3 --locked vhost-device-vsock
+      - name: Keep that daemon
+        if: steps.vsock-daemon.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cargo/bin/vhost-device-vsock
+          key: vhost-device-vsock-c0bfee92d2-ubuntu-24.04-${{ vars.SILO_RUNNER || 'github' }}
+      # The Secure Module's driver against QEMU's Secure Module, on the machine the other tests use. The
+      # module QEMU emulates signs nothing, so the document it returns has to be refused by the verifier.
+      - name: The Secure Module, as QEMU emulates it
+        run: |
+          export SILO_QEMU="$HOME/qemu-nitro/bin/qemu-system-x86_64"
+          scripts/run-qemu --microvm .lake/build/bare/virtio-probe.bzImage 120 -device virtio-nsm-device | tee probe-nsm.txt
+          grep -q "probe: the secure module works" probe-nsm.txt
+          scripts/run-qemu --microvm .lake/build/bare/silo-os.bzImage 300 -device vhost-vsock-device,guest-cid=17 \
+            -device virtio-nsm-device > os-nsm.txt 2>&1 &
+          for attempt in $(seq 1 150); do grep -qE "listening|run-qemu" os-nsm.txt && break; sleep 0.2; done
+          cat os-nsm.txt
+          grep -q "silo: secure module ready" os-nsm.txt
+          grep -q "silo: listening on port 5005 as address 17" os-nsm.txt
+          status=0
+          nonce=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          timeout 180 .lake/build/bin/sim-test --socket socat - VSOCK-CONNECT:17:5005 || status=$?
+          timeout 60 .lake/build/bin/ask random 256 -- socat - VSOCK-CONNECT:17:5005 || status=$?
+          timeout 60 .lake/build/bin/ask attest "$nonce" qemu-document.bin -- socat - VSOCK-CONNECT:17:5005 || status=$?
+          pkill -f qemu-system-x86_64 || true
+          sleep 1
+          test "$status" = 0
+          python3 -m venv verifier-python
+          verifier-python/bin/pip install -q -r verify/requirements.txt
+          if verifier-python/bin/python verify/verify-attestation --document qemu-document.bin --nonce "$nonce" \
+            --pcrs .lake/build/bare/silo-os.pcrs.json > verdict.txt; then cat verdict.txt; exit 1; fi
+          cat verdict.txt
+          grep -q "^refused:" verdict.txt
+      # The enclave image file itself, started the way QEMU believes an enclave is: QEMU unpacks the file,
+      # measures it, and gives the machine a Secure Module that reports those measurements. The command line
+      # inside the file asks for the heartbeat to the parent, address 3, which the vsock daemon hands to
+      # this runner; connections from this runner to its own port 5005 are handed to the enclave.
+      #
+      # QEMU's reading of the file must give the same three measurements as AWS's builder wrote down.
+      - name: The enclave image in QEMU's emulation of an enclave
+        run: |
+          export SILO_QEMU="$HOME/qemu-nitro/bin/qemu-system-x86_64"
+          sudo modprobe vsock_loopback
+          socat VSOCK-LISTEN:9000,fork EXEC:cat &
+          ~/.cargo/bin/vhost-device-vsock \
+            --vm guest-cid=4,forward-cid=1,forward-listen=5005,socket="$RUNNER_TEMP/vsock.socket" > vsock-daemon.txt 2>&1 &
+          sleep 2
+          scripts/run-qemu --enclave "$RUNNER_TEMP/vsock.socket" .lake/build/bare/silo-os.eif 300 > enclave.txt 2>&1 &
+          for attempt in $(seq 1 300); do grep -qE "listening|no heartbeat|run-qemu" enclave.txt && break; sleep 0.2; done
+          cat enclave.txt
+          grep -q "silo: heartbeat answered by 3:9000" enclave.txt
+          grep -q "silo: secure module ready" enclave.txt
+          grep -q "silo: listening on port 5005 as address 4" enclave.txt
+          status=0
+          nonce=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          timeout 20 .lake/build/bin/ask ping hello -- socat - VSOCK-CONNECT:1:5005 || { status=$?; echo "--- the vsock daemon said:"; tail -80 vsock-daemon.txt; }
+          timeout 180 .lake/build/bin/sim-test --socket socat - VSOCK-CONNECT:1:5005 || status=$?
+          timeout 60 .lake/build/bin/ask attest "$nonce" enclave-document.bin -- socat - VSOCK-CONNECT:1:5005 || status=$?
+          pkill -f qemu-system-x86_64 || true
+          pkill -f vhost-device-vsock || true
+          pkill -f "VSOCK-LISTEN:9000" || true
+          sleep 1
+          echo "--- what the enclave printed:"
+          cat enclave.txt
+          test "$status" = 0
+          verifier-python/bin/python scripts/compare-measurements enclave-document.bin "$nonce" .lake/build/bare/silo-os.pcrs.json
+      # And the images for the checks a real enclave is owed: as an enclave, the probe has to answer the
+      # heartbeat first and then be stopped for the forbidden thing, or print the big-number test's lines.
+      - name: The check images in QEMU's emulation of an enclave
+        run: |
+          export SILO_QEMU="$HOME/qemu-nitro/bin/qemu-system-x86_64"
+          socat VSOCK-LISTEN:9000,fork EXEC:cat &
+          ~/.cargo/bin/vhost-device-vsock \
+            --vm guest-cid=6,forward-cid=1,forward-listen=5005,socket="$RUNNER_TEMP/check-vsock.socket" > check-daemon.txt 2>&1 &
+          sleep 2
+          for check in write-code beside-device; do
+            scripts/run-qemu --enclave "$RUNNER_TEMP/check-vsock.socket" ".lake/build/bare/probe-check-$check.eif" 120 > check.txt 2>&1 || true
+            cat check.txt
+            grep -q "probe: heartbeat answered by 3:9000" check.txt
+            grep -q "silo boot: .* which " check.txt
+          done
+          scripts/run-qemu --enclave "$RUNNER_TEMP/check-vsock.socket" .lake/build/bare/probe-check-big.eif 300 > check.txt 2>&1 || true
+          grep -q "probe: heartbeat answered by 3:9000" check.txt
+          tr -d '\r' < check.txt | grep -F -x -f .lake/build/bare/big-test.txt | cmp - .lake/build/bare/big-test.txt
+          pkill -f vhost-device-vsock || true
+          pkill -f "VSOCK-LISTEN:9000" || true

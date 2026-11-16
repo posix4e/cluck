@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Packs a kernel image into the file a Nitro Enclave is started from, and says what the enclave will measure.
+#
+#   scripts/build-eif <name> [kernel command line] [name of the result]
+#
+# Takes .lake/build/bare/<name>.bzImage (scripts/build-bare) and writes, beside it:
+#   <name>.eif         the enclave image file: the kernel image, the command line, and one empty ramdisk;
+#   <name>.pcrs.json   the measurements an enclave started from that file attests to (PCR0, PCR1, PCR2).
+# With a third argument the two files are named after that instead, so that one kernel image can be packed
+# with several command lines.
+#
+# The packing is done by AWS's own builder, eif_build, from https://github.com/aws/aws-nitro-enclaves-image-format,
+# so that the file's format is theirs and not our reading of it:
+#   cargo install --git https://github.com/aws/aws-nitro-enclaves-image-format --tag v0.8.1 eif_build
+#
+# The command line is part of what is measured. The default asks for the boot heartbeat a Nitro Enclave owes
+# its parent, which is address 3, on port 9000.
+#
+# The builder insists on a ramdisk and this image has no use for one, so it is given an archive with nothing
+# in it. Everything the builder would otherwise take from the clock or the machine is fixed here: the same
+# kernel image and command line give the same file, byte for byte.
+#
+# The measurements that count are those of the image built on x86-64 Linux, as CI does: built elsewhere, the
+# program's modules are compiled by a different route (scripts/build-bare) and the bytes need not agree.
+set -euo pipefail
+
+name="${1:?usage: scripts/build-eif <name> [kernel command line] [name of the result]}"
+cmdline="${2:-silo.heartbeat=3:9000}"
+out=".lake/build/bare"
+kernel="$out/$name.bzImage"
+name="${3:-$name}"
+[ -f "$kernel" ] || { echo "build-eif: no $kernel (run: scripts/build-bare $name)" >&2; exit 2; }
+command -v eif_build > /dev/null || {
+  echo "build-eif: no eif_build on the path; see the top of this script for how to install it" >&2
+  exit 2
+}
+
+# An empty archive in the format Linux unpacks a ramdisk from (cpio, "newc"): just the record that ends one.
+printf '070701%08X%08X%08X%08X%08X%08X%08X%08X%08X%08X%08X%08X%08XTRAILER!!!\0\0\0\0' \
+  0 0 0 0 1 0 0 0 0 0 0 11 0 > "$out/empty.cpio"
+
+eif_build --kernel "$kernel" --cmdline "$cmdline" --ramdisk "$out/empty.cpio" --output "$out/$name.eif" \
+  --name "$name" --build-time 1970-01-01T00:00:00+00:00 --build-tool silo --build-tool-version 0 \
+  --img-os silo --img-kernel silo > "$out/$name.eif.txt"
+# The builder prints where it wrote the file and then the measurements as JSON.
+sed -n '/^{/,$p' "$out/$name.eif.txt" > "$out/$name.pcrs.json"
+grep -q '"PCR0"' "$out/$name.pcrs.json" || { cat "$out/$name.eif.txt" >&2; exit 2; }
+echo "$out/$name.eif"
+echo "$out/$name.pcrs.json"

@@ -73,6 +73,83 @@ theorem Laid.append {memory : UInt64 → Option UInt8} {start finish : Nat} {blo
     obtain ⟨where_, low, high, hclass, hstate, hrest⟩ := h
     exact ⟨where_, low, high, hclass, hstate, ih hrest⟩
 
+/-- A word shares no byte with one that begins at or after its end. -/
+theorem above_apart (x start : UInt64) (h : start.toNat + 8 ≤ x.toNat) (i : Nat) (hi : i < 8) (k : Nat) (hk : k < 8)
+    (room : x.toNat + 8 ≤ 18446744073709551616) : start + UInt64.ofNat k ≠ x + UInt64.ofNat i := by
+  intro e
+  have := congrArg UInt64.toNat e
+  simp only [UInt64.toNat_add, UInt64.toNat_ofNat'] at this
+  omega
+
+/-- Writing a word that ends before the first block leaves the blocks as they were. -/
+theorem Laid.frame_below {memory : UInt64 → Option UInt8} {start finish : Nat} {blocks : List Block}
+    (h : Laid memory start blocks finish) (at_ word : UInt64) (before : at_.toNat + 8 ≤ start)
+    (top : finish ≤ 18446744073709551616) :
+    Laid (writeBytes memory at_ word 8) start blocks finish := by
+  induction blocks generalizing start with
+  | nil => exact h
+  | cons b rest ih =>
+    obtain ⟨where_, low, high, hclass, hstate, hrest⟩ := h
+    have order := hrest.le
+    simp only [Block.bytes] at order
+    have header : (b.address - 16).toNat = start := by
+      simp only [UInt64.toNat_sub, show (16 : UInt64).toNat = 16 from rfl]; have := b.address.toNat_lt; omega
+    have second : (b.address - 16 + 8).toNat = start + 8 := by
+      simp only [UInt64.toNat_add, header, show (8 : UInt64).toNat = 8 from rfl]; have := b.address.toNat_lt; omega
+    have keep1 : readBytes (writeBytes memory at_ word 8) (b.address - 16) 8 = readBytes memory (b.address - 16) 8 :=
+      readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => above_apart _ _ (by omega) i hi k hk (by omega))
+    have keep2 : readBytes (writeBytes memory at_ word 8) (b.address - 16 + 8) 8 =
+        readBytes memory (b.address - 16 + 8) 8 :=
+      readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => above_apart _ _ (by omega) i hi k hk (by omega))
+    exact ⟨where_, low, high, by rw [keep1]; exact hclass, by rw [keep2]; exact hstate,
+      ih hrest (by simp only [Block.bytes]; omega)⟩
+
+/-- Every block lies inside the stretch the blocks are laid over, behind its header. -/
+theorem Laid.inside {memory : UInt64 → Option UInt8} {start finish : Nat} {blocks : List Block}
+    (h : Laid memory start blocks finish) (b : Block) (member : b ∈ blocks) :
+    start + 16 ≤ b.address.toNat ∧ b.address.toNat + b.bytes ≤ finish := by
+  induction blocks generalizing start with
+  | nil => cases member
+  | cons first rest ih =>
+    obtain ⟨where_, low, high, hclass, hstate, hrest⟩ := h
+    have order := hrest.le
+    rcases List.mem_cons.mp member with rfl | later
+    · exact ⟨by omega, by omega⟩
+    · have := ih hrest later
+      simp only [Block.bytes] at this ⊢
+      omega
+
+/-- Writing a word inside a block, where the block's own bytes are, leaves every header as it was: so the
+blocks stay laid as they were whatever a block's holder writes in it. -/
+theorem Laid.frame_body {memory : UInt64 → Option UInt8} {start finish : Nat} {blocks : List Block}
+    (h : Laid memory start blocks finish) (b : Block) (member : b ∈ blocks) (at_ word : UInt64)
+    (low : b.address.toNat ≤ at_.toNat) (high : at_.toNat + 8 ≤ b.address.toNat + b.bytes)
+    (top : finish ≤ 18446744073709551616) :
+    Laid (writeBytes memory at_ word 8) start blocks finish := by
+  induction blocks generalizing start with
+  | nil => cases member
+  | cons first rest ih =>
+    have whole := h
+    obtain ⟨where_, flow, fhigh, hclass, hstate, hrest⟩ := h
+    have order := hrest.le
+    have place := whole.inside b member
+    simp only [Block.bytes] at order place high
+    have header : (first.address - 16).toNat = start := by
+      simp only [UInt64.toNat_sub, show (16 : UInt64).toNat = 16 from rfl]; have := first.address.toNat_lt; omega
+    have second : (first.address - 16 + 8).toNat = start + 8 := by
+      simp only [UInt64.toNat_add, header, show (8 : UInt64).toNat = 8 from rfl]
+      have := first.address.toNat_lt; omega
+    have keep1 : readBytes (writeBytes memory at_ word 8) (first.address - 16) 8 =
+        readBytes memory (first.address - 16) 8 :=
+      readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => below_apart _ _ (by omega) i hi k hk (by omega))
+    have keep2 : readBytes (writeBytes memory at_ word 8) (first.address - 16 + 8) 8 =
+        readBytes memory (first.address - 16 + 8) 8 :=
+      readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => below_apart _ _ (by omega) i hi k hk (by omega))
+    refine ⟨where_, flow, fhigh, by rw [keep1]; exact hclass, by rw [keep2]; exact hstate, ?_⟩
+    rcases List.mem_cons.mp member with rfl | later
+    · exact hrest.frame_below at_ word (by simp only [Block.bytes]; omega) top
+    · exact ih hrest later
+
 /-- A heap in order: the blocks handed out so far are laid from `base` to the front of the heap, and the
 front has not passed the end. -/
 def InOrder (s : State) (base : Nat) (blocks : List Block) : Prop :=

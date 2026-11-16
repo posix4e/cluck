@@ -20,69 +20,43 @@ static char * string_bytes(lean_object * s) {
     return lean_to_string(s)->m_data;
 }
 
-/* The number of characters in `size` bytes of well-formed UTF-8, or false if they are not well-formed:
-no overlong forms, no surrogates, nothing above U+10FFFF, nothing cut short. */
-static bool utf8_length(uint8_t const * s, size_t size, size_t * length) {
-    size_t at = 0, count = 0;
-    while (at < size) {
-        uint8_t first = s[at];
-        size_t more;
-        uint32_t least, value;
-        if (first < 0x80) {
-            at++;
-            count++;
-            continue;
-        } else if ((first & 0xE0) == 0xC0) {
-            more = 1; least = 0x80; value = first & 0x1F;
-        } else if ((first & 0xF0) == 0xE0) {
-            more = 2; least = 0x800; value = first & 0x0F;
-        } else if ((first & 0xF8) == 0xF0) {
-            more = 3; least = 0x10000; value = first & 0x07;
-        } else {
-            return false;
-        }
-        if (size - at <= more) return false;
-        for (size_t i = 1; i <= more; i++) {
-            uint8_t next = s[at + i];
-            if ((next & 0xC0) != 0x80) return false;
-            value = (value << 6) | (next & 0x3F);
-        }
-        if (value < least || value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) return false;
-        at += more + 1;
-        count++;
+/* The rules of UTF-8 are in Lean (Runtime/Utf8.lean). This file knows where a string's bytes are and how
+many there are; it hands over the bytes in question, as numbers, and acts on the answer. */
+uint8_t rt_utf8_strict(uint8_t, uint8_t, uint8_t, uint8_t, size_t);
+uint64_t rt_utf8_read(uint8_t, uint8_t, uint8_t, uint8_t, size_t);
+uint64_t rt_utf8_write(uint32_t);
+uint8_t rt_utf8_claims(uint8_t, uint8_t);
+
+/* Byte `i` of the `size` bytes at `s`, or zero past the end. */
+static uint8_t byte_at(char const * s, size_t size, size_t i) {
+    return i < size ? (uint8_t)s[i] : 0;
+}
+
+/* The number of characters in `size` bytes of well-formed UTF-8, or false if they are not well-formed. */
+static bool utf8_length(char const * s, size_t size, size_t * length) {
+    size_t count = 0;
+    for (size_t at = 0; at < size; count++) {
+        uint8_t taken = rt_utf8_strict(byte_at(s, size, at), byte_at(s, size, at + 1), byte_at(s, size, at + 2),
+                                       byte_at(s, size, at + 3), size - at);
+        if (taken == 0) return false;
+        at += taken;
     }
     *length = count;
     return true;
 }
 
+static unsigned scalar_size(uint32_t c) {
+    return (unsigned)(rt_utf8_write(c) >> 32);
+}
+
 /* The UTF-8 encoding of `c` written at `to`; returns how many bytes that was (one to four). */
 static unsigned put_scalar(char * to, uint32_t c) {
-    if (c < 0x80) {
-        to[0] = (char)c;
-        return 1;
-    } else if (c < 0x800) {
-        to[0] = (char)(0xC0 | (c >> 6));
-        to[1] = (char)(0x80 | (c & 0x3F));
-        return 2;
-    } else if (c < 0x10000) {
-        to[0] = (char)(0xE0 | (c >> 12));
-        to[1] = (char)(0x80 | ((c >> 6) & 0x3F));
-        to[2] = (char)(0x80 | (c & 0x3F));
-        return 3;
-    } else {
-        to[0] = (char)(0xF0 | (c >> 18));
-        to[1] = (char)(0x80 | ((c >> 12) & 0x3F));
-        to[2] = (char)(0x80 | ((c >> 6) & 0x3F));
-        to[3] = (char)(0x80 | (c & 0x3F));
-        return 4;
-    }
+    uint64_t encoded = rt_utf8_write(c);
+    unsigned count = (unsigned)(encoded >> 32);
+    for (unsigned i = 0; i < count; i++) to[i] = (char)(encoded >> (8 * i));
+    return count;
 }
 
-static unsigned scalar_size(uint32_t c) {
-    return c < 0x80 ? 1 : c < 0x800 ? 2 : c < 0x10000 ? 3 : 4;
-}
-
-/* A string from `size` bytes known to be `length` characters of UTF-8. */
 lean_object * lean_mk_string_unchecked(char const * s, size_t size, size_t length) {
     size_t with_zero = lean_usize_add_checked(size, 1);
     lean_object * r = new_string(with_zero, with_zero, length);
@@ -96,7 +70,7 @@ the machine. (Lean's runtime repairs bad bytes with U+FFFD; nothing here should 
 lean_object * lean_mk_string(char const * s) {
     size_t size = strlen(s);
     size_t length;
-    if (!utf8_length((uint8_t const *)s, size, &length)) rt_stop("lean_mk_string was given bytes that are not UTF-8");
+    if (!utf8_length(s, size, &length)) rt_stop("lean_mk_string was given bytes that are not UTF-8");
     return lean_mk_string_unchecked(s, size, length);
 }
 
@@ -183,39 +157,10 @@ offsets that are out of range or in the middle of a character. The rules below a
 
 /* The character whose encoding starts at byte `i` of the `size` bytes at `str`, if one does. */
 static bool char_at(char const * str, size_t size, size_t i, uint32_t * result) {
-    uint32_t c = (uint8_t)str[i];
-    if ((c & 0x80) == 0) {
-        *result = c;
-        return true;
-    }
-    if ((c & 0xe0) == 0xc0 && i + 1 < size) {
-        uint32_t c1 = (uint8_t)str[i + 1];
-        uint32_t r = ((c & 0x1f) << 6) | (c1 & 0x3f);
-        if (r >= 0x80) {
-            *result = r;
-            return true;
-        }
-    }
-    if ((c & 0xf0) == 0xe0 && i + 2 < size) {
-        uint32_t c1 = (uint8_t)str[i + 1];
-        uint32_t c2 = (uint8_t)str[i + 2];
-        uint32_t r = ((c & 0x0f) << 12) | ((c1 & 0x3f) << 6) | (c2 & 0x3f);
-        if (r >= 0x800 && (r < 0xD800 || r > 0xDFFF)) {
-            *result = r;
-            return true;
-        }
-    }
-    if ((c & 0xf8) == 0xf0 && i + 3 < size) {
-        uint32_t c1 = (uint8_t)str[i + 1];
-        uint32_t c2 = (uint8_t)str[i + 2];
-        uint32_t c3 = (uint8_t)str[i + 3];
-        uint32_t r = ((c & 0x07) << 18) | ((c1 & 0x3f) << 12) | ((c2 & 0x3f) << 6) | (c3 & 0x3f);
-        if (r >= 0x10000 && r <= 0x10FFFF) {
-            *result = r;
-            return true;
-        }
-    }
-    return false;
+    uint64_t found = rt_utf8_read(byte_at(str, size, i), byte_at(str, size, i + 1), byte_at(str, size, i + 2),
+                                  byte_at(str, size, i + 3), size - i);
+    *result = (uint32_t)found;
+    return (found >> 32) != 0;
 }
 
 /* `String.get`: the character at byte position `i`, or the default character if there is none. A position
@@ -243,40 +188,21 @@ lean_obj_res lean_string_utf8_next(b_lean_obj_arg s, b_lean_obj_arg i0) {
     size_t i = lean_unbox(i0);
     size_t size = lean_string_size(s) - 1;
     if (i >= size) return lean_usize_to_nat(i + 1);
-    uint8_t c = (uint8_t)lean_string_cstr(s)[i];
-    if ((c & 0x80) == 0) return lean_box(i + 1);
-    if ((c & 0xe0) == 0xc0) return lean_box(i + 2);
-    if ((c & 0xf0) == 0xe0) return lean_box(i + 3);
-    if ((c & 0xf8) == 0xf0) return lean_box(i + 4);
-    return lean_box(i + 1);
+    return lean_box(i + rt_utf8_claims((uint8_t)lean_string_cstr(s)[i], 4));
 }
 
 lean_obj_res lean_string_utf8_next_fast_cold(size_t i, unsigned char c) {
-    if ((c & 0xe0) == 0xc0) return lean_box(i + 2);
-    if ((c & 0xf0) == 0xe0) return lean_box(i + 3);
-    if ((c & 0xf8) == 0xf0) return lean_box(i + 4);
-    return lean_box(i + 1);
+    return lean_box(i + rt_utf8_claims(c, 4));
 }
 
 static bool starts_character(uint8_t c) {
     return (c & 0x80) == 0 || (c & 0xe0) == 0xc0 || (c & 0xf0) == 0xe0 || (c & 0xf8) == 0xf0;
 }
 
-/* How many bytes the character led by `c` claims, as Lean counts characters in bytes it trusts. */
-static unsigned claimed_size(uint8_t c) {
-    if ((c & 0x80) == 0) return 1;
-    if ((c & 0xE0) == 0xC0) return 2;
-    if ((c & 0xF0) == 0xE0) return 3;
-    if ((c & 0xF8) == 0xF0) return 4;
-    if ((c & 0xFC) == 0xF8) return 5;
-    if ((c & 0xFE) == 0xFC) return 6;
-    return 1;
-}
-
 /* A string from bytes taken out of an existing string: characters are counted by their leading bytes. */
 static lean_object * string_from_trusted(char const * bytes, size_t size) {
     size_t length = 0;
-    for (size_t i = 0; i < size; i += claimed_size((uint8_t)bytes[i])) length++;
+    for (size_t i = 0; i < size; i += rt_utf8_claims((uint8_t)bytes[i], 6)) length++;
     return lean_mk_string_unchecked(bytes, size, length);
 }
 

@@ -10,7 +10,7 @@ package «silo-os»
 lean_lib Demo
 
 /-- The parts of the minimal runtime that are written in Lean: arithmetic on numbers too large for a machine
-word (`rt/big.c` is the rest of it). Linked into everything that runs on the minimal runtime. -/
+word and the rules of UTF-8 (`rt/big.c` and `rt/string.c` are the rest of each). Linked into everything that runs on the minimal runtime. -/
 @[default_target]
 lean_lib Runtime
 

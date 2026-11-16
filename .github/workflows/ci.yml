@@ -18,12 +18,14 @@ jobs:
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - run: lake build
-      # The runtime's arithmetic is called while Lean's own library is being initialised, before this module
-      # has been. So it may not have anything that is built at start-up.
+      # The runtime's Lean is called while Lean's own library is being initialised, before these modules
+      # have been. So they may not have anything that is built at start-up.
       - name: The runtime's Lean builds nothing at start-up
         run: |
-          test -f .lake/build/ir/Runtime/Big.c
-          ! grep -n "_init_" .lake/build/ir/Runtime/Big.c
+          for part in Big Utf8; do
+            test -f ".lake/build/ir/Runtime/$part.c"
+            ! grep -n "_init_" ".lake/build/ir/Runtime/$part.c"
+          done
       - name: Pure tests
         run: .lake/build/bin/demo-test
       - name: The command line and the queue layout

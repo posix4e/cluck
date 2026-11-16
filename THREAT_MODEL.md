@@ -53,8 +53,9 @@ Why the two flaws cannot be the same one: no code runs on both sides.
 - **The parent** runs a general-purpose stack, all of it stock: the Linux kernel, a C library, its
   applications and their cryptography, and whatever else the operator installs.
 - **The enclave** runs none of that. It has no Linux, no C library, and no cryptography or parser written in
-  C. Its whole content is this repository (Lean, about 2,500 lines of C under it, and a boot stub), Lean's
-  own `Init` and `Std`, and whatever the service brings.
+  C. Its whole content is this repository (Lean, a runtime under it that is partly Lean, partly programs
+  printed as C, and about 1,000 lines of C by hand, and a boot stub), Lean's own `Init` and `Std`, and
+  whatever the service brings.
 
 A Nitro Enclave is usually a Linux kernel, an init, AWS's libraries and an application in a container, which
 puts the same kernel, the same C library and often the same cryptography on both sides of the vsock: one
@@ -89,9 +90,18 @@ The only input. The aim would be memory corruption: turn an attested image into 
 - **Built:** drivers cannot reach arbitrary memory. Lean may touch only device registers inside announced
   windows and a dedicated arena of device memory, by copy; any other address stops the machine
   (`Kernel/Hw.lean`, `rt/bare/hw.c`).
-- **Partly:** the runtime under Lean is about 2,200 lines of C. It is held to Lean's own runtime by
-  differential tests and run under AddressSanitizer and UBSan, which is evidence, not proof. A bug in it
-  reachable from Lean code is a memory-safety bug in the enclave.
+- **Partly:** the runtime under Lean. All of it is held to Lean's own runtime by differential tests and run
+  under AddressSanitizer and UBSan, which is evidence, not proof. A bug in it reachable from Lean code is a
+  memory-safety bug in the enclave. It is in three kinds, with different things standing behind each:
+  - Lean (`Runtime/`): big-number arithmetic and the rules of UTF-8. Every index is checked by the
+    language. Sums, differences, products and comparison are proved to be what they should; division,
+    shifts and UTF-8 are not yet.
+  - Programs in a small language (`Mini/`), printed as C: the allocator, freeing, arrays, big numbers in
+    memory, hashing. The language has a definition that fails wherever C leaves the outcome open, and one
+    path of the allocator is proved against it. The rest is tested. The printer, about 150 lines, and the C
+    compiler are trusted to keep the meaning; nothing checks that they do but the tests.
+  - C by hand (`rt/`), about 660 lines that reach an image: closures, strings, making constants permanent,
+    start-up, stopping, device access. Tested only.
 - **Built:** memory has only the rights it needs. Code cannot be written; constants, data, the heap and the
   stack cannot be run; address zero and everything else the program does not use is not mapped at all; and
   there is a hole under the stack, so a stack that overflows stops the machine instead of walking into the

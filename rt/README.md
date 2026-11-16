@@ -1,9 +1,18 @@
 # The minimal runtime
 
-The C that Lean code stands on when there is no operating system: a single-threaded replacement for Lean's
-own runtime, sized to what the code actually reaches. About 2,200 lines, no event loop, no threads, no C++
-library, no GMP, and no C library beyond `memcpy`, `memmove`, `memset`, `memcmp` and `strlen`. It compiles
-freestanding with only the compiler's own headers.
+What Lean code stands on when there is no operating system: a single-threaded replacement for Lean's own
+runtime, sized to what the code actually reaches. No event loop, no threads, no C++ library, no GMP, and no
+C library beyond `memcpy`, `memmove`, `memset`, `memcmp` and `strlen`. It compiles freestanding with only the
+compiler's own headers.
+
+It is in three parts, and this directory is the smallest:
+
+- **Lean** (`Runtime/`): arithmetic on big numbers and the rules of UTF-8, called from below under C names.
+- **Programs in a small language** (`Mini/`), written as data in Lean and printed as C whenever the runtime is
+  built: the allocator, giving up references and freeing, arrays, what a big number is in memory, the small
+  cases of numbers, hashing. The printed C is not kept in the repository.
+- **C written by hand** (here): about 660 lines that end up in an image, for closures, strings, making
+  constants permanent, start-up, stopping, and the machine itself.
 
 It matches `<lean/lean.h>` of Lean 4.35.0 exactly. A Lean upgrade means re-running everything below.
 
@@ -18,7 +27,6 @@ the link line and lists the outside symbols that survive dead-code removal:
 | The demo service, self-test included (`demo-sim`) | 106 |
 | The self-test alone (`rt-test`) | 106 |
 | The big-number test (`big-test`) | 81 |
-| The first service built on this, with the library it uses | 96 |
 | All of them together | 108 |
 
 Every one is defined here. The lists are in `live-symbols/` (taken on macOS arm64; Linux x86-64 gives the
@@ -28,8 +36,8 @@ same `lean_` functions). The demo's list also names the three `silo_plat_` funct
 
 | File | What it holds |
 |---|---|
-| (printed) | The allocator, giving up references and freeing what the last one kept alive, big numbers in memory (their arithmetic, on 32-bit limbs, is Lean: `Runtime/Big.lean`), the small cases of shifts and powers, arrays and byte arrays, and Lean's byte hash. These are programs in a small language written in Lean (`Mini/`); `scripts/print-runtime` prints their C when the runtime is built, and it is not kept here. |
-| `object.c` | Freeing without recursion, making constants permanent, once-built constants, lazy values, mutable cells. |
+| (printed from `Mini/`) | `Alloc.lean`: the allocator. `Free.lean`: giving up references and freeing what the last one kept alive, without recursion. `Number.lean`: big numbers in memory; their arithmetic, on 32-bit limbs, is `Runtime/Big.lean`. `Small.lean`: shifts, powers and logarithms of small numbers. `Array.lean`: arrays and byte arrays. `Hash.lean`: Lean's byte hash (MurmurHash64A), bit for bit. `scripts/print-runtime` prints their C when the runtime is built. |
+| `object.c` | Making constants permanent, once-built constants, lazy values, mutable cells, and objects from the allocator. |
 | `apply.c` | Calling closures: partial, exact and over-application. |
 | `string.c` | Strings and Lean's rules for UTF-8 byte positions. The rules of UTF-8 are Lean: `Runtime/Utf8.lean`. |
 | `io.c` | Start-up and platform questions. |
@@ -37,7 +45,9 @@ same `lean_` functions). The demo's list also names the three `silo_plat_` funct
 | `hosted/platform.c` | The platform as an ordinary process: a pipe, the OS random source, `mmap`. |
 | `bare/platform.c`, `bare/libc.c` | The platform with no operating system: the boot stub's serial port and memory, the processor's random numbers, and the five memory functions. |
 | `bare/hw.c` | The C half of `Kernel/Hw.lean`: device registers and device memory, every address checked. |
-| `hosted/alloc_checked.c` | A testing allocator: one C-library block per request, for AddressSanitizer. |
+| `hosted/alloc_checked.c` | A testing allocator in place of the real one: one C-library block per request, for AddressSanitizer. |
+| `hosted/machine.c` | A machine made of ordinary memory, for running the drivers as a process. |
+| `big.h`, `rt.h` | What the parts declare to each other. |
 
 ## Where it differs from Lean's runtime, on purpose
 
@@ -57,8 +67,8 @@ The same compiled Lean objects are linked several ways and must agree:
 
 ```
 lake build                                # against Lean's own runtime: the reference
-scripts/build-min rt-test                 # against rt/
-scripts/build-checked rt-test             # against rt/ under AddressSanitizer and UBSan
+scripts/build-min rt-test                 # against this runtime
+scripts/build-checked rt-test             # the same under AddressSanitizer and UBSan
 
 .lake/build/bin/rt-test | cmp - <(.lake/build/bin/rt-test-min)
 .lake/build/bin/rt-test | cmp - <(ASAN_OPTIONS=detect_leaks=0 .lake/build/bin/rt-test-checked)
@@ -75,6 +85,10 @@ Likewise for `big-test` (216,522 results over numbers up to 2^1024 and beyond: e
 naturals and 61 edge integers, 39 hand-picked long divisions in every sign combination, and 12,000
 pseudo-random rounds). `sim-test` drives the demo service linked each way, and checks the self-test digest
 the service returns against the one it computes itself on Lean's runtime.
+
+The programs in `Mini/` are also run with no C at all: `mini-test` runs the allocator as its language
+defines it (which fails if it ever reads memory nothing has written) and the hash against Lean's own. What
+is proved, as opposed to tested, is listed in `TODO.md`.
 
 ## Reproducing the measurement
 

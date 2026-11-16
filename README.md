@@ -16,10 +16,16 @@ Licensed under the GNU Affero General Public License, version 3 ([LICENSE](LICEN
 |---|---|---|
 | Demo service | Lean | `ping`, `attest(nonce)`, `random(n)`, `selftest` |
 | Drivers and kernel logic | Lean | virtio-mmio, vsock, attestation device, serial, heartbeat, server loop |
-| Minimal runtime | C, single-threaded | allocator, reference counting, closures, arrays, strings, big numbers, a few raw hardware primitives |
+| Minimal runtime, in Lean | Lean | big-number arithmetic and the rules of UTF-8 (`Runtime/`) |
+| Minimal runtime, in a small language | programs written as data in Lean, printed as C when built | allocator, reference counting and freeing, arrays, big numbers in memory, small-number cases, hashing (`Mini/`) |
+| Minimal runtime, by hand | C, single-threaded | closures, strings, making constants permanent, start-up, stopping, a few raw hardware primitives (`rt/`) |
 | Boot stub | assembly and a little C | the Linux boot protocol's header and entries, page tables, fatal-exception handlers |
 
 Every byte from the parent is parsed in Lean. The C and assembly underneath never interpret host data.
+
+The runtime is the part still moving out of C. About 1,470 lines of C are written by hand, 480 of them the
+boot code; the rest of what compiled Lean stands on is Lean, or a program in `Mini/`. What is proved about
+each, and what is only tested, is in [TODO.md](TODO.md).
 
 ## Layout
 
@@ -44,15 +50,23 @@ Every byte from the parent is parsed in Lean. The C and assembly underneath neve
 - `Ask.lean`: the parent's client, one request at a time. `Relay.lean`: reaching a service through a
   command's pipes, shared by the two.
 - `verify/`: the program that decides, off the host, whether an attestation document is to be believed, the
-  AWS root certificate it trusts, its test, and three documents from real enclaves.
-- `Runtime/`: the parts of the minimal runtime that are Lean: big-number arithmetic and the rules of UTF-8.
-  `Runtime/BigProofs.lean`: what is proved about the first.
-- `Mini/`: a small language for the code under Lean, written as data in Lean: its syntax, its meaning
-  (`Mini/Run.lean`), its printer to C, and the allocator written in it. `mini-print` prints the C, which is not kept in the repository;
-  `mini-test` runs the allocator as the language defines it.
-- `rt/`: the minimal runtime; `rt/bare/`: its platform with no operating system.
+  AWS root certificate it trusts, its test, and two documents from a real enclave.
+- `Runtime/`: the parts of the minimal runtime that are Lean: big-number arithmetic (`Big.lean`) and the
+  rules of UTF-8 (`Utf8.lean`). `Runtime/BigProofs.lean`: what is proved about the first.
+- `Mini/`: a small language for the code under Lean, written as data in Lean. `Lang.lean` is its syntax,
+  `Run.lean` its meaning (an interpreter that fails wherever C leaves the outcome open), `Print.lean` its
+  printer to C. The programs: `Alloc.lean` (the allocator), `Free.lean` (giving up references and freeing),
+  `Number.lean` (what a big number is in memory), `Array.lean` (arrays and byte arrays), `Small.lean` (shifts,
+  powers and logarithms of small numbers), `Hash.lean` (Lean's byte hash). `AllocProofs.lean`: what is
+  proved about the allocator. `mini-print` prints a program's C, which is not kept in the repository;
+  `scripts/print-runtime` prints them all when the runtime is built. `mini-test` runs the allocator and the
+  hash as the language defines them, with no C involved.
+- `Proofs.lean`: everything proved, built with the rest so that a proof that stops checking stops the build.
+- `rt/`: the minimal runtime's hand-written C; `rt/bare/`: its platform with no operating system;
+  `rt/hosted/`: what only the builds that run as a process use.
 - `boot/`: from the boot loader's hand-over to `main`. `linux.S` and `setup.S` are the Linux boot protocol's
-  side of it; `entry.S` and `early.c` are common to every way in. `boot/README.md` is what a real enclave
+  side of it; `entry.S` and `early.c` are common to every way in. `boot/tests/` holds two images that are C
+  alone. `boot/README.md` is what a real enclave
   looked like from inside, and how to run one.
 - `MkImage.lean`: turns a linked image into the kernel image a Linux boot protocol loader is given.
 - `scripts/`: building against the runtime, measuring what it must contain, building and booting images,
@@ -68,9 +82,10 @@ lake build
 .lake/build/bin/vsock-test
 .lake/build/bin/nsm-test
 .lake/build/bin/driver-test
+.lake/build/bin/mini-test                                    # the allocator and the hash, as their language defines them
 .lake/build/bin/sim-test .lake/build/bin/demo-sim            # the service on Lean's own runtime
 
-scripts/build-min demo-sim                                   # the same compiled Lean on the minimal runtime
+scripts/build-min demo-sim                                   # the same compiled Lean on the minimal runtime (prints Mini/'s C first)
 .lake/build/bin/sim-test .lake/build/bin/demo-sim-min
 ```
 

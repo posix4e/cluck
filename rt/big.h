@@ -1,7 +1,7 @@
 /*
-What nat.c needs from the big-number code (Mini/Number.lean).
+What the small cases (Mini/Small.lean) need from the big-number code (Mini/Number.lean).
 
-nat.c answers `<<<`, `^`, `log2` and "a Nat as a size" itself when everything stays below 2^63, and comes
+Mini/Small.lean answers `<<<`, `^`, `log2` and "a Nat as a size" itself when everything stays below 2^63, and comes
 here for the rest. Everything else there is called by compiled Lean directly, under the names
 <lean/lean.h> declares.
 */

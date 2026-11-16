@@ -124,7 +124,10 @@ printed. What is reasoned about and what is compiled are then the same text.
       printed C. Not yet run as the language defines it, and nothing proved.
 - [x] What a number too large for a word is in memory (`Mini/Number.lean`), in place of `rt/big.c`.
 - [x] Arrays and byte arrays (`Mini/Array.lean`), in place of `rt/array.c`.
-- [ ] The rest of `rt/`, a file at a time: making objects permanent, closures, strings, hashing.
+- [x] The small cases of shifts, powers and logarithms (`Mini/Small.lean`) and Lean's byte hash
+      (`Mini/Hash.lean`), in place of `rt/nat.c` and `rt/hash.c`. The hash, run as the language defines it,
+      gives what Lean's own gives.
+- [ ] The rest of `rt/`, a file at a time: making objects permanent, strings, start-up, stopping.
       Calling a function through its address, and floating-point bits, need the language to grow first.
 
 ### Hardening the OS, before anything secret runs on it

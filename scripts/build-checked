@@ -27,7 +27,8 @@ mkdir -p "$out"
 objects=()
 # The allocator is the testing one; the rest of what is printed from Mini/ is the real thing.
 "$os/scripts/print-runtime" "$out/printed"
-for source in "$os"/rt/*.c "$out/printed/free.c" "$out/printed/number.c" "$out/printed/array.c" "$os/rt/hosted/alloc_checked.c"; do
+for source in "$os"/rt/*.c "$out"/printed/*.c "$os/rt/hosted/alloc_checked.c"; do
+  case "$source" in */printed/alloc.c) continue ;; esac
   case "$source" in */rt/platform_*.c) continue ;; esac
   object="$out/$(basename "${source%.c}").o"
   "$cc" -c -g -O1 -Wall -Wextra -Werror -I "$toolchain/include" -I "$os/rt" "${checks[@]}" -o "$object" "$source"

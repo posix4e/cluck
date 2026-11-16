@@ -10,7 +10,7 @@ its real name that converts the types at the edge and nothing else. -/
 namespace Mini
 
 def Op.c : Op → String
-  | .add => "+" | .sub => "-" | .mul => "*" | .div => "/" | .shl => "<<" | .shr => ">>" | .and => "&" | .or => "|"
+  | .add => "+" | .sub => "-" | .mul => "*" | .div => "/" | .shl => "<<" | .shr => ">>" | .and => "&" | .or => "|" | .xor => "^"
   | .eq => "==" | .ne => "!=" | .lt => "<" | .le => "<="
 
 def Op.compares : Op → Bool

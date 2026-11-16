@@ -13,7 +13,7 @@ wrap-around, no evaluation order to choose (calls are statements, so an expressi
 namespace Mini
 
 inductive Op
-  | add | sub | mul | div | shl | shr | and | or
+  | add | sub | mul | div | shl | shr | and | or | xor
   /-- Comparisons of words as unsigned numbers: 1 if it holds, 0 if not. -/
   | eq | ne | lt | le
   deriving Repr, DecidableEq
@@ -98,6 +98,7 @@ def Expr.shl (a b : Expr) : Expr := .op .shl a b
 def Expr.shr (a b : Expr) : Expr := .op .shr a b
 def Expr.and (a b : Expr) : Expr := .op .and a b
 def Expr.or (a b : Expr) : Expr := .op .or a b
+def Expr.xor (a b : Expr) : Expr := .op .xor a b
 def Expr.eq (a b : Expr) : Expr := .op .eq a b
 def Expr.ne (a b : Expr) : Expr := .op .ne a b
 def Expr.lt (a b : Expr) : Expr := .op .lt a b

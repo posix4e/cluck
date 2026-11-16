@@ -28,12 +28,10 @@ same `lean_` functions). The demo's list also names the three `silo_plat_` funct
 
 | File | What it holds |
 |---|---|
-| (printed) | The allocator, giving up references and freeing what the last one kept alive, big numbers in memory, and arrays and byte arrays. These are programs in a small language written in Lean (`Mini/Alloc.lean`, `Mini/Free.lean`, `Mini/Number.lean`, `Mini/Array.lean`); `scripts/print-runtime` prints their C when the runtime is built, and it is not kept here. |
+| (printed) | The allocator, giving up references and freeing what the last one kept alive, big numbers in memory (their arithmetic, on 32-bit limbs, is Lean: `Runtime/Big.lean`), the small cases of shifts and powers, arrays and byte arrays, and Lean's byte hash. These are programs in a small language written in Lean (`Mini/`); `scripts/print-runtime` prints their C when the runtime is built, and it is not kept here. |
 | `object.c` | Freeing without recursion, making constants permanent, once-built constants, lazy values, mutable cells. |
 | `apply.c` | Calling closures: partial, exact and over-application. |
 | `string.c` | Strings and Lean's rules for UTF-8 byte positions. The rules of UTF-8 are Lean: `Runtime/Utf8.lean`. |
-| `hash.c` | Lean's byte hash (MurmurHash64A), bit for bit. |
-| `nat.c` | Numbers: the small cases. What a number too large for a word is in memory is `Mini/Number.lean`, printed like the allocator; its arithmetic, on 32-bit limbs, is Lean: `Runtime/Big.lean`. |
 | `io.c` | Start-up and platform questions. |
 | `panic.c` | Printing and stopping. |
 | `hosted/platform.c` | The platform as an ordinary process: a pipe, the OS random source, `mmap`. |

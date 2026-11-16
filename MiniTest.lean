@@ -1,5 +1,6 @@
 import Mini.Run
 import Mini.Alloc
+import Mini.Hash
 
 /-! Runs the allocator as the language defines it, with no C involved, and checks what it does. A run fails
 by itself if the allocator reads memory nothing has written, steps outside an array, or does anything else
@@ -72,6 +73,22 @@ def scenario : Except String (List (String × Bool)) := do
     ("asking for more than there is ends in out of memory", tooMuch),
     ("300 requests and frees: no two blocks in use overlap", apart)]
 
+/-- The byte hash run as the language defines it, against Lean's own hash of the same bytes, for every
+length from 0 to 40. -/
+def hashAgrees : Bool := Id.run do
+  let mut agrees := true
+  for length in [0:41] do
+    let bytes := ByteArray.mk ((Array.range length).map fun i => (i * 37 + 11).toUInt8)
+    let mut memory : UInt64 → Option UInt8 := fun _ => none
+    for i in [0:length] do
+      memory := put memory (4096 + i.toUInt64) (some bytes[i]!)
+    let ran := Hash.program.call (fun c _ _ => throw c) 10000 "rt_hash_bytes" [4096, length.toUInt64, 11]
+      { memory := memory }
+    match ran with
+    | .ok (.gave value, _) => agrees := agrees && value == hash bytes
+    | _ => agrees := false
+  return agrees
+
 def main : IO UInt32 := do
   match scenario with
   | .error why =>
@@ -79,7 +96,7 @@ def main : IO UInt32 := do
     return 1
   | .ok checks =>
     let mut failures := 0
-    for (name, held) in checks do
+    for (name, held) in checks ++ [("the byte hash gives what Lean's own gives, for 41 lengths", hashAgrees)] do
       IO.println s!"{if held then "ok   " else "FAIL "} {name}"
       if !held then failures := failures + 1
     if failures == 0 then IO.println "mini-test: all checks passed" else IO.println s!"mini-test: {failures} failed"

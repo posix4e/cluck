@@ -14,6 +14,6 @@ printer=.lake/build/bin/mini-print
 [ -x "$printer" ] || printer="$os/.lake/build/bin/mini-print"
 [ -x "$printer" ] || { echo "print-runtime: no mini-print (run: lake build mini-print)" >&2; exit 2; }
 mkdir -p "$to"
-for part in alloc free number array; do
+for part in alloc free number array small hash; do
   "$printer" "$part" > "$to/$part.c"
 done

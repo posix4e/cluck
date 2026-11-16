@@ -5,3 +5,5 @@ import Mini.Alloc
 import Mini.Free
 import Mini.Number
 import Mini.Array
+import Mini.Small
+import Mini.Hash

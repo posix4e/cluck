@@ -59,7 +59,7 @@ def Op.run (o : Op) (a b : UInt64) : Except String UInt64 :=
   | .div => if b == 0 then throw "division by zero" else pure (a / b)
   | .shl => if b ≥ 64 then throw "a shift by 64 or more" else pure (a <<< b)
   | .shr => if b ≥ 64 then throw "a shift by 64 or more" else pure (a >>> b)
-  | .and => pure (a &&& b) | .or => pure (a ||| b)
+  | .and => pure (a &&& b) | .or => pure (a ||| b) | .xor => pure (a ^^^ b)
   | .eq => pure (truth (a == b)) | .ne => pure (truth (a != b))
   | .lt => pure (truth (a < b)) | .le => pure (truth (a ≤ b))
 

@@ -193,4 +193,92 @@ theorem decimal_value (a : Limbs) (d : UInt32) : value (decimal a d) = value a *
   rw [decimal, trim_value, scaleLoop_value _ _ _ _ _ (by decide) (by simpa using hd)]
   simp [value, valueList, tail_zero, Nat.mul_comm, Nat.add_comm]
 
+/-! ## Multiplication -/
+
+theorem mulRow_size (a : Limbs) (x : UInt64) (i j : Nat) (carry : UInt64) (r : Limbs) :
+    (mulRow a x i j carry r).size = r.size := by
+  fun_induction mulRow a x i j carry r with
+  | case1 j carry r h t ih => simp [ih]
+  | case2 j carry r h => simp
+
+theorem mulRow_digit (a : Limbs) (x : UInt64) (i j : Nat) (carry : UInt64) (r : Limbs) (m : Nat)
+    (hm : i + a.size < m) : digit (mulRow a x i j carry r) m = digit r m := by
+  fun_induction mulRow a x i j carry r with
+  | case1 j carry r h t ih => rw [ih, digit_set_ne _ _ _ _ (by omega)]
+  | case2 j carry r h => rw [digit_set_ne _ _ _ _ (by omega)]
+
+/-- A row of the multiplication adds `x` times what is left of `a`, and the carry, at its place. -/
+theorem mulRow_value (a : Limbs) (x : UInt64) (i j : Nat) (carry : UInt64) (r : Limbs)
+    (hx : x.toNat < B) (hc : carry.toNat < B) (hj : j ≤ a.size) (hsize : i + a.size < r.size)
+    (htop : digit r (i + a.size) = 0) :
+    value (mulRow a x i j carry r) = value r + B ^ (i + j) * (carry.toNat + x.toNat * tail a j) := by
+  fun_induction mulRow a x i j carry r with
+  | case1 j carry r h t ih =>
+    have la := digit_lt a j; have ld := digit_lt r (i + j)
+    have bound : digit a j * x.toNat ≤ 4294967295 * 4294967295 := Nat.mul_le_mul (by omega) (by omega)
+    have ht : t.toNat = digit a j * x.toNat + digit r (i + j) + carry.toNat := by
+      simp only [t, UInt64.toNat_add, UInt64.toNat_mul, limb_toNat]; omega
+    have hhigh : (t >>> 32).toNat = t.toNat / B := by
+      simp [UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow]
+    have hlow : t.toUInt32.toNat = t.toNat % B := by simp
+    have written := value_set r (i + j) t.toUInt32 (by omega)
+    rw [ih (by rw [hhigh]; omega) (by omega) (by simpa using hsize) (by rw [digit_set_ne _ _ _ _ (by omega)]; exact htop),
+      hhigh, show i + (j + 1) = i + j + 1 from rfl, Nat.pow_succ, tail_step a j, Nat.mul_add x.toNat,
+      Nat.mul_left_comm x.toNat, Nat.mul_comm x.toNat (digit a j)]
+    rw [hlow] at written
+    generalize digit a j * x.toNat = product at *
+    generalize x.toNat * tail a (j + 1) = rest at *
+    generalize value (r.setIfInBounds (i + j) t.toUInt32) = after at *
+    generalize B ^ (i + j) = P at *
+    generalize t.toNat = T at *
+    have inner : T % B + B * (T / B + rest) = carry.toNat + (product + B * rest) + digit r (i + j) := by omega
+    have scaled := congrArg (P * ·) inner
+    simp only [Nat.mul_add, Nat.mul_assoc] at scaled written ⊢
+    omega
+  | case2 j carry r h =>
+    have hlow : carry.toUInt32.toNat = carry.toNat := by
+      simp only [UInt64.toNat_toUInt32]; omega
+    have written := value_set r (i + a.size) carry.toUInt32 hsize
+    rw [htop, hlow] at written
+    have : j = a.size := by omega
+    subst this
+    rw [tail_of_le a _ (Nat.le_refl _)]
+    simpa using written
+
+theorem valueList_replicate (n : Nat) : valueList (List.replicate n 0) = 0 := by
+  induction n with
+  | zero => rfl
+  | succ n ih => simp [List.replicate_succ, valueList, ih]
+
+theorem value_zeros (n : Nat) : value (zeros n) = 0 := by
+  simp [value, zeros, low, valueList_replicate]
+
+theorem digit_zeros (n m : Nat) : digit (zeros n) m = 0 := by
+  unfold digit zeros low
+  by_cases h : m < n <;> simp [Array.getD, h]
+
+theorem mulLoop_value (a b : Limbs) (i : Nat) (r : Limbs)
+    (hsize : r.size = a.size + b.size) (hzero : ∀ m, i + a.size ≤ m → digit r m = 0) :
+    value (mulLoop a b i r) = value r + B ^ i * (value a * tail b i) := by
+  fun_induction mulLoop a b i r with
+  | case1 i r h ih =>
+    have lb := digit_lt b i
+    have row := mulRow_value a (limb b i) i 0 0 r (by rw [limb_toNat]; exact lb) (by decide) (Nat.zero_le _)
+      (by omega) (hzero _ (Nat.le_refl _))
+    rw [ih (by rw [mulRow_size]; exact hsize)
+        (fun m hm => by rw [mulRow_digit _ _ _ _ _ _ _ (by omega)]; exact hzero m (by omega)),
+      row, limb_toNat, tail_zero, Nat.pow_succ, tail_step b i, Nat.mul_add (value a), Nat.mul_left_comm (value a)]
+    simp only [Nat.add_zero, show (0 : UInt64).toNat = 0 from rfl, Nat.zero_add, Nat.mul_comm (digit b i) (value a)]
+    generalize value a * digit b i = product
+    generalize value a * tail b (i + 1) = rest
+    generalize B ^ i = P
+    simp only [Nat.mul_add, Nat.mul_assoc]
+    omega
+  | case2 i r h => simp [tail_of_le b i (by omega)]
+
+/-- The limbs `mul` returns are those of the product. -/
+theorem mul_value (a b : Limbs) : value (mul a b) = value a * value b := by
+  rw [mul, mulLoop_value a b 0 _ (by simp [zeros]) (fun m _ => digit_zeros _ m), value_zeros, tail_zero]
+  simp
+
 end Runtime.Big

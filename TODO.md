@@ -149,6 +149,29 @@ printed. What is reasoned about and what is compiled are then the same text.
 - [ ] The rest of `rt/`, a file at a time: making objects permanent, strings, start-up, stopping.
       Calling a function through its address, and floating-point bits, need the language to grow first.
 
+### What the program's text does not say: speculation and bits that flip
+
+The proofs are about what the program computes. They say nothing about what a processor does ahead of
+knowing, or about memory that changes without being written. The parent shares the machine's cache with
+the enclave, chooses every byte it parses, and may own the memory rows beside its own. One program running
+one thing at a time removes the attacks that need the attacker's code inside, or something to interrupt;
+it does not remove these. Four things to do about them:
+
+- [ ] Build what we compile with the compiler's hardening against speculation: speculative-load hardening
+      (a bounds check guessed wrong cannot feed a read out of bounds), retpolines, and hardening of
+      straight-line speculation. The compiler Lean ships takes all of them for this target. That covers the
+      C here, the C printed from `Mini/`, and the Lean modules compiled for an image. Measure what it costs
+      in time and size. Lean's own `Init` and `Std` come compiled without it, about half an image; hardening
+      them means building Lean's library ourselves, which is a step of its own.
+- [ ] Catch corruption where it cannot be prevented. The allocator's headers hold values that are checked on
+      every free and reuse. Offer the same to services: a cell that keeps a value in two forms and stops the
+      machine if they disagree when it is read, for a key, a counter or a limit.
+- [ ] Keep secrets out of reach of a guess: not beside input that is being parsed, and wiped the moment they
+      are finished with. Say how in `CONTRIBUTING.md`, and make the runtime help where it can.
+- [ ] Say all of this in `THREAT_MODEL.md`, which today says only that speculation is left to AWS: what the
+      design removes, what the build hardens, what is caught, and what stays AWS's (the memory itself, and
+      what one guest can do to another's).
+
 ### Hardening the OS, before anything secret runs on it
 
 Nothing is open here.

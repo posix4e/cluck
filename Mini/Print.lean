@@ -1,0 +1,101 @@
+import Mini.Lang
+
+/-! # Printing a program as C
+
+Every value is a `uint64_t`. Memory is read and written through two helpers that copy eight bytes, which a
+compiler turns into one instruction and which, unlike a cast pointer, C lets alias anything. A function is
+`static` under its own name with `mini_` in front; one that C is to see gets a second, thin function under
+its real name that converts the types at the edge and nothing else. -/
+
+namespace Mini
+
+def Op.c : Op → String
+  | .add => "+" | .sub => "-" | .mul => "*" | .div => "/" | .shl => "<<" | .shr => ">>" | .and => "&" | .or => "|"
+  | .eq => "==" | .ne => "!=" | .lt => "<" | .le => "<="
+
+def Op.compares : Op → Bool
+  | .eq | .ne | .lt | .le => true
+  | _ => false
+
+def Expr.c : Expr → String
+  | .lit value => s!"{value.toNat}ull"
+  | .var name => name
+  | .global name => name
+  | .item array i => s!"{array}[{i.c}]"
+  | .load address => s!"mini_load({address.c})"
+  | .op o a b => if o.compares then s!"(uint64_t)({a.c} {o.c} {b.c})" else s!"({a.c} {o.c} {b.c})"
+
+def pad (depth : Nat) : String := "".pushn ' ' (4 * depth)
+
+mutual
+  def Stmt.c (depth : Nat) : Stmt → String
+    | .set name value => s!"{pad depth}{name} = {value.c};\n"
+    | .setGlobal name value => s!"{pad depth}{name} = {value.c};\n"
+    | .setItem array i value => s!"{pad depth}{array}[{i.c}] = {value.c};\n"
+    | .store address value => s!"{pad depth}mini_store({address.c}, {value.c});\n"
+    | .branch condition yes [] => s!"{pad depth}if ({condition.c}) \{\n{block (depth + 1) yes}{pad depth}}\n"
+    | .branch condition yes no =>
+      s!"{pad depth}if ({condition.c}) \{\n{block (depth + 1) yes}{pad depth}} else \{\n{block (depth + 1) no}{pad depth}}\n"
+    | .loop condition body => s!"{pad depth}while ({condition.c}) \{\n{block (depth + 1) body}{pad depth}}\n"
+    | .call result function arguments =>
+      let call := s!"mini_{function}({", ".intercalate (arguments.map Expr.c)})"
+      match result with
+      | some name => s!"{pad depth}{name} = {call};\n"
+      | none => s!"{pad depth}{call};\n"
+    | .outside result c =>
+      match result with
+      | some name => s!"{pad depth}{name} = (uint64_t)({c});\n"
+      | none => s!"{pad depth}{c};\n"
+    | .stop why => s!"{pad depth}rt_stop({repr why});\n"
+    | .give value => s!"{pad depth}return {value.c};\n"
+  def block (depth : Nat) : List Stmt → String
+    | [] => ""
+    | s :: rest => s.c depth ++ block depth rest
+end
+
+mutual
+  /-- The locals a statement assigns, in the order they first appear. -/
+  def Stmt.assigned : Stmt → List String
+    | .set name _ => [name]
+    | .branch _ yes no => assignedIn yes ++ assignedIn no
+    | .loop _ body => assignedIn body
+    | .call (some name) _ _ => [name]
+    | .outside (some name) _ => [name]
+    | _ => []
+  def assignedIn : List Stmt → List String
+    | [] => []
+    | s :: rest => s.assigned ++ assignedIn rest
+end
+
+def Function.signature (f : Function) : String :=
+  let parameters := if f.parameters.isEmpty then "void" else ", ".intercalate (f.parameters.map (s!"uint64_t {·}"))
+  s!"static uint64_t mini_{f.name}({parameters})"
+
+def comment (text : String) : String := if text.isEmpty then "" else s!"/* {text} */\n"
+
+def Function.c (f : Function) : String :=
+  let locals := (assignedIn f.body).eraseDups.filter (!f.parameters.contains ·)
+  let declared := String.join (locals.map (s!"    uint64_t {·} = 0;\n"))
+  -- A function whose last statement gives its result needs nothing after it; any other gives zero.
+  let last := match f.body.getLast? with
+    | some (.give _) => ""
+    | _ => "    return 0;\n"
+  let inside := s!"{comment f.about}{f.signature} \{\n{declared}{block 1 f.body}{last}}\n"
+  match f.seen with
+  | none => inside
+  | some seen =>
+    let named := f.parameters.zip seen.parameters
+    let parameters := if named.isEmpty then "void" else ", ".intercalate (named.map fun (name, type) => s!"{type} {name}")
+    let passed := ", ".intercalate (f.parameters.map (s!"(uint64_t){·}"))
+    let call := s!"mini_{f.name}({passed})"
+    let body := if seen.result == "void" then s!"    {call};\n" else s!"    return ({seen.result}){call};\n"
+    s!"{inside}\n{seen.result} {f.name}({parameters}) \{\n{body}}\n"
+
+def Program.c (p : Program) (source : String) : String :=
+  let globals := String.join (p.globals.map (s!"static uint64_t {·};\n"))
+  let arrays := String.join (p.arrays.map fun (name, size) => s!"static uint64_t {name}[{size}];\n")
+  let declarations := String.join (p.functions.map (s!"{·.signature};\n"))
+  let functions := "\n".intercalate (p.functions.map Function.c)
+  s!"/*\n{p.about}\n\nThis file is printed from {source} by `lake exe mini-print`. Change that, not this: CI checks that\nthe two agree.\n*/\n{p.preamble}\nstatic inline uint64_t mini_load(uint64_t address) \{\n    uint64_t word;\n    __builtin_memcpy(&word, (void const *)address, sizeof word);\n    return word;\n}\n\nstatic inline void mini_store(uint64_t address, uint64_t word) \{\n    __builtin_memcpy((void *)address, &word, sizeof word);\n}\n\n{globals}{arrays}\n{declarations}\n{functions}"
+
+end Mini

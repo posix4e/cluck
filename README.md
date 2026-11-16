@@ -45,6 +45,11 @@ Every byte from the parent is parsed in Lean. The C and assembly underneath neve
   command's pipes, shared by the two.
 - `verify/`: the program that decides, off the host, whether an attestation document is to be believed, the
   AWS root certificate it trusts, its test, and three documents from real enclaves.
+- `Runtime/`: the parts of the minimal runtime that are Lean: big-number arithmetic and the rules of UTF-8.
+  `Runtime/BigProofs.lean`: what is proved about the first.
+- `Mini/`: a small language for the code under Lean, written as data in Lean: its syntax, its meaning
+  (`Mini/Run.lean`), its printer to C, and the allocator written in it. `mini-print` prints the C;
+  `mini-test` runs the allocator as the language defines it.
 - `rt/`: the minimal runtime; `rt/bare/`: its platform with no operating system.
 - `boot/`: from the boot loader's hand-over to `main`. `linux.S` and `setup.S` are the Linux boot protocol's
   side of it; `entry.S` and `early.c` are common to every way in. `boot/README.md` is what a real enclave

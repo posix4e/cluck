@@ -99,6 +99,21 @@ the image.
 - [ ] That `rt/big.c` hands the arithmetic the right limbs and reads its answer rightly: that is C, and
       tested, not proved.
 
+### The code under Lean, written in Lean
+
+`Mini/` is a language of 64-bit words, small enough to define exactly (`Mini/Run.lean`), from which C is
+printed. What is reasoned about and what is compiled are then the same text.
+
+- [x] The language, its meaning as an interpreter that fails wherever C leaves the outcome open, and its
+      printer.
+- [x] The allocator in it. `rt/alloc.c` is printed, and the runtime's tests pass on it as a process, under
+      the sanitizers and on bare metal. Run as the language defines it, it never reads memory nothing has
+      written or steps outside an array, over a test of 300 requests and frees.
+- [ ] Proofs about the allocator: that it never fails for any sequence of requests, that blocks in use
+      never overlap, that a freed block is zero. Today those are tested, not proved.
+- [ ] That the printer and the C compiler keep the meaning. Trusted; the printer is about 100 lines.
+- [ ] Reference counting, object freeing and arrays (`rt/object.c`, `rt/array.c`) in it.
+
 ### Hardening the OS, before anything secret runs on it
 
 Nothing is open here.

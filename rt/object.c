@@ -249,3 +249,23 @@ void lean_inc_ref_huge_n(lean_object * o, size_t n) {
     if (count <= 0) return;   /* permanent or already frozen */
     if (n > (size_t)(INT_MAX - count)) o->m_rc = LEAN_RC_STUCK_ST; else o->m_rc = count + (int)n;
 }
+
+/* ---- Objects from the allocator (alloc.c) ---- */
+
+/* An object of a small fixed size. The header's size field is set, as <lean/lean.h> says it must be. */
+lean_object * lean_alloc_small_object_core(unsigned sz) {
+    lean_object * o = rt_malloc(sz);
+    o->m_cs_sz = sz;
+    return o;
+}
+
+/* An object of any size: arrays, strings, closures. */
+lean_object * lean_alloc_object(size_t sz) {
+    lean_object * o = rt_malloc(sz);
+    o->m_cs_sz = 0;
+    return o;
+}
+
+void lean_free_object(lean_object * o) {
+    rt_free(o);
+}

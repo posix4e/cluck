@@ -24,19 +24,3 @@ void * rt_malloc(size_t size) {
 void rt_free(void * block) {
     free(block);
 }
-
-lean_object * lean_alloc_small_object_core(unsigned sz) {
-    lean_object * o = rt_malloc(sz);
-    o->m_cs_sz = sz;
-    return o;
-}
-
-lean_object * lean_alloc_object(size_t sz) {
-    lean_object * o = rt_malloc(sz);
-    o->m_cs_sz = 0;
-    return o;
-}
-
-void lean_free_object(lean_object * o) {
-    rt_free(o);
-}

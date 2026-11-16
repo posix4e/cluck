@@ -18,6 +18,20 @@ lean_lib Runtime
 @[default_target]
 lean_lib Proofs
 
+/-- A small language for the code under Lean, written as data in Lean, and its printer to C. -/
+@[default_target]
+lean_lib Mini
+
+/-- Prints the C that the programs in `Mini/` stand for. Runs where the runtime is built, not in it. -/
+@[default_target]
+lean_exe «mini-print» where
+  root := `MiniPrint
+
+/-- The allocator run as the language defines it, with no C involved. -/
+@[default_target]
+lean_exe «mini-test» where
+  root := `MiniTest
+
 /-- What the service asks of the platform underneath it: three functions, implemented in C per platform. -/
 @[default_target]
 lean_lib Platform

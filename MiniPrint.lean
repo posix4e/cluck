@@ -2,7 +2,7 @@ import Mini.Print
 import Mini.Alloc
 import Mini.Free
 
-/-! Prints the C that the programs in `Mini/` stand for: `mini-print alloc > rt/alloc.c`, `mini-print free > rt/free.c`. -/
+/-! Prints the C that the programs in `Mini/` stand for: `mini-print alloc`, `mini-print free` (`scripts/print-runtime` runs both). -/
 
 def main (arguments : List String) : IO UInt32 := do
   match arguments with

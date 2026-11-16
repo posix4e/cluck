@@ -25,8 +25,10 @@ out=".lake/build/rt-checked"
 mkdir -p "$out"
 
 objects=()
-for source in "$os"/rt/*.c "$os/rt/hosted/alloc_checked.c"; do
-  case "$source" in */rt/platform_*.c | */rt/alloc.c) continue ;; esac
+# The allocator is the testing one; the rest of what is printed from Mini/ is the real thing.
+"$os/scripts/print-runtime" "$out/printed"
+for source in "$os"/rt/*.c "$out/printed/free.c" "$os/rt/hosted/alloc_checked.c"; do
+  case "$source" in */rt/platform_*.c) continue ;; esac
   object="$out/$(basename "${source%.c}").o"
   "$cc" -c -g -O1 -Wall -Wextra -Werror -I "$toolchain/include" -I "$os/rt" "${checks[@]}" -o "$object" "$source"
   objects+=("$object")

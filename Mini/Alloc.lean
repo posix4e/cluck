@@ -2,7 +2,7 @@ import Mini.Lang
 
 /-! # The allocator
 
-The program `rt/alloc.c` is printed from. -/
+The runtime's allocator. Its C is printed when the runtime is built (`scripts/print-runtime`). -/
 
 namespace Mini.Alloc
 

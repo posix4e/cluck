@@ -26,13 +26,8 @@ jobs:
             test -f ".lake/build/ir/Runtime/$part.c"
             ! grep -n "_init_" ".lake/build/ir/Runtime/$part.c"
           done
-      # rt/alloc.c and rt/free.c are printed from programs written in Lean (Mini/). The printed files are kept
-      # in the repository so that building the runtime needs nothing built first; this checks they are the
-      # programs'.
-      - name: The printed C is what its programs print
-        run: |
-          .lake/build/bin/mini-print alloc | diff - rt/alloc.c
-          .lake/build/bin/mini-print free | diff - rt/free.c
+      # The allocator and the freeing of objects are programs written in Lean (Mini/). Their C is printed
+      # when the runtime is built and is in the repository nowhere.
       - name: The allocator, run as its language defines it
         run: .lake/build/bin/mini-test
       - name: Pure tests

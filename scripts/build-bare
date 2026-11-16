@@ -52,8 +52,13 @@ cflags=(--target=x86_64-unknown-none-elf -ffreestanding -nostdinc -isystem "$too
 objects=()
 compile() {
   local source="$1"; shift
-  local object="$out/obj/$(echo "${source%.*}" | tr '/' '_').o"
-  "$cc" -c "${cflags[@]}" "$@" -o "$object" "$os/$source"
+  local named="$source"
+  case "$source" in /*) named="printed/$(basename "$source")" ;; esac
+  local object="$out/obj/$(echo "${named%.*}" | tr '/' '_').o"
+  case "$source" in
+    /*) "$cc" -c "${cflags[@]}" "$@" -o "$object" "$source" ;;
+    *) "$cc" -c "${cflags[@]}" "$@" -o "$object" "$os/$source" ;;
+  esac
   objects+=("$object")
 }
 
@@ -115,6 +120,11 @@ for source in "$os"/rt/*.c; do
   source="${source#"$os"/}"
   case "$source" in rt/platform_*.c) continue ;; esac
   compile "$source" -I "$toolchain/include"
+done
+# What is printed from Mini/: the allocator and the freeing of objects.
+"$os/scripts/print-runtime" "$out/printed"
+for source in "$PWD/$out"/printed/*.c; do
+  compile "$source" -I "$toolchain/include" -I "$os/rt"
 done
 compile rt/bare/platform.c -I "$toolchain/include"
 compile rt/bare/hw.c -I "$toolchain/include"

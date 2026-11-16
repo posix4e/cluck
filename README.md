@@ -48,7 +48,7 @@ Every byte from the parent is parsed in Lean. The C and assembly underneath neve
 - `Runtime/`: the parts of the minimal runtime that are Lean: big-number arithmetic and the rules of UTF-8.
   `Runtime/BigProofs.lean`: what is proved about the first.
 - `Mini/`: a small language for the code under Lean, written as data in Lean: its syntax, its meaning
-  (`Mini/Run.lean`), its printer to C, and the allocator written in it. `mini-print` prints the C;
+  (`Mini/Run.lean`), its printer to C, and the allocator written in it. `mini-print` prints the C, which is not kept in the repository;
   `mini-test` runs the allocator as the language defines it.
 - `rt/`: the minimal runtime; `rt/bare/`: its platform with no operating system.
 - `boot/`: from the boot loader's hand-over to `main`. `linux.S` and `setup.S` are the Linux boot protocol's
@@ -139,7 +139,7 @@ It imports `Kernel` and hands `Kernel.serve` a `Kernel.Service`; `OsMain.lean` i
 demo. The scripts find the OS's own files beside themselves, so they are run from the project's directory:
 
 ```
-lake build my-service mkimage
+lake build my-service mkimage mini-print
 .lake/packages/silo-os/scripts/build-bare my-service
 .lake/packages/silo-os/scripts/build-eif my-service "silo.heartbeat=3:9000"
 ```

@@ -2,7 +2,7 @@ import Mini.Lang
 
 /-! # Giving up references, and freeing
 
-The program `rt/free.c` is printed from. An object is addressed by a word; a word with its lowest bit set is
+Its C is printed when the runtime is built (`scripts/print-runtime`). An object is addressed by a word; a word with its lowest bit set is
 not an object but a small value, and is never looked into.
 
 An object's first word, as Lean lays it out (`lean_object` in `<lean/lean.h>`, on a little-endian machine):

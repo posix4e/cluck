@@ -26,13 +26,14 @@ out=".lake/build/rt-min"
 mkdir -p "$out"
 
 # The minimal runtime. platform_hosted.o comes from Lake's link line already.
+"$os/scripts/print-runtime" "$out/printed"
 objects=()
-for source in "$os"/rt/*.c; do
+for source in "$os"/rt/*.c "$out"/printed/*.c; do
   case "$source" in */rt/platform_*.c) continue ;; esac
   object="$out/$(basename "${source%.c}").o"
   # Freestanding, with only the compiler's own headers: the runtime may not lean on a C library.
   "$cc" -c -O2 -Wall -Wextra -Werror -ffreestanding -nostdinc -isystem "$toolchain/include/clang" \
-    -I "$toolchain/include" -fdata-sections -ffunction-sections \
+    -I "$toolchain/include" -I "$os/rt" -fdata-sections -ffunction-sections \
     ${extra[@]+"${extra[@]}"} -o "$object" "$source"
   objects+=("$object")
 done

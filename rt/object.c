@@ -1,6 +1,6 @@
 /*
 Objects: making permanent, constants that are built on first use, and a few kinds of object. Giving up
-references and freeing is free.c.
+references and freeing is Mini/Free.lean.
 */
 #include "rt.h"
 
@@ -159,7 +159,7 @@ void lean_inc_ref_huge_n(lean_object * o, size_t n) {
     if (n > (size_t)(INT_MAX - count)) o->m_rc = LEAN_RC_STUCK_ST; else o->m_rc = count + (int)n;
 }
 
-/* ---- Objects from the allocator (alloc.c) ---- */
+/* ---- Objects from the allocator (Mini/Alloc.lean) ---- */
 
 /* An object of a small fixed size. The header's size field is set, as <lean/lean.h> says it must be. */
 lean_object * lean_alloc_small_object_core(unsigned sz) {

@@ -28,8 +28,7 @@ same `lean_` functions). The demo's list also names the three `silo_plat_` funct
 
 | File | What it holds |
 |---|---|
-| `alloc.c` | The allocator. Printed from `Mini/Alloc.lean`, a program in a small language written in Lean (`Mini/`); not edited by hand. |
-| `free.c` | Giving up references and freeing what the last one kept alive, without recursion. Printed from `Mini/Free.lean`. |
+| (printed) | The allocator, and giving up references and freeing what the last one kept alive. These are programs in a small language written in Lean (`Mini/Alloc.lean`, `Mini/Free.lean`); `scripts/print-runtime` prints their C when the runtime is built, and it is not kept here. |
 | `object.c` | Freeing without recursion, making constants permanent, once-built constants, lazy values, mutable cells. |
 | `apply.c` | Calling closures: partial, exact and over-application. |
 | `array.c` | Arrays and byte arrays. |

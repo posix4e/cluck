@@ -96,6 +96,6 @@ def Program.c (p : Program) (source : String) : String :=
   let arrays := String.join (p.arrays.map fun (name, size) => s!"static uint64_t {name}[{size}];\n")
   let declarations := String.join (p.functions.map (s!"{·.signature};\n"))
   let functions := "\n".intercalate (p.functions.map Function.c)
-  s!"/*\n{p.about}\n\nThis file is printed from {source} by `lake exe mini-print`. Change that, not this: CI checks that\nthe two agree.\n*/\n{p.preamble}\nstatic inline uint64_t mini_load(uint64_t address) \{\n    uint64_t word;\n    __builtin_memcpy(&word, (void const *)address, sizeof word);\n    return word;\n}\n\nstatic inline void mini_store(uint64_t address, uint64_t word) \{\n    __builtin_memcpy((void *)address, &word, sizeof word);\n}\n\n{globals}{arrays}\n{declarations}\n{functions}"
+  s!"/*\n{p.about}\n\nThis file is printed from {source} by `mini-print` when the runtime is built. Change that, not this.\n*/\n{p.preamble}\nstatic inline uint64_t mini_load(uint64_t address) \{\n    uint64_t word;\n    __builtin_memcpy(&word, (void const *)address, sizeof word);\n    return word;\n}\n\nstatic inline void mini_store(uint64_t address, uint64_t word) \{\n    __builtin_memcpy((void *)address, &word, sizeof word);\n}\n\n{globals}{arrays}\n{declarations}\n{functions}"
 
 end Mini

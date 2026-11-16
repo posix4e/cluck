@@ -23,34 +23,44 @@ def Expr.c : Expr → String
   | .global name => name
   | .item array i => s!"{array}[{i.c}]"
   | .load address => s!"mini_load({address.c})"
+  | .part bytes address => s!"mini_load{8 * bytes}({address.c})"
   | .op o a b => if o.compares then s!"(uint64_t)({a.c} {o.c} {b.c})" else s!"({a.c} {o.c} {b.c})"
 
 def pad (depth : Nat) : String := "".pushn ' ' (4 * depth)
 
 mutual
-  def Stmt.c (depth : Nat) : Stmt → String
+  def Stmt.c (others : List (String × Seen)) (depth : Nat) : Stmt → String
     | .set name value => s!"{pad depth}{name} = {value.c};\n"
     | .setGlobal name value => s!"{pad depth}{name} = {value.c};\n"
     | .setItem array i value => s!"{pad depth}{array}[{i.c}] = {value.c};\n"
     | .store address value => s!"{pad depth}mini_store({address.c}, {value.c});\n"
-    | .branch condition yes [] => s!"{pad depth}if ({condition.c}) \{\n{block (depth + 1) yes}{pad depth}}\n"
+    | .storePart bytes address value => s!"{pad depth}mini_store{8 * bytes}({address.c}, {value.c});\n"
+    | .branch condition yes [] => s!"{pad depth}if ({condition.c}) \{\n{block others (depth + 1) yes}{pad depth}}\n"
     | .branch condition yes no =>
-      s!"{pad depth}if ({condition.c}) \{\n{block (depth + 1) yes}{pad depth}} else \{\n{block (depth + 1) no}{pad depth}}\n"
-    | .loop condition body => s!"{pad depth}while ({condition.c}) \{\n{block (depth + 1) body}{pad depth}}\n"
+      s!"{pad depth}if ({condition.c}) \{\n{block others (depth + 1) yes}{pad depth}} else \{\n{block others (depth + 1) no}{pad depth}}\n"
+    | .loop condition body => s!"{pad depth}while ({condition.c}) \{\n{block others (depth + 1) body}{pad depth}}\n"
     | .call result function arguments =>
       let call := s!"mini_{function}({", ".intercalate (arguments.map Expr.c)})"
       match result with
       | some name => s!"{pad depth}{name} = {call};\n"
       | none => s!"{pad depth}{call};\n"
+    | .callOther result function arguments =>
+      let types := match others.find? (·.1 == function) with
+        | some (_, seen) => seen.parameters
+        | none => []
+      let passed := ", ".intercalate ((arguments.zip types).map fun (argument, type) => s!"({type}){argument.c}")
+      match result with
+      | some name => s!"{pad depth}{name} = (uint64_t){function}({passed});\n"
+      | none => s!"{pad depth}{function}({passed});\n"
     | .outside result c =>
       match result with
       | some name => s!"{pad depth}{name} = (uint64_t)({c});\n"
       | none => s!"{pad depth}{c};\n"
     | .stop why => s!"{pad depth}rt_stop({repr why});\n"
     | .give value => s!"{pad depth}return {value.c};\n"
-  def block (depth : Nat) : List Stmt → String
+  def block (others : List (String × Seen)) (depth : Nat) : List Stmt → String
     | [] => ""
-    | s :: rest => s.c depth ++ block depth rest
+    | s :: rest => s.c others depth ++ block others depth rest
 end
 
 mutual
@@ -60,6 +70,7 @@ mutual
     | .branch _ yes no => assignedIn yes ++ assignedIn no
     | .loop _ body => assignedIn body
     | .call (some name) _ _ => [name]
+    | .callOther (some name) _ _ => [name]
     | .outside (some name) _ => [name]
     | _ => []
   def assignedIn : List Stmt → List String
@@ -73,14 +84,14 @@ def Function.signature (f : Function) : String :=
 
 def comment (text : String) : String := if text.isEmpty then "" else s!"/* {text} */\n"
 
-def Function.c (f : Function) : String :=
+def Function.c (others : List (String × Seen)) (f : Function) : String :=
   let locals := (assignedIn f.body).eraseDups.filter (!f.parameters.contains ·)
   let declared := String.join (locals.map (s!"    uint64_t {·} = 0;\n"))
   -- A function whose last statement gives its result needs nothing after it; any other gives zero.
   let last := match f.body.getLast? with
     | some (.give _) => ""
     | _ => "    return 0;\n"
-  let inside := s!"{comment f.about}{f.signature} \{\n{declared}{block 1 f.body}{last}}\n"
+  let inside := s!"{comment f.about}{f.signature} \{\n{declared}{block others 1 f.body}{last}}\n"
   match f.seen with
   | none => inside
   | some seen =>
@@ -95,7 +106,9 @@ def Program.c (p : Program) (source : String) : String :=
   let globals := String.join (p.globals.map (s!"static uint64_t {·};\n"))
   let arrays := String.join (p.arrays.map fun (name, size) => s!"static uint64_t {name}[{size}];\n")
   let declarations := String.join (p.functions.map (s!"{·.signature};\n"))
-  let functions := "\n".intercalate (p.functions.map Function.c)
-  s!"/*\n{p.about}\n\nThis file is printed from {source} by `mini-print` when the runtime is built. Change that, not this.\n*/\n{p.preamble}\nstatic inline uint64_t mini_load(uint64_t address) \{\n    uint64_t word;\n    __builtin_memcpy(&word, (void const *)address, sizeof word);\n    return word;\n}\n\nstatic inline void mini_store(uint64_t address, uint64_t word) \{\n    __builtin_memcpy((void *)address, &word, sizeof word);\n}\n\n{globals}{arrays}\n{declarations}\n{functions}"
+  let functions := "\n".intercalate (p.functions.map (Function.c p.others))
+  let parts := String.join ([8, 16, 32].map fun bits =>
+    s!"static inline uint64_t mini_load{bits}(uint64_t address) \{\n    uint{bits}_t part;\n    __builtin_memcpy(&part, (void const *)address, sizeof part);\n    return part;\n}\n\nstatic inline void mini_store{bits}(uint64_t address, uint64_t word) \{\n    uint{bits}_t part = (uint{bits}_t)word;\n    __builtin_memcpy((void *)address, &part, sizeof part);\n}\n\n")
+  s!"/*\n{p.about}\n\nThis file is printed from {source} by `mini-print` when the runtime is built. Change that, not this.\n*/\n{p.preamble}\nstatic inline uint64_t mini_load(uint64_t address) \{\n    uint64_t word;\n    __builtin_memcpy(&word, (void const *)address, sizeof word);\n    return word;\n}\n\nstatic inline void mini_store(uint64_t address, uint64_t word) \{\n    __builtin_memcpy((void *)address, &word, sizeof word);\n}\n\n{parts}{globals}{arrays}\n{declarations}\n{functions}"
 
 end Mini

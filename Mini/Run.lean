@@ -7,8 +7,8 @@ do what this does, wherever this does not fail.
 
 It fails where C would leave the outcome open, so that a program shown never to fail here does not depend on
 any of it: dividing by zero, shifting by 64 or more, reading or writing outside a global array, reading a
-local that was never set, reading memory nothing has written, and an address that is not a multiple of
-eight. Arithmetic wraps, as it does on the machine.
+local that was never set, and reading memory nothing has written. Arithmetic wraps, as it does on the
+machine. Memory is bytes; a word is eight of them, lowest first.
 
 A call out of the program is whatever `outside` says it is. Running out of `fuel` is a failure too: a
 function that needs more steps than it was given has not been shown to finish. -/
@@ -20,8 +20,8 @@ of the old one: slow to run for long, and simple to reason about. -/
 structure State where
   globals : String → UInt64 := fun _ => 0
   arrays : String → Option (Array UInt64) := fun _ => none
-  /-- The word at an address, where something has been written. -/
-  memory : UInt64 → Option UInt64 := fun _ => none
+  /-- The byte at an address, where something has been written. -/
+  memory : UInt64 → Option UInt8 := fun _ => none
 
 /-- `f`, with a new answer for one question. -/
 def put {α β : Type} [DecidableEq α] (f : α → β) (key : α) (value : β) : α → β :=
@@ -35,8 +35,22 @@ inductive Ending
 
 abbrev Locals := String → Option UInt64
 
-/-- What a call out of the program does: given the C text, a result and the state after. -/
-abbrev Outside := String → State → Except String (UInt64 × State)
+/-- What a call out of the program does: given the function's name (or the C text) and its arguments, a
+result and the state after. -/
+abbrev Outside := String → List UInt64 → State → Except String (UInt64 × State)
+
+/-- The `count` bytes at an address as a number, lowest first. -/
+def readBytes (memory : UInt64 → Option UInt8) (address : UInt64) : Nat → Except String UInt64
+  | 0 => pure 0
+  | count + 1 =>
+    match memory address with
+    | none => throw s!"a read at {address}, which nothing has written"
+    | some byte => do pure (byte.toUInt64 ||| ((← readBytes memory (address + 1) count) <<< 8))
+
+/-- Memory with the lowest `count` bytes of a word written at an address, lowest first. -/
+def writeBytes (memory : UInt64 → Option UInt8) (address word : UInt64) : Nat → UInt64 → Option UInt8
+  | 0 => memory
+  | count + 1 => writeBytes (put memory address (some word.toUInt8)) (address + 1) (word >>> 8) count
 
 def Op.run (o : Op) (a b : UInt64) : Except String UInt64 :=
   let truth (p : Bool) : UInt64 := if p then 1 else 0
@@ -60,12 +74,10 @@ def Expr.run (s : State) (locals : Locals) : Expr → Except String UInt64
     match s.arrays array with
     | none => throw s!"no array {array}"
     | some items => if h : i.toNat < items.size then pure items[i.toNat] else throw s!"{array}[{i}] is outside it"
-  | .load address => do
-    let address ← address.run s locals
-    if address % 8 != 0 then throw s!"a read at {address}, which is not a multiple of eight"
-    match s.memory address with
-    | some word => pure word
-    | none => throw s!"a read at {address}, which nothing has written"
+  | .load address => do readBytes s.memory (← address.run s locals) 8
+  | .part bytes address => do
+    if bytes != 1 && bytes != 2 && bytes != 4 then throw s!"a read of {bytes} bytes"
+    readBytes s.memory (← address.run s locals) bytes
   | .op o a b => do o.run (← a.run s locals) (← b.run s locals)
 
 def bind (locals : Locals) : List String → List UInt64 → Locals
@@ -91,8 +103,11 @@ mutual
           else throw s!"{array}[{i}] is outside it"
       | .store address value => do
         let address ← address.run s locals
-        if address % 8 != 0 then throw s!"a write at {address}, which is not a multiple of eight"
-        pure (.on, { s with memory := put s.memory address (some (← value.run s locals)) }, locals)
+        pure (.on, { s with memory := writeBytes s.memory address (← value.run s locals) 8 }, locals)
+      | .storePart bytes address value => do
+        if bytes != 1 && bytes != 2 && bytes != 4 then throw s!"a write of {bytes} bytes"
+        let address ← address.run s locals
+        pure (.on, { s with memory := writeBytes s.memory address (← value.run s locals) bytes }, locals)
       | .branch condition yes no => do
         if (← condition.run s locals) != 0 then runAll p outside fuel yes s locals
         else runAll p outside fuel no s locals
@@ -110,8 +125,12 @@ mutual
           | (.stopped why, s, _) => pure (.stopped why, s, locals)
           | (.gave value, s, _) => pure (.on, s, match result with | some name => put locals name (some value) | none => locals)
           | (.on, s, _) => pure (.on, s, match result with | some name => put locals name (some 0) | none => locals)
+      | .callOther result function arguments => do
+        let values ← arguments.mapM (·.run s locals)
+        let (value, s) ← outside function values s
+        pure (.on, s, match result with | some name => put locals name (some value) | none => locals)
       | .outside result c => do
-        let (value, s) ← outside c s
+        let (value, s) ← outside c [] s
         pure (.on, s, match result with | some name => put locals name (some value) | none => locals)
       | .stop why => pure (.stopped why, s, locals)
       | .give value => do pure (.gave (← value.run s locals), s, locals)

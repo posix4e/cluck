@@ -27,6 +27,8 @@ inductive Expr
   | item (array : String) (i : Expr)
   /-- The word in memory at an address. -/
   | load (address : Expr)
+  /-- The 1, 2 or 4 bytes in memory at an address, as a word with zeros above them. -/
+  | part (bytes : Nat) (address : Expr)
   | op (o : Op) (a b : Expr)
   deriving Repr
 
@@ -35,11 +37,16 @@ inductive Stmt
   | setGlobal (name : String) (value : Expr)
   | setItem (array : String) (i value : Expr)
   | store (address value : Expr)
+  /-- Writes the lowest 1, 2 or 4 bytes of a word to memory. -/
+  | storePart (bytes : Nat) (address value : Expr)
   | branch (condition : Expr) (yes no : List Stmt)
   | loop (condition : Expr) (body : List Stmt)
   /-- A call of one of the program's own functions. -/
   | call (result : Option String) (function : String) (arguments : List Expr)
-  /-- A call out of the program, as the C to write. What it does is an assumption wherever it is used. -/
+  /-- A call of a function that is not the program's: one the program names among its `others`, with the C
+  types it takes and gives. What it does is an assumption wherever it is used. -/
+  | callOther (result : Option String) (function : String) (arguments : List Expr)
+  /-- A call out of the program for which that is not enough, as the C to write. -/
   | outside (result : Option String) (c : String)
   /-- Stop the machine, saying why. Nothing after it runs. -/
   | stop (why : String)
@@ -66,6 +73,8 @@ structure Program where
   preamble : String
   globals : List String
   arrays : List (String × Nat)
+  /-- The functions outside the program that it calls, each with how C sees it. -/
+  others : List (String × Seen) := []
   functions : List Function
   deriving Repr
 

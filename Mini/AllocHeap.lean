@@ -354,4 +354,46 @@ theorem free_small_in_order (outside : Outside) (extra : Nat) (s : State) (lists
   exact ⟨_, free_small outside extra b.address b.size_class s lists live head.1 small hlists hsize,
     free_keeps s base blocks b member _ lists order⟩
 
+/-! ## The lists of freed blocks -/
+
+/-- Of two blocks that were handed out, the one at the lower address ends, bytes and all, before the header
+of the other begins. So no two of them share a byte, headers included. -/
+theorem Laid.separate {memory : UInt64 → Option UInt8} {start finish : Nat} {blocks : List Block}
+    (h : Laid memory start blocks finish) (lower upper : Block) (m1 : lower ∈ blocks) (m2 : upper ∈ blocks)
+    (order : lower.address.toNat < upper.address.toNat) :
+    lower.address.toNat + lower.bytes + 16 ≤ upper.address.toNat := by
+  induction blocks generalizing start with
+  | nil => cases m1
+  | cons first rest ih =>
+    obtain ⟨where_, _, _, _, _, hrest⟩ := h
+    rcases List.mem_cons.mp m1 with rfl | later1 <;> rcases List.mem_cons.mp m2 with rfl | later2
+    · omega
+    · have := hrest.inside upper later2; omega
+    · have := hrest.inside lower later1; omega
+    · exact ih hrest later1 later2
+
+/-- A list of freed blocks: `head` is the first address in `addresses`, the first word of each block is the
+address of the next, and the last one's is zero. -/
+def Chain (memory : UInt64 → Option UInt8) : UInt64 → List UInt64 → Prop
+  | head, [] => head = 0
+  | head, a :: rest => head = a ∧ a ≠ 0 ∧ ∃ link, readBytes memory a 8 = .ok link ∧ Chain memory link rest
+
+/-- A word that shares no byte with the first word of any block on a list can be written without changing
+the list. -/
+theorem Chain.frame {memory : UInt64 → Option UInt8} {head : UInt64} {addresses : List UInt64}
+    (h : Chain memory head addresses) (at_ word : UInt64)
+    (apart : ∀ a, a ∈ addresses → (at_.toNat + 8 ≤ a.toNat ∧ a.toNat + 8 ≤ 18446744073709551616) ∨
+      (a.toNat + 8 ≤ at_.toNat ∧ at_.toNat + 8 ≤ 18446744073709551616)) :
+    Chain (writeBytes memory at_ word 8) head addresses := by
+  induction addresses generalizing head with
+  | nil => exact h
+  | cons a rest ih =>
+    obtain ⟨same, nonzero, link, hlink, hrest⟩ := h
+    have keep : readBytes (writeBytes memory at_ word 8) a 8 = readBytes memory a 8 := by
+      rcases apart a (List.mem_cons_self) with ⟨before, room⟩ | ⟨after, room⟩
+      · exact readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => above_apart _ _ before i hi k hk room)
+      · exact readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => below_apart _ _ after i hi k hk room)
+    exact ⟨same, nonzero, link, by rw [keep]; exact hlink,
+      ih hrest (fun x hx => apart x (List.mem_cons_of_mem _ hx))⟩
+
 end Mini.Alloc

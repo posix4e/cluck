@@ -109,8 +109,12 @@ printed. What is reasoned about and what is compiled are then the same text.
 - [x] The allocator in it. `rt/alloc.c` is printed, and the runtime's tests pass on it as a process, under
       the sanitizers and on bare metal. Run as the language defines it, it never reads memory nothing has
       written or steps outside an array, over a test of 300 requests and frees.
-- [ ] Proofs about the allocator: that it never fails for any sequence of requests, that blocks in use
-      never overlap, that a freed block is zero. Today those are tested, not proved.
+- [x] First proofs about the allocator, for every input (`Mini/AllocProofs.lean`): what `class_bytes` gives
+      for a small class, and that a request of 1 to 4096 bytes is given a class whose block holds it with
+      fewer than sixteen bytes to spare.
+- [ ] The proofs that matter: that the allocator never fails for any sequence of requests, that blocks in
+      use never overlap, that a freed block is zero. They need an invariant over the heap and the free
+      lists, kept by `rt_malloc` and `rt_free`. Today those are tested, not proved.
 - [ ] That the printer and the C compiler keep the meaning. Trusted; the printer is about 100 lines.
 - [x] Giving up references and freeing (`rt/free.c`, from `Mini/Free.lean`): the same checks as the allocator's
       printed C. Not yet run as the language defines it, and nothing proved.

@@ -1,5 +1,4 @@
 import Mini.Lang
-import Std.Data.HashMap
 
 /-! # What a program means
 
@@ -16,10 +15,17 @@ function that needs more steps than it was given has not been shown to finish. -
 
 namespace Mini
 
+/-- Everything a program can see and change. Each part is a function, changed by putting a new answer in front
+of the old one: slow to run for long, and simple to reason about. -/
 structure State where
-  globals : Std.HashMap String UInt64 := {}
-  arrays : Std.HashMap String (Array UInt64) := {}
-  memory : Std.HashMap UInt64 UInt64 := {}
+  globals : String → UInt64 := fun _ => 0
+  arrays : String → Option (Array UInt64) := fun _ => none
+  /-- The word at an address, where something has been written. -/
+  memory : UInt64 → Option UInt64 := fun _ => none
+
+/-- `f`, with a new answer for one question. -/
+def put {α β : Type} [DecidableEq α] (f : α → β) (key : α) (value : β) : α → β :=
+  fun k => if k = key then value else f k
 
 /-- How a function or a run of statements ends. -/
 inductive Ending
@@ -27,7 +33,7 @@ inductive Ending
   | gave (value : UInt64)
   | stopped (why : String)
 
-abbrev Locals := Std.HashMap String UInt64
+abbrev Locals := String → Option UInt64
 
 /-- What a call out of the program does: given the C text, a result and the state after. -/
 abbrev Outside := String → State → Except String (UInt64 × State)
@@ -45,25 +51,25 @@ def Op.run (o : Op) (a b : UInt64) : Except String UInt64 :=
 
 def Expr.run (s : State) (locals : Locals) : Expr → Except String UInt64
   | .lit value => pure value
-  | .var name => match locals[name]? with
+  | .var name => match locals name with
     | some value => pure value
     | none => throw s!"the local {name} is read before it is set"
-  | .global name => pure (s.globals.getD name 0)
+  | .global name => pure (s.globals name)
   | .item array i => do
     let i ← i.run s locals
-    match s.arrays[array]? with
+    match s.arrays array with
     | none => throw s!"no array {array}"
     | some items => if h : i.toNat < items.size then pure items[i.toNat] else throw s!"{array}[{i}] is outside it"
   | .load address => do
     let address ← address.run s locals
     if address % 8 != 0 then throw s!"a read at {address}, which is not a multiple of eight"
-    match s.memory[address]? with
+    match s.memory address with
     | some word => pure word
     | none => throw s!"a read at {address}, which nothing has written"
   | .op o a b => do o.run (← a.run s locals) (← b.run s locals)
 
 def bind (locals : Locals) : List String → List UInt64 → Locals
-  | name :: names, value :: values => bind (locals.insert name value) names values
+  | name :: names, value :: values => bind (put locals name (some value)) names values
   | _, _ => locals
 
 mutual
@@ -71,22 +77,22 @@ mutual
     | 0, _, _, _ => throw "out of fuel"
     | fuel + 1, statement, s, locals =>
       match statement with
-      | .set name value => do pure (.on, s, locals.insert name (← value.run s locals))
+      | .set name value => do pure (.on, s, put locals name (some (← value.run s locals)))
       | .setGlobal name value => do
-        pure (.on, { s with globals := s.globals.insert name (← value.run s locals) }, locals)
+        pure (.on, { s with globals := put s.globals name (← value.run s locals) }, locals)
       | .setItem array i value => do
         let i ← i.run s locals
         let value ← value.run s locals
-        match s.arrays[array]? with
+        match s.arrays array with
         | none => throw s!"no array {array}"
         | some items =>
           if i.toNat < items.size then
-            pure (.on, { s with arrays := s.arrays.insert array (items.set! i.toNat value) }, locals)
+            pure (.on, { s with arrays := put s.arrays array (some (items.setIfInBounds i.toNat value)) }, locals)
           else throw s!"{array}[{i}] is outside it"
       | .store address value => do
         let address ← address.run s locals
         if address % 8 != 0 then throw s!"a write at {address}, which is not a multiple of eight"
-        pure (.on, { s with memory := s.memory.insert address (← value.run s locals) }, locals)
+        pure (.on, { s with memory := put s.memory address (some (← value.run s locals)) }, locals)
       | .branch condition yes no => do
         if (← condition.run s locals) != 0 then runAll p outside fuel yes s locals
         else runAll p outside fuel no s locals
@@ -100,13 +106,13 @@ mutual
         match p.functions.find? (·.name == function) with
         | none => throw s!"no function {function}"
         | some f =>
-          match ← runAll p outside fuel f.body s (bind {} f.parameters values) with
+          match ← runAll p outside fuel f.body s (bind (fun _ => none) f.parameters values) with
           | (.stopped why, s, _) => pure (.stopped why, s, locals)
-          | (.gave value, s, _) => pure (.on, s, match result with | some name => locals.insert name value | none => locals)
-          | (.on, s, _) => pure (.on, s, match result with | some name => locals.insert name 0 | none => locals)
+          | (.gave value, s, _) => pure (.on, s, match result with | some name => put locals name (some value) | none => locals)
+          | (.on, s, _) => pure (.on, s, match result with | some name => put locals name (some 0) | none => locals)
       | .outside result c => do
         let (value, s) ← outside c s
-        pure (.on, s, match result with | some name => locals.insert name value | none => locals)
+        pure (.on, s, match result with | some name => put locals name (some value) | none => locals)
       | .stop why => pure (.stopped why, s, locals)
       | .give value => do pure (.gave (← value.run s locals), s, locals)
   def runAll (p : Program) (outside : Outside) : Nat → List Stmt → State → Locals → Except String (Ending × State × Locals)
@@ -120,7 +126,7 @@ end
 
 /-- A program's state before anything has run: every global zero, every array full of zeros. -/
 def Program.start (p : Program) : State :=
-  { arrays := p.arrays.foldl (fun arrays (name, size) => arrays.insert name (Array.replicate size 0)) {} }
+  { arrays := p.arrays.foldl (fun arrays (name, size) => put arrays name (some (Array.replicate size 0))) (fun _ => none) }
 
 /-- Calls a function by name. -/
 def Program.call (p : Program) (outside : Outside) (fuel : Nat) (function : String) (arguments : List UInt64)
@@ -128,7 +134,7 @@ def Program.call (p : Program) (outside : Outside) (fuel : Nat) (function : Stri
   match p.functions.find? (·.name == function) with
   | none => throw s!"no function {function}"
   | some f => do
-    let (ending, s, _) ← runAll p outside fuel f.body s (bind {} f.parameters arguments)
+    let (ending, s, _) ← runAll p outside fuel f.body s (bind (fun _ => none) f.parameters arguments)
     pure (ending, s)
 
 end Mini

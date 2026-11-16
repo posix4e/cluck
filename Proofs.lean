@@ -1,4 +1,5 @@
 import Runtime.BigProofs
+import Mini.AllocProofs
 
-/-! Everything proved about the runtime's Lean. Nothing imports this but the build: an image that did would
+/-! Everything proved about the runtime's Lean and about the programs in `Mini/`. Nothing imports this but the build: an image that did would
 link Lean's own tooling. -/

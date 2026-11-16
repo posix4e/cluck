@@ -78,6 +78,13 @@ instance : Mul Expr := ⟨.op .mul⟩
 instance : Div Expr := ⟨.op .div⟩
 instance : Coe String Expr := ⟨.var⟩
 
+/-! What the shorthand stands for, for proofs to see through it. -/
+@[simp] theorem Expr.ofNat_eq (n : Nat) : (OfNat.ofNat n : Expr) = .lit (UInt64.ofNat n) := rfl
+@[simp] theorem Expr.add_eq (a b : Expr) : a + b = .op .add a b := rfl
+@[simp] theorem Expr.sub_eq (a b : Expr) : a - b = .op .sub a b := rfl
+@[simp] theorem Expr.mul_eq (a b : Expr) : a * b = .op .mul a b := rfl
+@[simp] theorem Expr.div_eq (a b : Expr) : a / b = .op .div a b := rfl
+
 def Expr.shl (a b : Expr) : Expr := .op .shl a b
 def Expr.shr (a b : Expr) : Expr := .op .shr a b
 def Expr.and (a b : Expr) : Expr := .op .and a b

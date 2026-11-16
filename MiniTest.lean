@@ -12,7 +12,7 @@ def heapSize : UInt64 := 0x100000
 
 /-- The platform: one region, and running out of memory ends the run. -/
 def outside : Outside := fun c s =>
-  if c.startsWith "silo_plat_heap" then pure (base, { s with globals := s.globals.insert "heap_size" heapSize })
+  if c.startsWith "silo_plat_heap" then pure (base, { s with globals := put s.globals "heap_size" heapSize })
   else throw c
 
 def call (function : String) (argument : UInt64) (s : State) : Except String (Ending × State) :=
@@ -34,9 +34,9 @@ def scenario : Except String (List (String × Bool)) := do
   let (a, s) ← malloc 1 s
   let (b, s) ← malloc 1 s
   -- The block is used, then freed.
-  let s := { s with memory := (s.memory.insert a 0xDEAD).insert (a + 8) 0xBEEF }
+  let s := { s with memory := put (put s.memory a (some 0xDEAD)) (a + 8) (some 0xBEEF) }
   let s ← free a s
-  let wiped := s.memory[a]? == some 0 && s.memory[a + 8]? == some 0
+  let wiped := s.memory a == some 0 && s.memory (a + 8) == some 0
   let (again, s) ← malloc 16 s
   let twice := match free b s >>= free b with
     | .error why => why == "stopped: a block was freed that is not in use"
@@ -68,7 +68,7 @@ def scenario : Except String (List (String × Bool)) := do
     ("a freed block is zeroed", wiped),
     ("and is the next one handed out for that size", again == a),
     ("freeing a block twice stops the machine", twice),
-    ("a large block records its class", state.memory[large - 16]? == some 257),
+    ("a large block records its class", state.memory (large - 16) == some 257),
     ("asking for more than there is ends in out of memory", tooMuch),
     ("300 requests and frees: no two blocks in use overlap", apart)]
 

@@ -97,12 +97,12 @@ The only input. The aim would be memory corruption: turn an attested image into 
     language. Sums, differences, products and comparison are proved to be what they should; division,
     shifts and UTF-8 are not yet.
   - Programs in a small language (`Mini/`), printed as C: the allocator, freeing, arrays, big numbers in
-    memory, hashing. The language has a definition that fails wherever C leaves the outcome open. Against
+    memory, hashing, strings. The language has a definition that fails wherever C leaves the outcome open. Against
     it the allocator is proved, for blocks up to 4096 bytes and any sequence of requests and frees: no two
     blocks share a byte, and a caller writing inside its block cannot damage a header. Large blocks, and
-    the other programs, are tested. The printer, about 150 lines, and the C
+    the other programs, are tested; strings are also run as the language defines them against Lean's own, where reading a byte not written, or writing past an object or into a freed one, fails the run. The printer, about 150 lines, and the C
     compiler are trusted to keep the meaning; nothing checks that they do but the tests.
-  - C by hand (`rt/`), about 660 lines that reach an image: closures, strings, making constants permanent,
+  - C by hand (`rt/`), about 520 lines that reach an image: closures, making constants permanent,
     start-up, stopping, device access. Tested only.
 - **Built:** memory has only the rights it needs. Code cannot be written; constants, data, the heap and the
   stack cannot be run; address zero and everything else the program does not use is not mapped at all; and

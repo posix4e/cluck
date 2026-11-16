@@ -10,8 +10,8 @@ It is in three parts, and this directory is the smallest:
 - **Lean** (`Runtime/`): arithmetic on big numbers and the rules of UTF-8, called from below under C names.
 - **Programs in a small language** (`Mini/`), written as data in Lean and printed as C whenever the runtime is
   built: the allocator, giving up references and freeing, arrays, what a big number is in memory, the small
-  cases of numbers, hashing. The printed C is not kept in the repository.
-- **C written by hand** (here): about 660 lines that end up in an image, for closures, strings, making
+  cases of numbers, hashing, strings. The printed C is not kept in the repository.
+- **C written by hand** (here): about 520 lines that end up in an image, for closures, making
   constants permanent, start-up, stopping, and the machine itself.
 
 It matches `<lean/lean.h>` of Lean 4.35.0 exactly. A Lean upgrade means re-running everything below.
@@ -39,7 +39,6 @@ same `lean_` functions). The demo's list also names the three `silo_plat_` funct
 | (printed from `Mini/`) | `Alloc.lean`: the allocator. `Free.lean`: giving up references and freeing what the last one kept alive, without recursion. `Number.lean`: big numbers in memory; their arithmetic, on 32-bit limbs, is `Runtime/Big.lean`. `Small.lean`: shifts, powers and logarithms of small numbers. `Array.lean`: arrays and byte arrays. `Hash.lean`: Lean's byte hash (MurmurHash64A), bit for bit. `scripts/print-runtime` prints their C when the runtime is built. |
 | `object.c` | Making constants permanent, once-built constants, lazy values, mutable cells, and objects from the allocator. |
 | `apply.c` | Calling closures: partial, exact and over-application. |
-| `string.c` | Strings and Lean's rules for UTF-8 byte positions. The rules of UTF-8 are Lean: `Runtime/Utf8.lean`. |
 | `io.c` | Start-up and platform questions. |
 | `panic.c` | Printing and stopping. |
 | `hosted/platform.c` | The platform as an ordinary process: a pipe, the OS random source, `mmap`. |

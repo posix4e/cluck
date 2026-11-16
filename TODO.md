@@ -163,7 +163,13 @@ printed. What is reasoned about and what is compiled are then the same text.
 - [x] The small cases of shifts, powers and logarithms (`Mini/Small.lean`) and Lean's byte hash
       (`Mini/Hash.lean`), in place of `rt/nat.c` and `rt/hash.c`. The hash, run as the language defines it,
       gives what Lean's own gives.
-- [ ] The rest of `rt/`, a file at a time: making objects permanent, strings, start-up, stopping.
+- [x] Strings (`Mini/String.lean`), in place of `rt/string.c`. Run as the language defines it against Lean's
+      own strings (`mini-test`): every operation, every byte position on and off a character, shared and
+      unshared, with and without room. Any read of a byte not written, write past an object or into a
+      freed one, or overlapping copy fails the run; faults put in on purpose (an off-by-one in the room
+      check, a missing clamp, an over-read, a copy one byte long) were each caught. Not yet proved.
+- [ ] Strings proved in bounds: every read and write inside the objects it was given or made.
+- [ ] The rest of `rt/`, a file at a time: making objects permanent, start-up, stopping.
       Calling a function through its address, and floating-point bits, need the language to grow first.
 
 ### What the program's text does not say: speculation and bits that flip

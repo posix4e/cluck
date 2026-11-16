@@ -1,6 +1,6 @@
 /-! # The rules of UTF-8
 
-What makes bytes a character and a character bytes. `rt/string.c` knows where a string's bytes are and how
+What makes bytes a character and a character bytes. `Mini/String.lean` knows where a string's bytes are and how
 many there are; it hands the bytes in question here, as numbers, and is told what they mean.
 
 Like the rest of `Runtime`, this is called before any module has been initialised, so it has no constant that

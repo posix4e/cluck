@@ -1,6 +1,7 @@
 import Mini.Run
 import Mini.Alloc
 import Mini.Hash
+import MiniStringTest
 
 /-! Runs the allocator as the language defines it, with no C involved, and checks what it does. A run fails
 by itself if the allocator reads memory nothing has written, steps outside an array, or does anything else
@@ -99,5 +100,9 @@ def main : IO UInt32 := do
     for (name, held) in checks ++ [("the byte hash gives what Lean's own gives, for 41 lengths", hashAgrees)] do
       IO.println s!"{if held then "ok   " else "FAIL "} {name}"
       if !held then failures := failures + 1
+    for (name, check) in StringTest.checks do
+      match check with
+      | .ok () => IO.println s!"ok    strings: {name}"
+      | .error why => IO.println s!"FAIL  strings: {name}: {why}"; failures := failures + 1
     if failures == 0 then IO.println "mini-test: all checks passed" else IO.println s!"mini-test: {failures} failed"
     return (if failures == 0 then 0 else 1)

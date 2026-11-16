@@ -5,6 +5,7 @@ import Mini.Number
 import Mini.Array
 import Mini.Small
 import Mini.Hash
+import Mini.String
 
 /-! Prints the C that the programs in `Mini/` stand for: `mini-print alloc`, `mini-print free`, `mini-print number` (`scripts/print-runtime` runs both). -/
 
@@ -16,4 +17,5 @@ def main (arguments : List String) : IO UInt32 := do
   | ["array"] => IO.print (Mini.Array.program.c "Mini/Array.lean"); return 0
   | ["small"] => IO.print (Mini.Small.program.c "Mini/Small.lean"); return 0
   | ["hash"] => IO.print (Mini.Hash.program.c "Mini/Hash.lean"); return 0
-  | _ => IO.eprintln "usage: mini-print alloc | free | number | array | small | hash"; return 2
+  | ["string"] => IO.print (Mini.Str.program.c "Mini/String.lean"); return 0
+  | _ => IO.eprintln "usage: mini-print alloc | free | number | array | small | hash | string"; return 2

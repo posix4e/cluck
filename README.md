@@ -17,8 +17,8 @@ Licensed under the GNU Affero General Public License, version 3 ([LICENSE](LICEN
 | Demo service | Lean | `ping`, `attest(nonce)`, `random(n)`, `selftest` |
 | Drivers and kernel logic | Lean | virtio-mmio, vsock, attestation device, serial, heartbeat, server loop |
 | Minimal runtime, in Lean | Lean | big-number arithmetic and the rules of UTF-8 (`Runtime/`) |
-| Minimal runtime, in a small language | programs written as data in Lean, printed as C when built | allocator, reference counting and freeing, arrays, big numbers in memory, small-number cases, hashing (`Mini/`) |
-| Minimal runtime, by hand | C, single-threaded | closures, strings, making constants permanent, start-up, stopping, a few raw hardware primitives (`rt/`) |
+| Minimal runtime, in a small language | programs written as data in Lean, printed as C when built | allocator, reference counting and freeing, arrays, big numbers in memory, small-number cases, hashing, strings (`Mini/`) |
+| Minimal runtime, by hand | C, single-threaded | closures, making constants permanent, start-up, stopping, a few raw hardware primitives (`rt/`) |
 | Boot stub | assembly and a little C | the Linux boot protocol's header and entries, page tables, fatal-exception handlers |
 
 Every byte from the parent is parsed in Lean. The C and assembly underneath never interpret host data.
@@ -57,10 +57,11 @@ each, and what is only tested, is in [TODO.md](TODO.md).
   `Run.lean` its meaning (an interpreter that fails wherever C leaves the outcome open), `Print.lean` its
   printer to C. The programs: `Alloc.lean` (the allocator), `Free.lean` (giving up references and freeing),
   `Number.lean` (what a big number is in memory), `Array.lean` (arrays and byte arrays), `Small.lean` (shifts,
-  powers and logarithms of small numbers), `Hash.lean` (Lean's byte hash). `AllocProofs.lean`: what is
+  powers and logarithms of small numbers), `Hash.lean` (Lean's byte hash), `String.lean` (strings). `AllocProofs.lean`: what is
   proved about the allocator. `mini-print` prints a program's C, which is not kept in the repository;
-  `scripts/print-runtime` prints them all when the runtime is built. `mini-test` runs the allocator and the
-  hash as the language defines them, with no C involved.
+  `scripts/print-runtime` prints them all when the runtime is built. `mini-test` runs the allocator, the
+  hash and strings as the language defines them, with no C involved (`MiniStringTest.lean` plays what is
+  outside the string program and checks every byte it touches).
 - `fuzz/`, `MiniFuzz.lean`, `scripts/fuzz-alloc`: the allocator as its language defines it set against the
   allocator as printed and compiled, on made-up requests. This is what holds the printer and the C compiler
   to what the proofs are about.
@@ -85,7 +86,7 @@ lake build
 .lake/build/bin/vsock-test
 .lake/build/bin/nsm-test
 .lake/build/bin/driver-test
-.lake/build/bin/mini-test                                    # the allocator and the hash, as their language defines them
+.lake/build/bin/mini-test                                    # the allocator, the hash and strings, as their language defines them
 scripts/fuzz-alloc 200 400                                   # the allocator as defined against as compiled; more rounds, longer
 .lake/build/bin/sim-test .lake/build/bin/demo-sim            # the service on Lean's own runtime
 

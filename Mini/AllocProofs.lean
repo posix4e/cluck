@@ -113,4 +113,54 @@ theorem malloc_reuse (outside : Outside) (fuel : Nat) (size : UInt64) (s : State
     Expr.shr, Expr.or, outOfMemory, nz, nh, hlists, hsize, hblock, waiting, hlink, hstate', fold, nc]
   simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put]
 
+/-! ## Freeing: the loop that zeroes a block -/
+
+/-- One turn of a loop: test, and if it holds run the body and go round again with one less to spend. -/
+theorem loop_turn (p : Program) (outside : Outside) (fuel : Nat) (condition : Expr) (body : List Stmt)
+    (s : State) (locals : Locals) :
+    Stmt.run p outside (fuel + 1) (.loop condition body) s locals =
+      (do
+        if (← condition.run s locals) == 0 then pure (.on, s, locals) else
+        match ← runAll p outside fuel body s locals with
+        | (.on, s, locals) => Stmt.run p outside fuel (.loop condition body) s locals
+        | ended => pure ended) := by
+  rw [Stmt.run]
+  rfl
+
+/-- Memory with `count` words of zero written from `block + at` up. -/
+def zeros (memory : UInt64 → Option UInt8) (block : UInt64) : UInt64 → Nat → UInt64 → Option UInt8
+  | _, 0 => memory
+  | at_, count + 1 => zeros (writeBytes memory (block + at_) 0 8) block (at_ + 8) count
+
+/-- The loop in `rt_free`, from any point in it: with `count` words still to go it writes exactly those
+words as zero, does nothing C leaves open, and leaves every local but its counter as it was. -/
+theorem zero_loop (p : Program) (outside : Outside) (block bytes : UInt64) (count : Nat) :
+    ∀ (at_ : UInt64) (s : State) (locals : Locals) (extra : Nat),
+      locals "at" = some at_ → locals "block" = some block → locals "bytes" = some bytes →
+      at_.toNat + 8 * count = bytes.toNat →
+      ∃ after, Stmt.run p outside (count + extra + 5)
+          (.loop (Expr.lt "at" "bytes") [.store ("block" + "at") 0, .set "at" ("at" + 8)]) s locals =
+            .ok (.on, { s with memory := zeros s.memory block at_ count }, after) ∧
+          ∀ name, name ≠ "at" → after name = locals name := by
+  induction count with
+  | zero =>
+    intro at_ s locals extra hat hblock hbytes hdone
+    have same : at_ = bytes := UInt64.toNat_inj.mp (by omega)
+    refine ⟨locals, ?_, fun _ _ => rfl⟩
+    simp [Stmt.run, Expr.run, Op.run, Expr.lt, hat, hbytes, same, zeros]
+    rfl
+  | succ count ih =>
+    intro at_ s locals extra hat hblock hbytes hleft
+    have less : at_ < bytes := by simp only [UInt64.lt_iff_toNat_lt]; omega
+    have room := bytes.toNat_lt
+    have next : (at_ + 8).toNat + 8 * count = bytes.toNat := by
+      simp only [UInt64.toNat_add, show (8 : UInt64).toNat = 8 from rfl]; omega
+    obtain ⟨after, hrun, hkeep⟩ := ih (at_ + 8) { s with memory := writeBytes s.memory (block + at_) 0 8 }
+      (put locals "at" (some (at_ + 8))) extra (by simp [put]) (by simp [put, hblock]) (by simp [put, hbytes]) next
+    refine ⟨after, ?_, fun name hname => by rw [hkeep name hname]; simp [put, hname]⟩
+    rw [show count + 1 + extra + 5 = (count + extra + 5) + 1 from by omega, loop_turn]
+    generalize hround : Stmt.run p outside (count + extra + 5)
+      (.loop (Expr.lt "at" "bytes") [.store ("block" + "at") 0, .set "at" ("at" + 8)]) = round at hrun ⊢
+    simp [Stmt.run, runAll, Expr.run, Op.run, Expr.lt, hat, hblock, hbytes, less, zeros, hrun]
+
 end Mini.Alloc

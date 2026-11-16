@@ -170,6 +170,15 @@ printed. What is reasoned about and what is compiled are then the same text.
       check, a missing clamp, an over-read, a copy one byte long) were each caught. Not yet proved.
 - [ ] Strings proved in bounds: every read and write inside the objects it was given or made.
 - [ ] The rest of `rt/`, a file at a time: making objects permanent, start-up, stopping.
+- [ ] Say where each piece of hand-written C and assembly comes from in other systems, and where it parts
+      from them: the boot header and page tables (Linux's boot protocol and `head_64.S`, seL4's boot code),
+      polling instead of interrupts (Solo5, DPDK), size classes (Linux's SLUB, seL4 has no kernel heap at
+      all), closures (`caml_applyN` in OCaml), one address space at full privilege (MirageOS, Unikraft).
+      References by file and function, never copied code.
+- [ ] A back end for the small language that writes x86-64 machine code itself, no C compiler, starting with
+      the boot path (a stage0 / Forth-style bootstrap: a tiny, checkable translator instead of clang for the
+      code that runs before memory protection is on). Then the translator, being small, can be checked
+      against the interpreter instruction by instruction, and in time proved.
       Calling a function through its address, and floating-point bits, need the language to grow first.
 
 ### What the program's text does not say: speculation and bits that flip

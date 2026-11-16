@@ -396,4 +396,83 @@ theorem Chain.frame {memory : UInt64 → Option UInt8} {head : UInt64} {addresse
     exact ⟨same, nonzero, link, by rw [keep]; exact hlink,
       ih hrest (fun x hx => apart x (List.mem_cons_of_mem _ hx))⟩
 
+/-- The list of freed blocks of one class is what it should be: a chain from the head the allocator keeps
+for the class, with no block on it twice, and every block on it one that was handed out, of that class, whose
+header says it is free. -/
+def ListFor (memory : UInt64 → Option UInt8) (blocks : List Block) (head : UInt64) (size_class : Nat)
+    (addresses : List UInt64) : Prop :=
+  Chain memory head addresses ∧ addresses.Nodup ∧
+    ∀ a, a ∈ addresses → ∃ b, b ∈ blocks ∧ b.address = a ∧ b.size_class.toNat = size_class ∧
+      readBytes memory (a - 16 + 8) 8 = .ok (UInt64.ofNat freed)
+
+/-- A word written clear of the sixteen bytes around each listed block's address (the second word of its
+header and its own first word) leaves the list as it was. -/
+theorem ListFor.frame {memory : UInt64 → Option UInt8} {blocks : List Block} {head : UInt64} {size_class : Nat}
+    {addresses : List UInt64} (h : ListFor memory blocks head size_class addresses) (at_ word : UInt64)
+    (room : at_.toNat + 8 ≤ 18446744073709551616)
+    (clear : ∀ a, a ∈ addresses → 16 ≤ a.toNat ∧ a.toNat + 8 ≤ 18446744073709551616 ∧
+      (at_.toNat + 8 ≤ a.toNat - 8 ∨ a.toNat + 8 ≤ at_.toNat)) :
+    ListFor (writeBytes memory at_ word 8) blocks head size_class addresses := by
+  obtain ⟨chain, distinct, each⟩ := h
+  refine ⟨chain.frame at_ word (fun a ha => ?_), distinct, fun a ha => ?_⟩
+  · obtain ⟨_, top, side⟩ := clear a ha
+    rcases side with before | after
+    · exact Or.inl ⟨by omega, top⟩
+    · exact Or.inr ⟨after, room⟩
+  · obtain ⟨b, member, where_, cls, state⟩ := each a ha
+    obtain ⟨low, top, side⟩ := clear a ha
+    have second : (a - 16 + 8).toNat = a.toNat - 8 := by
+      simp only [UInt64.toNat_add, UInt64.toNat_sub, show (16 : UInt64).toNat = 16 from rfl,
+        show (8 : UInt64).toNat = 8 from rfl]
+      have := a.toNat_lt; omega
+    have keep : readBytes (writeBytes memory at_ word 8) (a - 16 + 8) 8 = readBytes memory (a - 16 + 8) 8 := by
+      rcases side with before | after
+      · exact readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => above_apart _ _ (by omega) i hi k hk (by omega))
+      · exact readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => below_apart _ _ (by omega) i hi k hk room)
+    exact ⟨b, member, where_, cls, by rw [keep]; exact state⟩
+
+/-- A heap that is sound: in order, and with every class's list of freed blocks what it should be. -/
+def Sound (s : State) (base : Nat) (blocks : List Block) : Prop :=
+  InOrder s base blocks ∧
+    ∃ lists, s.arrays "free_small" = some lists ∧ lists.size = 257 ∧
+      ∀ c, c < 257 → ∃ addresses, ListFor s.memory blocks (lists.getD c 0) c addresses
+
+/-- Taking a block from fresh heap keeps the heap sound. -/
+theorem fresh_sound (s : State) (base : Nat) (blocks : List Block) (size : UInt64)
+    (low : 1 ≤ size) (high : size ≤ 4096) (sound : Sound s base blocks)
+    (room : ¬ s.globals "heap_end" - s.globals "heap_at" < 16 + smallClass size * 16) :
+    Sound (afterFresh s size) base (blocks ++ [⟨s.globals "heap_at" + 16, smallClass size⟩]) := by
+  obtain ⟨order, lists, hlists, hsize, each⟩ := sound
+  refine ⟨fresh_keeps s base blocks size low high order room, lists, hlists, hsize, fun c hc => ?_⟩
+  obtain ⟨addresses, listed⟩ := each c hc
+  obtain ⟨laid, within⟩ := order
+  have top := (s.globals "heap_end").toNat_lt
+  have fits := smallClass_fits size low high
+  have csmall : (smallClass size).toNat < 257 := by simpa [UInt64.lt_iff_toNat_lt] using fits.1
+  have need : (16 + smallClass size * 16).toNat = 16 + (smallClass size).toNat * 16 := by
+    simp only [UInt64.toNat_add, UInt64.toNat_mul, show (16 : UInt64).toNat = 16 from rfl]; omega
+  have fitsHeap : (s.globals "heap_at").toNat + 16 + (smallClass size).toNat * 16 ≤ (s.globals "heap_end").toNat := by
+    have := room
+    simp only [UInt64.lt_iff_toNat_lt, UInt64.toNat_sub_of_le _ _ (by simpa [UInt64.le_iff_toNat_le] using within),
+      need] at this
+    omega
+  have second : (s.globals "heap_at" + 8).toNat = (s.globals "heap_at").toNat + 8 := by
+    simp only [UInt64.toNat_add, show (8 : UInt64).toNat = 8 from rfl]; omega
+  -- Every listed block lies below the front of the heap, where both words are written.
+  have below : ∀ a, a ∈ addresses → 16 ≤ a.toNat ∧ a.toNat + 16 ≤ (s.globals "heap_at").toNat := by
+    intro a ha
+    obtain ⟨b, member, where_, _, _⟩ := listed.2.2 a ha
+    have place := laid.inside b member
+    have sized := (laid.header b member).2.1
+    simp only [Block.bytes] at place
+    rw [← where_]; omega
+  have first := listed.frame (s.globals "heap_at") (smallClass size) (by omega)
+    (fun a ha => ⟨(below a ha).1, by have := (below a ha).2; omega, Or.inr (by have := (below a ha).2; omega)⟩)
+  have both := first.frame (s.globals "heap_at" + 8) (UInt64.ofNat inUse) (by omega)
+    (fun a ha => ⟨(below a ha).1, by have := (below a ha).2; omega, Or.inr (by have := (below a ha).2; omega)⟩)
+  obtain ⟨chain, distinct, members⟩ := both
+  exact ⟨addresses, chain, distinct, fun a ha => by
+    obtain ⟨b, member, rest⟩ := members a ha
+    exact ⟨b, List.mem_append_left _ member, rest⟩⟩
+
 end Mini.Alloc

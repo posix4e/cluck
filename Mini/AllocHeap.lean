@@ -475,4 +475,110 @@ theorem fresh_sound (s : State) (base : Nat) (blocks : List Block) (size : UInt6
     obtain ⟨b, member, rest⟩ := members a ha
     exact ⟨b, List.mem_append_left _ member, rest⟩⟩
 
+/-- Where another block that was handed out lies, seen from one of them: at least a header below it, or
+past its last byte and a header. -/
+theorem Laid.clear {memory : UInt64 → Option UInt8} {start finish : Nat} {blocks : List Block}
+    (h : Laid memory start blocks finish) (top : finish ≤ 18446744073709551616) (b0 : Block) (m0 : b0 ∈ blocks)
+    (b : Block) (m : b ∈ blocks) (other : b.address ≠ b0.address) :
+    16 ≤ b.address.toNat ∧ b.address.toNat + 16 ≤ 18446744073709551616 ∧ 16 ≤ b0.address.toNat ∧ 16 ≤ b0.bytes ∧
+      (b.address.toNat + 32 ≤ b0.address.toNat ∨ b0.address.toNat + b0.bytes + 16 ≤ b.address.toNat) := by
+  have p := h.inside b m
+  have p0 := h.inside b0 m0
+  have s := (h.header b m).2.1
+  have s0 := (h.header b0 m0).2.1
+  have differ : b.address.toNat ≠ b0.address.toNat := fun e => other (UInt64.toNat_inj.mp e)
+  simp only [Block.bytes] at p p0 ⊢
+  refine ⟨by omega, by omega, by omega, by omega, ?_⟩
+  rcases Nat.lt_or_gt_of_ne differ with lt | gt
+  · have := h.separate b b0 m m0 lt; simp only [Block.bytes] at this; omega
+  · have := h.separate b0 b m0 m gt; simp only [Block.bytes] at this; omega
+
+/-- Two blocks that were handed out at the same address are of the same class: their header says so. -/
+theorem Laid.same_class {memory : UInt64 → Option UInt8} {start finish : Nat} {blocks : List Block}
+    (h : Laid memory start blocks finish) (b1 b2 : Block) (m1 : b1 ∈ blocks) (m2 : b2 ∈ blocks)
+    (same : b1.address = b2.address) : b1.size_class = b2.size_class := by
+  have r1 := (h.header b1 m1).1
+  have r2 := (h.header b2 m2).1
+  rw [same, r2] at r1
+  exact (Except.ok.inj r1).symm
+
+/-- A list none of whose blocks is at `b0`'s address is unchanged by clearing `b0`'s first word and by
+writing its state. -/
+theorem ListFor.around {memory : UInt64 → Option UInt8} {start finish : Nat} {blocks : List Block}
+    {head : UInt64} {size_class : Nat} {addresses : List UInt64}
+    (h : ListFor memory blocks head size_class addresses) (laid : Laid memory start blocks finish)
+    (top : finish ≤ 18446744073709551616) (b0 : Block) (m0 : b0 ∈ blocks)
+    (away : ∀ a, a ∈ addresses → a ≠ b0.address) (word state : UInt64) :
+    ListFor (writeBytes (writeBytes memory b0.address word 8) (b0.address - 16 + 8) state 8) blocks head size_class
+      addresses := by
+  have place : ∀ a, a ∈ addresses → 16 ≤ a.toNat ∧ a.toNat + 16 ≤ 18446744073709551616 ∧ 16 ≤ b0.address.toNat ∧
+      16 ≤ b0.bytes ∧ (a.toNat + 32 ≤ b0.address.toNat ∨ b0.address.toNat + b0.bytes + 16 ≤ a.toNat) := by
+    intro a ha
+    obtain ⟨b, member, where_, _, _⟩ := h.2.2 a ha
+    have := laid.clear top b0 m0 b member (by rw [where_]; exact away a ha)
+    rwa [where_] at this
+  have inside := laid.inside b0 m0
+  have sized0 := (laid.header b0 m0).2.1
+  simp only [Block.bytes] at inside
+  have written : (b0.address - 16 + 8).toNat = b0.address.toNat - 8 := by
+    simp only [UInt64.toNat_add, UInt64.toNat_sub, show (16 : UInt64).toNat = 16 from rfl,
+      show (8 : UInt64).toNat = 8 from rfl]
+    have := b0.address.toNat_lt; omega
+  have first := h.frame b0.address word (by omega) (fun a ha => by
+    obtain ⟨l, t, l0, s0, side⟩ := place a ha
+    exact ⟨l, by omega, by omega⟩)
+  exact first.frame (b0.address - 16 + 8) state (by rw [written]; omega) (fun a ha => by
+    obtain ⟨l, t, l0, s0, side⟩ := place a ha
+    rw [written]
+    exact ⟨l, by omega, by omega⟩)
+
+/-- On a sound heap, a class whose list is not empty has at its head a block that was handed out and is
+free, with its link in its first word: exactly what `malloc_reuse` asks for. And the state that theorem
+leaves, with the block taken off its list and marked in use, is sound again. -/
+theorem reuse_sound (s : State) (base : Nat) (blocks : List Block) (lists : Array UInt64) (c0 : Nat)
+    (hc0 : c0 < 257) (sound : Sound s base blocks) (hlists : s.arrays "free_small" = some lists)
+    (waiting : lists.getD c0 0 ≠ 0) :
+    ∃ b0 link, b0 ∈ blocks ∧ b0.address = lists.getD c0 0 ∧ b0.size_class.toNat = c0 ∧
+      readBytes s.memory b0.address 8 = .ok link ∧
+      readBytes s.memory (b0.address - 16 + 8) 8 = .ok (UInt64.ofNat freed) ∧
+      Sound
+        { s with
+          arrays := put s.arrays "free_small" (some (lists.setIfInBounds c0 link))
+          memory := writeBytes (writeBytes s.memory b0.address 0 8) (b0.address - 16 + 8) (UInt64.ofNat inUse) 8 }
+        base blocks := by
+  obtain ⟨order, lists', hlists', hsize, each⟩ := sound
+  have same : lists' = lists := Option.some.inj (hlists'.symm.trans hlists)
+  subst same
+  have top : (s.globals "heap_at").toNat ≤ 18446744073709551616 := by
+    have := (s.globals "heap_end").toNat_lt; have := order.2; omega
+  obtain ⟨addresses, chain, distinct, members⟩ := each c0 hc0
+  cases addresses with
+  | nil => exact absurd chain waiting
+  | cons a0 rest =>
+    obtain ⟨head, _, link, hlink, chainRest⟩ := chain
+    obtain ⟨b0, m0, where0, class0, state0⟩ := members a0 List.mem_cons_self
+    have fresh := List.nodup_cons.mp distinct
+    refine ⟨b0, link, m0, by rw [where0, head], class0, by rw [where0]; exact hlink, by rw [where0]; exact state0,
+      reuse_keeps s base blocks b0 m0 link lists' c0 order, lists'.setIfInBounds c0 link, by simp [put], by simpa using hsize,
+      fun c hc => ?_⟩
+    by_cases hsame : c = c0
+    · subst hsame
+      have listed : ListFor s.memory blocks link c rest :=
+        ⟨chainRest, fresh.2, fun a ha => members a (List.mem_cons_of_mem _ ha)⟩
+      have moved := listed.around order.1 top b0 m0
+        (fun a ha e => fresh.1 (by rw [← where0, ← e]; exact ha)) 0 (UInt64.ofNat inUse)
+      refine ⟨rest, ?_⟩
+      have at_head : (lists'.setIfInBounds c link).getD c 0 = link := by
+        simp [Array.getD_eq_getD_getElem?, hsize, hc]
+      rw [at_head]; exact moved
+    · obtain ⟨others, listed⟩ := each c hc
+      have moved := listed.around order.1 top b0 m0 (fun a ha e => by
+        obtain ⟨b, member, where_, cls, _⟩ := listed.2.2 a ha
+        have classes := order.1.same_class b b0 member m0 (by rw [where_, e])
+        exact hsame (by rw [← cls, ← class0, classes])) 0 (UInt64.ofNat inUse)
+      refine ⟨others, ?_⟩
+      have elsewhere : (lists'.setIfInBounds c0 link).getD c 0 = lists'.getD c 0 := by
+        simp [Array.getD_eq_getD_getElem?, Array.getElem?_setIfInBounds_ne (Ne.symm hsame)]
+      rw [elsewhere]; exact moved
+
 end Mini.Alloc

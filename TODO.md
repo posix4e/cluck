@@ -128,10 +128,15 @@ printed. What is reasoned about and what is compiled are then the same text.
       lie one after another from where it began, each behind a header that says its class and state. A small
       request served from fresh heap keeps it in order with the new block added (`malloc_fresh_in_order`):
       so such a block shares no byte with any handed out before, and every earlier header is untouched.
+- [x] The heap stays in order through freeing and reuse too. Writing inside a block's own bytes, marking a
+      block in use or free, and zeroing it leave every header as it was (`Laid.frame_body`, `Laid.mark`,
+      `Laid.zeros`); so freeing a block that was handed out (`free_small_in_order`, about the program
+      itself) and handing one out again (`reuse_keeps`) keep the same blocks laid as they were.
 - [ ] The proofs that matter: that the allocator never fails for any sequence of requests, that blocks in
-      use never overlap, that a freed block is zero. The invariant has to grow to cover the free lists (each
-      a chain of freed blocks of its class, each freed block on exactly one) and be shown to survive
-      `malloc_reuse` and `free_small`; then any sequence of calls is covered, not one call at a time. Also unproved: large
+      use never overlap, that a freed block is zero. What is missing is the free lists: that each is a
+      chain of freed blocks of its class, each of them a block that was handed out. With that, the head
+      `rt_malloc` reuses is known to be such a block and `malloc_reuse`'s conditions follow from the
+      invariant; then any sequence of calls is covered, and "a freed block is zero" can be stated. Also unproved: large
       blocks (the loop that finds a power of two), and the first use of the heap.
 - [ ] That the printer and the C compiler keep the meaning. Trusted; the printer is about 100 lines.
 - [x] Giving up references and freeing (`Mini/Free.lean`): the same checks as the allocator's

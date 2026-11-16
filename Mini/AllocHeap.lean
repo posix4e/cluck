@@ -150,6 +150,71 @@ theorem Laid.frame_body {memory : UInt64 → Option UInt8} {start finish : Nat} 
     · exact hrest.frame_below at_ word (by simp only [Block.bytes]; omega) top
     · exact ih hrest later
 
+/-- Marking one block as in use or as free, by writing the second word of its header, leaves the blocks
+laid as they were: its header still says one of the two states, and no other header is touched. -/
+theorem Laid.mark {memory : UInt64 → Option UInt8} {start finish : Nat} {blocks : List Block}
+    (h : Laid memory start blocks finish) (b : Block) (member : b ∈ blocks) (state : UInt64)
+    (one : state = UInt64.ofNat inUse ∨ state = UInt64.ofNat freed) (top : finish ≤ 18446744073709551616) :
+    Laid (writeBytes memory (b.address - 16 + 8) state 8) start blocks finish := by
+  induction blocks generalizing start with
+  | nil => cases member
+  | cons first rest ih =>
+    have whole := h
+    obtain ⟨where_, flow, fhigh, hclass, hstate, hrest⟩ := h
+    have order := hrest.le
+    have place := whole.inside b member
+    simp only [Block.bytes] at order place
+    have header : (first.address - 16).toNat = start := by
+      simp only [UInt64.toNat_sub, show (16 : UInt64).toNat = 16 from rfl]; have := first.address.toNat_lt; omega
+    have second : (first.address - 16 + 8).toNat = start + 8 := by
+      simp only [UInt64.toNat_add, header, show (8 : UInt64).toNat = 8 from rfl]
+      have := first.address.toNat_lt; omega
+    have written : (b.address - 16 + 8).toNat = b.address.toNat - 8 := by
+      simp only [UInt64.toNat_add, UInt64.toNat_sub, show (16 : UInt64).toNat = 16 from rfl,
+        show (8 : UInt64).toNat = 8 from rfl]
+      have := b.address.toNat_lt; omega
+    rcases List.mem_cons.mp member with rfl | later
+    · -- The block marked is the first: its class word is below the write, its state word is the write.
+      have keep1 : readBytes (writeBytes memory (b.address - 16 + 8) state 8) (b.address - 16) 8 =
+          readBytes memory (b.address - 16) 8 :=
+        readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => state_apart _ i hi k hk)
+      refine ⟨where_, flow, fhigh, by rw [keep1]; exact hclass, ?_, ?_⟩
+      · rw [readBytes_writeBytes_word]
+        rcases one with rfl | rfl
+        · exact Or.inl rfl
+        · exact Or.inr rfl
+      · exact hrest.frame_below _ state (by simp only [Block.bytes]; omega) top
+    · -- The block marked is a later one: the first block's header ends before the write begins.
+      have further := hrest.inside b later
+      simp only [Block.bytes] at further
+      have keep1 : readBytes (writeBytes memory (b.address - 16 + 8) state 8) (first.address - 16) 8 =
+          readBytes memory (first.address - 16) 8 :=
+        readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => below_apart _ _ (by omega) i hi k hk (by omega))
+      have keep2 : readBytes (writeBytes memory (b.address - 16 + 8) state 8) (first.address - 16 + 8) 8 =
+          readBytes memory (first.address - 16 + 8) 8 :=
+        readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => below_apart _ _ (by omega) i hi k hk (by omega))
+      exact ⟨where_, flow, fhigh, by rw [keep1]; exact hclass, by rw [keep2]; exact hstate, ih hrest later⟩
+
+/-- Writing zero over words of a block, as `rt_free` does, leaves the blocks laid as they were. -/
+theorem Laid.zeros {start finish : Nat} {blocks : List Block} (b : Block) (member : b ∈ blocks)
+    (top : finish ≤ 18446744073709551616) (count : Nat) :
+    ∀ (memory : UInt64 → Option UInt8) (at_ : UInt64), Laid memory start blocks finish →
+      at_.toNat + 8 * count ≤ b.bytes →
+      Laid (Mini.Alloc.zeros memory b.address at_ count) start blocks finish := by
+  induction count with
+  | zero => intro memory at_ h _; exact h
+  | succ count ih =>
+    intro memory at_ h fits
+    have place := h.inside b member
+    simp only [Block.bytes] at place fits
+    have here : (b.address + at_).toNat = b.address.toNat + at_.toNat := by
+      rw [UInt64.toNat_add]; omega
+    have next : (at_ + 8).toNat = at_.toNat + 8 := by
+      simp only [UInt64.toNat_add, show (8 : UInt64).toNat = 8 from rfl]; omega
+    exact ih _ (at_ + 8)
+      (h.frame_body b member (b.address + at_) 0 (by omega) (by simp only [Block.bytes]; omega) top)
+      (by simp only [Block.bytes]; omega)
+
 /-- A heap in order: the blocks handed out so far are laid from `base` to the front of the heap, and the
 front has not passed the end. -/
 def InOrder (s : State) (base : Nat) (blocks : List Block) : Prop :=
@@ -224,5 +289,69 @@ theorem malloc_fresh_in_order (outside : Outside) (fuel : Nat) (size : UInt64) (
       InOrder after base (blocks ++ [⟨s.globals "heap_at" + 16, smallClass size⟩]) :=
   ⟨afterFresh s size, malloc_fresh outside fuel size s lists low high hlists hsize hempty asked started room,
     fresh_keeps s base blocks size low high order room⟩
+
+/-- What the header of a block that was handed out says: its class, which is a small one. -/
+theorem Laid.header {memory : UInt64 → Option UInt8} {start finish : Nat} {blocks : List Block}
+    (h : Laid memory start blocks finish) (b : Block) (member : b ∈ blocks) :
+    readBytes memory (b.address - 16) 8 = .ok b.size_class ∧ 1 ≤ b.size_class.toNat ∧ b.size_class.toNat < 257 := by
+  induction blocks generalizing start with
+  | nil => cases member
+  | cons first rest ih =>
+    obtain ⟨_, low, high, hclass, _, hrest⟩ := h
+    rcases List.mem_cons.mp member with rfl | later
+    · exact ⟨hclass, low, high⟩
+    · exact ih hrest later
+
+/-- Freeing a block that was handed out and is in use keeps the heap in order: the same blocks, laid as
+they were. Its bytes are zeroed and its first word becomes a link, and no other block's header changes. -/
+theorem free_keeps (s : State) (base : Nat) (blocks : List Block) (b : Block) (member : b ∈ blocks)
+    (next : UInt64) (lists : Array UInt64) (order : InOrder s base blocks) :
+    InOrder
+      { s with
+        arrays := put s.arrays "free_small" (some (lists.setIfInBounds b.size_class.toNat b.address))
+        memory := writeBytes
+          (zeros (writeBytes s.memory (b.address - 16 + 8) (UInt64.ofNat freed) 8) b.address 0
+            (b.size_class.toNat * 2))
+          b.address next 8 }
+      base blocks := by
+  obtain ⟨laid, within⟩ := order
+  have top : (s.globals "heap_at").toNat ≤ 18446744073709551616 := by
+    have := (s.globals "heap_end").toNat_lt; omega
+  have sized := (laid.header b member).2.1
+  have marked := laid.mark b member (UInt64.ofNat freed) (Or.inr rfl) top
+  have wiped := Laid.zeros b member top (b.size_class.toNat * 2) _ 0 marked
+    (by simp only [Block.bytes, show (0 : UInt64).toNat = 0 from rfl]; omega)
+  exact ⟨wiped.frame_body b member b.address next (Nat.le_refl _) (by simp only [Block.bytes]; omega) top, within⟩
+
+/-- Handing out again a block that was handed out before keeps the heap in order: the same blocks, laid as
+they were. Its link is cleared and it is marked in use, and no other block's header changes. -/
+theorem reuse_keeps (s : State) (base : Nat) (blocks : List Block) (b : Block) (member : b ∈ blocks)
+    (link : UInt64) (lists : Array UInt64) (index : Nat) (order : InOrder s base blocks) :
+    InOrder
+      { s with
+        arrays := put s.arrays "free_small" (some (lists.setIfInBounds index link))
+        memory := writeBytes (writeBytes s.memory b.address 0 8) (b.address - 16 + 8) (UInt64.ofNat inUse) 8 }
+      base blocks := by
+  obtain ⟨laid, within⟩ := order
+  have top : (s.globals "heap_at").toNat ≤ 18446744073709551616 := by
+    have := (s.globals "heap_end").toNat_lt; omega
+  have sized := (laid.header b member).2.1
+  have cleared := laid.frame_body b member b.address 0 (Nat.le_refl _) (by simp only [Block.bytes]; omega) top
+  exact ⟨cleared.mark b member (UInt64.ofNat inUse) (Or.inl rfl) top, within⟩
+
+/-- About the program itself: freeing a block that was handed out, of a small class and in use, does nothing
+C leaves open and leaves the heap in order. -/
+theorem free_small_in_order (outside : Outside) (extra : Nat) (s : State) (lists : Array UInt64) (base : Nat)
+    (blocks : List Block) (b : Block) (member : b ∈ blocks) (order : InOrder s base blocks)
+    (live : readBytes s.memory (b.address - 16 + 8) 8 = .ok (UInt64.ofNat inUse))
+    (hlists : s.arrays "free_small" = some lists)
+    (hsize : b.size_class.toNat < lists.size) :
+    ∃ after, program.call outside (b.size_class.toNat * 2 + extra + 30) "rt_free" [b.address] s = .ok (.on, after) ∧
+      InOrder after base blocks := by
+  have head := order.1.header b member
+  have small : b.size_class < 257 := by
+    simp only [UInt64.lt_iff_toNat_lt, show (257 : UInt64).toNat = 257 from rfl]; exact head.2.2
+  exact ⟨_, free_small outside extra b.address b.size_class s lists live head.1 small hlists hsize,
+    free_keeps s base blocks b member _ lists order⟩
 
 end Mini.Alloc

@@ -12,46 +12,34 @@ Lean's runtime writes every combination out by hand for speed. This is the same 
 
 typedef lean_object obj;
 
+#define O obj *
+#define CALL(n, types, ...) \
+    case n: return ((obj * (*) types)fn)(__VA_ARGS__);
+
 static obj * call(void * fn, unsigned arity, obj ** a) {
     switch (arity) {
-    case 1: return ((obj * (*)(obj *))fn)(a[0]);
-    case 2: return ((obj * (*)(obj *, obj *))fn)(a[0], a[1]);
-    case 3: return ((obj * (*)(obj *, obj *, obj *))fn)(a[0], a[1], a[2]);
-    case 4: return ((obj * (*)(obj *, obj *, obj *, obj *))fn)(a[0], a[1], a[2], a[3]);
-    case 5: return ((obj * (*)(obj *, obj *, obj *, obj *, obj *))fn)(a[0], a[1], a[2], a[3], a[4]);
-    case 6: return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *))fn)(a[0], a[1], a[2], a[3], a[4], a[5]);
-    case 7:
-        return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *, obj *))fn)(a[0], a[1], a[2], a[3], a[4], a[5], a[6]);
-    case 8:
-        return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *))fn)(
-            a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
-    case 9:
-        return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *))fn)(
-            a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8]);
-    case 10:
-        return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *))fn)(
-            a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9]);
-    case 11:
-        return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *))fn)(
-            a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10]);
-    case 12:
-        return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *))fn)(
-            a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11]);
-    case 13:
-        return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *,
-                           obj *))fn)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12]);
-    case 14:
-        return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *,
-                           obj *, obj *))fn)(
-            a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13]);
-    case 15:
-        return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *,
-                           obj *, obj *, obj *))fn)(
-            a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14]);
-    case 16:
-        return ((obj * (*)(obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *, obj *,
-                           obj *, obj *, obj *, obj *))fn)(
-            a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15]);
+    CALL(1, (O), a[0])
+    CALL(2, (O, O), a[0], a[1])
+    CALL(3, (O, O, O), a[0], a[1], a[2])
+    CALL(4, (O, O, O, O), a[0], a[1], a[2], a[3])
+    CALL(5, (O, O, O, O, O), a[0], a[1], a[2], a[3], a[4])
+    CALL(6, (O, O, O, O, O, O), a[0], a[1], a[2], a[3], a[4], a[5])
+    CALL(7, (O, O, O, O, O, O, O), a[0], a[1], a[2], a[3], a[4], a[5], a[6])
+    CALL(8, (O, O, O, O, O, O, O, O), a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7])
+    CALL(9, (O, O, O, O, O, O, O, O, O), a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8])
+    CALL(10, (O, O, O, O, O, O, O, O, O, O), a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9])
+    CALL(11, (O, O, O, O, O, O, O, O, O, O, O),
+         a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10])
+    CALL(12, (O, O, O, O, O, O, O, O, O, O, O, O),
+         a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11])
+    CALL(13, (O, O, O, O, O, O, O, O, O, O, O, O, O),
+         a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12])
+    CALL(14, (O, O, O, O, O, O, O, O, O, O, O, O, O, O),
+         a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13])
+    CALL(15, (O, O, O, O, O, O, O, O, O, O, O, O, O, O, O),
+         a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14])
+    CALL(16, (O, O, O, O, O, O, O, O, O, O, O, O, O, O, O, O),
+         a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], a[15])
     default: return ((obj * (*)(obj **))fn)(a);
     }
 }
@@ -115,75 +103,27 @@ obj * lean_apply_m(obj * f, unsigned n, obj ** as) {
     return lean_apply_n(f, n, as);
 }
 
-obj * lean_apply_1(obj * f, obj * a1) {
-    obj * as[] = { a1 };
-    return lean_apply_n(f, 1, as);
-}
-obj * lean_apply_2(obj * f, obj * a1, obj * a2) {
-    obj * as[] = { a1, a2 };
-    return lean_apply_n(f, 2, as);
-}
-obj * lean_apply_3(obj * f, obj * a1, obj * a2, obj * a3) {
-    obj * as[] = { a1, a2, a3 };
-    return lean_apply_n(f, 3, as);
-}
-obj * lean_apply_4(obj * f, obj * a1, obj * a2, obj * a3, obj * a4) {
-    obj * as[] = { a1, a2, a3, a4 };
-    return lean_apply_n(f, 4, as);
-}
-obj * lean_apply_5(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5) {
-    obj * as[] = { a1, a2, a3, a4, a5 };
-    return lean_apply_n(f, 5, as);
-}
-obj * lean_apply_6(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6 };
-    return lean_apply_n(f, 6, as);
-}
-obj * lean_apply_7(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6, obj * a7) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6, a7 };
-    return lean_apply_n(f, 7, as);
-}
-obj * lean_apply_8(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6, obj * a7, obj * a8) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6, a7, a8 };
-    return lean_apply_n(f, 8, as);
-}
-obj * lean_apply_9(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6, obj * a7, obj * a8,
-                   obj * a9) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6, a7, a8, a9 };
-    return lean_apply_n(f, 9, as);
-}
-obj * lean_apply_10(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6, obj * a7, obj * a8,
-                    obj * a9, obj * a10) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6, a7, a8, a9, a10 };
-    return lean_apply_n(f, 10, as);
-}
-obj * lean_apply_11(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6, obj * a7, obj * a8,
-                    obj * a9, obj * a10, obj * a11) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11 };
-    return lean_apply_n(f, 11, as);
-}
-obj * lean_apply_12(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6, obj * a7, obj * a8,
-                    obj * a9, obj * a10, obj * a11, obj * a12) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12 };
-    return lean_apply_n(f, 12, as);
-}
-obj * lean_apply_13(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6, obj * a7, obj * a8,
-                    obj * a9, obj * a10, obj * a11, obj * a12, obj * a13) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13 };
-    return lean_apply_n(f, 13, as);
-}
-obj * lean_apply_14(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6, obj * a7, obj * a8,
-                    obj * a9, obj * a10, obj * a11, obj * a12, obj * a13, obj * a14) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14 };
-    return lean_apply_n(f, 14, as);
-}
-obj * lean_apply_15(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6, obj * a7, obj * a8,
-                    obj * a9, obj * a10, obj * a11, obj * a12, obj * a13, obj * a14, obj * a15) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15 };
-    return lean_apply_n(f, 15, as);
-}
-obj * lean_apply_16(obj * f, obj * a1, obj * a2, obj * a3, obj * a4, obj * a5, obj * a6, obj * a7, obj * a8,
-                    obj * a9, obj * a10, obj * a11, obj * a12, obj * a13, obj * a14, obj * a15, obj * a16) {
-    obj * as[] = { a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16 };
-    return lean_apply_n(f, 16, as);
-}
+/* lean_apply_1 to lean_apply_16: the same thing with the arguments written out. */
+#define APPLY(n, parameters, ...) \
+    obj * lean_apply_##n parameters { \
+        obj * as[] = { __VA_ARGS__ }; \
+        return lean_apply_n(f, n, as); \
+    }
+APPLY(1, (O f, O a), a)
+APPLY(2, (O f, O a, O b), a, b)
+APPLY(3, (O f, O a, O b, O c), a, b, c)
+APPLY(4, (O f, O a, O b, O c, O d), a, b, c, d)
+APPLY(5, (O f, O a, O b, O c, O d, O e), a, b, c, d, e)
+APPLY(6, (O f, O a, O b, O c, O d, O e, O g), a, b, c, d, e, g)
+APPLY(7, (O f, O a, O b, O c, O d, O e, O g, O h), a, b, c, d, e, g, h)
+APPLY(8, (O f, O a, O b, O c, O d, O e, O g, O h, O i), a, b, c, d, e, g, h, i)
+APPLY(9, (O f, O a, O b, O c, O d, O e, O g, O h, O i, O j), a, b, c, d, e, g, h, i, j)
+APPLY(10, (O f, O a, O b, O c, O d, O e, O g, O h, O i, O j, O k), a, b, c, d, e, g, h, i, j, k)
+APPLY(11, (O f, O a, O b, O c, O d, O e, O g, O h, O i, O j, O k, O l), a, b, c, d, e, g, h, i, j, k, l)
+APPLY(12, (O f, O a, O b, O c, O d, O e, O g, O h, O i, O j, O k, O l, O m), a, b, c, d, e, g, h, i, j, k, l, m)
+APPLY(13, (O f, O a, O b, O c, O d, O e, O g, O h, O i, O j, O k, O l, O m, O n), a, b, c, d, e, g, h, i, j, k, l, m, n)
+APPLY(14, (O f, O a, O b, O c, O d, O e, O g, O h, O i, O j, O k, O l, O m, O n, O p), a, b, c, d, e, g, h, i, j, k, l, m, n, p)
+APPLY(15, (O f, O a, O b, O c, O d, O e, O g, O h, O i, O j, O k, O l, O m, O n, O p, O q),
+      a, b, c, d, e, g, h, i, j, k, l, m, n, p, q)
+APPLY(16, (O f, O a, O b, O c, O d, O e, O g, O h, O i, O j, O k, O l, O m, O n, O p, O q, O r),
+      a, b, c, d, e, g, h, i, j, k, l, m, n, p, q, r)

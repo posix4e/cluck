@@ -5,7 +5,7 @@
 #
 # The second argument is which shape of the image to boot (scripts/build-bare makes all three); elf if none.
 #
-# Boots boot/faultcheck.c once per forbidden thing (writing code, running data, reading address zero,
+# Boots boot/tests/faultcheck.c once per forbidden thing (writing code, running data, reading address zero,
 # overflowing the stack, ...) and requires each to end in a reported processor exception, status 3, with the
 # right explanation. One more boot tries nothing forbidden and must end normally.
 set -uo pipefail

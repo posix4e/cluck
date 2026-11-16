@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds an image that boots on a bare x86-64 machine.
 #
-#   scripts/build-bare hello          the boot stub with a few lines of C, no Lean (boot/hello.c)
-#   scripts/build-bare faultcheck     the same, for scripts/check-protection (boot/faultcheck.c)
+#   scripts/build-bare hello          the boot stub with a few lines of C, no Lean (boot/tests/hello.c)
+#   scripts/build-bare faultcheck     the same, for scripts/check-protection (boot/tests/faultcheck.c)
 #   scripts/build-bare <executable>   a built Lean executable on the minimal runtime
 #
 # The second form links the program's compiled Lean and Lean's own Init and Std with rt/, rt/bare/ and boot/
@@ -89,9 +89,9 @@ finish() {
   echo "$out/$name.long.bzImage"
 }
 
-# A program that is C alone lives in boot/ under its own name.
-if [ -f "$os/boot/$name.c" ] && [ "$name" != early ]; then
-  compile "boot/$name.c"
+# A program that is C alone lives in boot/tests/ under its own name.
+if [ -f "$os/boot/tests/$name.c" ]; then
+  compile "boot/tests/$name.c"
   finish
   exit 0
 fi

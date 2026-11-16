@@ -32,15 +32,15 @@ same `lean_` functions). The demo's list also names the three `silo_plat_` funct
 | `object.c` | Freeing without recursion, making constants permanent, once-built constants, lazy values, mutable cells. |
 | `apply.c` | Calling closures: partial, exact and over-application. |
 | `array.c` | Arrays and byte arrays. |
-| `string.c` | Strings and Lean's rules for UTF-8 byte positions. |
+| `string.c` | Strings and Lean's rules for UTF-8 byte positions. The rules of UTF-8 are Lean: `Runtime/Utf8.lean`. |
 | `hash.c` | Lean's byte hash (MurmurHash64A), bit for bit. |
-| `nat.c`, `big.c` | Numbers: the small cases, and arbitrary-precision naturals and integers on 32-bit limbs. |
+| `nat.c`, `big.c` | Numbers: the small cases, and what a number too large for a word is in memory. Its arithmetic, on 32-bit limbs, is Lean: `Runtime/Big.lean`. |
 | `io.c` | Start-up and platform questions. |
 | `panic.c` | Printing and stopping. |
-| `platform_hosted.c` | The platform as an ordinary process: a pipe, the OS random source, `mmap`. |
+| `hosted/platform.c` | The platform as an ordinary process: a pipe, the OS random source, `mmap`. |
 | `bare/platform.c`, `bare/libc.c` | The platform with no operating system: the boot stub's serial port and memory, the processor's random numbers, and the five memory functions. |
 | `bare/hw.c` | The C half of `Kernel/Hw.lean`: device registers and device memory, every address checked. |
-| `checked/alloc_checked.c` | A testing allocator: one C-library block per request, for AddressSanitizer. |
+| `hosted/alloc_checked.c` | A testing allocator: one C-library block per request, for AddressSanitizer. |
 
 ## Where it differs from Lean's runtime, on purpose
 

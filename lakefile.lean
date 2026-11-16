@@ -20,7 +20,7 @@ lean_lib Platform
 
 /-- The platform as an ordinary process (a pipe and the operating system's random source). -/
 target platformHosted pkg : System.FilePath := do
-  let src ← inputTextFile (pkg.dir / "rt" / "platform_hosted.c")
+  let src ← inputTextFile (pkg.dir / "rt" / "hosted" / "platform.c")
   buildO (pkg.buildDir / "rt" / "platform_hosted.o") src
     #["-I", (← getLeanIncludeDir).toString] #["-O2", "-fPIC"] "cc"
 

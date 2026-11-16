@@ -11,8 +11,8 @@ No Lean and no runtime: only the boot stub is under test.
 */
 #include <stdint.h>
 
-#include "boot.h"
-#include "checks.c"
+#include "../boot.h"
+#include "../checks.c"
 
 int main(int argc, char ** argv) {
     (void)argc;

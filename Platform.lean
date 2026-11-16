@@ -4,7 +4,7 @@ import Runtime.Utf8
 /-! # What a platform gives the service
 
 The three things the demo service asks of whatever is underneath it. In the simulator they are a few lines of
-C over a pipe and the operating system's random source (`rt/platform_hosted.c`); on bare metal they will be
+C over a pipe and the operating system's random source (`rt/hosted/platform.c`); on bare metal they will be
 the vsock driver and the enclave's random source. Nothing else in the service touches the outside. -/
 
 namespace Platform

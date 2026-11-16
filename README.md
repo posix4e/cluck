@@ -139,7 +139,7 @@ lake build my-service mkimage
 .lake/packages/silo-os/scripts/build-eif my-service "silo.heartbeat=3:9000"
 ```
 
-An executable that is to be linked against the minimal runtime needs `rt/platform_hosted.c` among its link
+An executable that is to be linked against the minimal runtime needs `rt/hosted/platform.c` among its link
 objects when built as a process, as the executables in this project's `lakefile.lean` have.
 
 ## The demo protocol

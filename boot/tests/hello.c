@@ -2,7 +2,7 @@
 The smallest program the boot stub can run: no Lean, no runtime. It says so over the serial port and stops.
 If this prints, the machine got from the boot loader into long mode and into C with a working stack.
 */
-#include "boot.h"
+#include "../boot.h"
 
 int main(int argc, char ** argv) {
     (void)argc;

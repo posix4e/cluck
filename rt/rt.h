@@ -9,7 +9,7 @@ declared below. It provides exactly the functions listed in rt/live-symbols/, wi
 
 #include <lean/lean.h>
 
-/* The platform: an ordinary process (platform_hosted.c) or bare metal (platform_bare.c). */
+/* The platform: an ordinary process (hosted/platform.c) or bare metal (bare/platform.c). */
 void * silo_plat_heap(size_t * size);                       /* one region to allocate from; asked for once */
 void silo_plat_console(char const * bytes, size_t length);  /* diagnostics */
 _Noreturn void silo_plat_halt(int code);                    /* stop */

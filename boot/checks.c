@@ -6,7 +6,7 @@ that it never returns: the processor faults, early.c reports what was tried and 
 status 3. If the attempt goes through, it says that it was NOT stopped and returns 9. `check=none` tries
 nothing forbidden and returns 0, to show the checks are not failing for some other reason.
 
-This file is included by boot/faultcheck.c, an image that is nothing else, and by rt/bare/checks.c, which
+This file is included by boot/tests/faultcheck.c, an image that is nothing else, and by rt/bare/checks.c, which
 lets a Lean image try the same things once it has done what a Nitro Enclave's parent wants first.
 */
 #include <stdint.h>

@@ -9,6 +9,11 @@ package «silo-os»
 @[default_target]
 lean_lib Demo
 
+/-- The parts of the minimal runtime that are written in Lean: arithmetic on numbers too large for a machine
+word (`rt/big.c` is the rest of it). Linked into everything that runs on the minimal runtime. -/
+@[default_target]
+lean_lib Runtime
+
 /-- What the service asks of the platform underneath it: three functions, implemented in C per platform. -/
 @[default_target]
 lean_lib Platform

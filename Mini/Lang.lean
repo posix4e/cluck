@@ -80,6 +80,7 @@ instance : Coe String Expr := ⟨.var⟩
 
 def Expr.shl (a b : Expr) : Expr := .op .shl a b
 def Expr.shr (a b : Expr) : Expr := .op .shr a b
+def Expr.and (a b : Expr) : Expr := .op .and a b
 def Expr.or (a b : Expr) : Expr := .op .or a b
 def Expr.eq (a b : Expr) : Expr := .op .eq a b
 def Expr.ne (a b : Expr) : Expr := .op .ne a b

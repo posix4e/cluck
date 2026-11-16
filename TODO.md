@@ -112,7 +112,9 @@ printed. What is reasoned about and what is compiled are then the same text.
 - [ ] Proofs about the allocator: that it never fails for any sequence of requests, that blocks in use
       never overlap, that a freed block is zero. Today those are tested, not proved.
 - [ ] That the printer and the C compiler keep the meaning. Trusted; the printer is about 100 lines.
-- [ ] Reference counting, object freeing and arrays (`rt/object.c`, `rt/array.c`) in it.
+- [x] Giving up references and freeing (`rt/free.c`, from `Mini/Free.lean`): the same checks as the allocator's
+      printed C. Not yet run as the language defines it, and nothing proved.
+- [ ] Making objects permanent, and arrays (`rt/object.c`, `rt/array.c`) in it.
 
 ### Hardening the OS, before anything secret runs on it
 

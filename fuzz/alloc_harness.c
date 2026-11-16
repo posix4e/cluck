@@ -9,6 +9,7 @@ It first prints where its heap is. Then, for each line it reads, it does one thi
     f <address> 0     rt_free(address); prints 0
     w <address> <v>   writes the word v at address; prints 0
     r <address> 0     prints the word at address
+    q 0 0             ends the run
 
 If the allocator stops the machine it prints "stop" and why; if it runs out of memory, "oom". Either ends the
 run. scripts/fuzz-alloc sets this against the same program run as its language defines it (MiniFuzz.lean).
@@ -55,6 +56,7 @@ int main(int argc, char ** argv) {
         case 'f': rt_free((void *)(uintptr_t)a); break;
         case 'w': word = b; memcpy((void *)(uintptr_t)a, &word, sizeof word); word = 0; break;
         case 'r': memcpy(&word, (void *)(uintptr_t)a, sizeof word); break;
+        case 'q': return 0;
         default: return 2;
         }
         printf("%llu\n", (unsigned long long)word);

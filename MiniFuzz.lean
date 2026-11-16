@@ -24,6 +24,8 @@ structure Round where
   state : State
   /-- Blocks in use: where each is and how many bytes were asked for. -/
   live : Array (UInt64 × UInt64) := #[]
+  /-- A block just freed that the next request frees again. -/
+  again : Option UInt64 := none
   seed : UInt64
 
 def Round.next (r : Round) : UInt64 × Round :=
@@ -45,6 +47,8 @@ def main (arguments : List String) : IO UInt32 := do
   let [harness, rounds, requests, seed] := arguments
     | IO.eprintln "usage: mini-fuzz <alloc-harness> <rounds> <requests a round> <seed>"; return 2
   let heapSize : UInt64 := 32768
+  -- With MINI_FUZZ_TRACE set, every request and both answers are written out as they happen.
+  let trace := (← IO.getEnv "MINI_FUZZ_TRACE").isSome
   let mut seed := seed.toNat!.toUInt64
   let mut asked := 0
   for round in [0:rounds.toNat!] do
@@ -62,7 +66,15 @@ def main (arguments : List String) : IO UInt32 := do
       -- What to ask, and what the program run in Lean says to it.
       let mut line := ""
       let mut expected := ""
-      if choice % 10 < 4 || r.live.isEmpty then
+      if let some address := r.again then
+        -- Freed twice in a row, with nothing in between: anything later could have been handed the block, and
+        -- then freeing it again or writing into it would break the allocator's contract, not test it.
+        let (said, after) := answer base heapSize "rt_free" address r.state
+        line := s!"f {address} 0"; expected := said
+        match after with
+        | some s => r := { r with state := s, again := none }
+        | none => ended := true
+      else if choice % 10 < 4 || r.live.isEmpty then
         let size := if pick % 9 == 0 then pick % 9000 else pick % 300
         let (said, after) := answer base heapSize "rt_malloc" size r.state
         line := s!"m {size} 0"; expected := said
@@ -77,14 +89,16 @@ def main (arguments : List String) : IO UInt32 := do
           let (said, after) := answer base heapSize "rt_free" address r.state
           line := s!"f {address} 0"; expected := said
           match after with
-          -- One time in sixteen the block stays on the list of those in use, to be freed again.
-          | some s => r := { r with state := s, live := if value % 16 == 0 then r.live else r.live.eraseIdx! index }
+          -- One time in sixty-four the block is freed again straight away.
+          | some s => r := { r with state := s, live := r.live.eraseIdx! index,
+                                    again := if value % 64 == 0 then some address else none }
           | none => ended := true
         else if choice % 10 < 8 then
           line := s!"w {at_} {value}"; expected := "0"
           r := { r with state := { r.state with memory := writeBytes r.state.memory at_ value 8 } }
         else
           line := s!"r {at_} 0"; expected := toString (wordAt r.state.memory at_)
+      if trace then IO.eprintln s!"{line}    expecting {expected}"
       child.stdin.putStrLn line
       child.stdin.flush
       let said := (← child.stdout.getLine).trimAscii.toString
@@ -94,7 +108,10 @@ def main (arguments : List String) : IO UInt32 := do
         IO.println s!"      as its language defines it: {expected}"
         IO.println s!"      as printed and compiled:    {said}"
         return 1
-    let (_, _) ← child.takeStdin
+    -- A round the allocator did not end has to be ended: the compiled one is waiting for the next request.
+    if !ended then
+      child.stdin.putStrLn "q 0 0"
+      child.stdin.flush
     let _ ← child.wait
   IO.println s!"mini-fuzz: {rounds} rounds, {asked} requests, the two agreed on every one"
   return 0

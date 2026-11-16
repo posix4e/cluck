@@ -146,17 +146,26 @@ Run an old copy of the enclave's state, or many copies, so that each has a fresh
 
 The attacker shares the host, requests work at will and times it.
 
-- **Built:** freed memory is zeroed; no interrupts are ever enabled, so no secret is spilled by one.
-- **Not built here:** code that handles a service's secrets in time that does not depend on them. That is
-  the service's to bring. Lean's natural numbers are not such code: their arithmetic depends on their size,
-  so a secret must never become one.
+- **Built:** freed memory is zeroed, and the zeroing is kept: the compiler is told the block may be read
+  afterwards, so it cannot drop the stores as dead (what `explicit_bzero` is for). No interrupts are ever
+  enabled, so no secret is spilled by one.
+- **Partly:** code that handles a service's secrets in time that does not depend on them. The OS gives two
+  pieces, `Secret.equal` (byte arrays compared without stopping at the first difference) and `Secret.select`
+  (a choice without a branch), written in the small language and checked (`Mini/Constant.lean`) to let no
+  secret decide a branch, a loop, an address or a division. The rest is the service's to bring. Lean's
+  natural numbers are not such code: their arithmetic depends on their size, so a secret must never become
+  one; nor are `==` on strings and byte arrays, which stop at the first difference.
 - **Built, where the processor offers it:** the boot stub turns on the processor's mode in which the time an
   instruction takes does not depend on the values it works on (Intel's, from Ice Lake on), before anything
   else runs, and says in its report whether it could. A Nitro Enclave is offered the mode on a processor
   that has it: on an m6i.xlarge the report said it was turned on. The processor QEMU emulates does not
   offer it, nor does the older one in an m5, where the question does not arise.
-- **Not addressed:** power and frequency channels, and speculative execution. For those the enclave relies on
-  what AWS does.
+- **Partly:** speculative execution. Where the runtime reads at an index it has just checked (strings, device
+  registers, memory shared with devices), the index is masked without a branch first, so a check the
+  processor guesses wrong still reads in bounds (Linux's `array_index_nospec`; the mask is proved in
+  `Mini/WordProofs.lean`). The bounds checks compiled Lean makes itself, in Lean's header and in `Init` and
+  `Std`, are not masked; building with the compiler's speculative-load hardening is the next step (TODO.md).
+- **Not addressed:** power and frequency channels. For those the enclave relies on what AWS does.
 
 ### A device that lies
 

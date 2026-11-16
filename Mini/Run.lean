@@ -132,6 +132,12 @@ mutual
       | .outside result c => do
         let (value, s) ← outside c [] s
         pure (.on, s, match result with | some name => put locals name (some value) | none => locals)
+      | .hide name => do
+        let _ ← (Expr.var name).run s locals
+        pure (.on, s, locals)
+      | .keep address => do
+        let _ ← address.run s locals
+        pure (.on, s, locals)
       | .stop why => pure (.stopped why, s, locals)
       | .give value => do pure (.gave (← value.run s locals), s, locals)
   def runAll (p : Program) (outside : Outside) : Nat → List Stmt → State → Locals → Except String (Ending × State × Locals)

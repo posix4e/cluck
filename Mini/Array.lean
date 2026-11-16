@@ -1,4 +1,5 @@
 import Mini.Lang
+import Mini.Checked
 
 /-! # Arrays and byte arrays
 
@@ -49,8 +50,8 @@ def bytesNew : Function where
   name := "bytes_new"
   parameters := ["width", "size", "capacity"]
   body := [
-    .callOther (some "room") "lean_usize_mul_checked" ["width", "capacity"],
-    .callOther (some "room") "lean_usize_add_checked" [24, "room"],
+    .call (some "room") "mul_checked" ["width", "capacity"],
+    .call (some "room") "add_checked" [24, "room"],
     .callOther (some "r") "lean_alloc_object" ["room"],
     .store "r" (Expr.or (Expr.or 1 (Expr.shl "width" 48)) bytesKind),
     .store ("r" + 8) "size",
@@ -66,8 +67,8 @@ def copyExpand : Function where
     .set "size" (sizeOf "a"),
     .set "capacity" (capacityOf "a"),
     .branch (Expr.ne "expand" 0)
-      [.callOther (some "capacity") "lean_usize_add_checked" ["capacity", 1],
-       .callOther (some "capacity") "lean_usize_mul_checked" ["capacity", 2]] [],
+      [.call (some "capacity") "add_checked" ["capacity", 1],
+       .call (some "capacity") "mul_checked" ["capacity", 2]] [],
     .call (some "r") "array_new" ["size", "capacity"],
     keepMark "a" "r",
     .branch (exclusive "a")
@@ -127,7 +128,7 @@ def withCapacity : Function where
   body := [
     .branch (Expr.le "least" (capacityOf "a")) [.give "a"] [],
     .set "capacity" "least",
-    .branch (Expr.eq "exact" 0) [.callOther (some "capacity") "lean_usize_mul_checked" ["least", 2]] [],
+    .branch (Expr.eq "exact" 0) [.call (some "capacity") "mul_checked" ["least", 2]] [],
     .branch (exclusive "a") [] [.call none "refuse_copy_of_linear" ["a"]],
     .call (some "r") "copy_sarray" ["a", "capacity"],
     .give "r"]
@@ -147,7 +148,7 @@ def bytePush : Function where
   seen := some { result := object, parameters := [object, "uint8_t"] }
   parameters := ["a", "b"]
   body := [
-    .callOther (some "least") "lean_usize_add_checked" [sizeOf "a", 1],
+    .call (some "least") "add_checked" [sizeOf "a", 1],
     .call (some "r") "sarray_with_capacity" ["a", "least", 0],
     .call (some "r") "sarray_exclusive" ["r"],
     .set "size" (sizeOf "r"),
@@ -170,7 +171,7 @@ def copySlice : Function where
     .branch (Expr.lt "src_size" "src_off") [.give "dest"] [],
     .branch (Expr.lt ("src_size" - "src_off") "len") [.set "len" ("src_size" - "src_off")] [],
     .branch (Expr.lt "dest_size" "dest_off") [.set "dest_off" "dest_size"] [],
-    .callOther (some "new_size") "lean_usize_add_checked" ["dest_off", "len"],
+    .call (some "new_size") "add_checked" ["dest_off", "len"],
     .branch (Expr.lt "new_size" "dest_size") [.set "new_size" "dest_size"] [],
     .call (some "r") "sarray_with_capacity" ["dest", "new_size", "exact"],
     .call (some "r") "sarray_exclusive" ["r"],
@@ -260,14 +261,12 @@ def program : Program where
     ("lean_dec", { result := "void", parameters := [object] }),
     ("lean_inc", { result := "void", parameters := [object] }),
     ("lean_inc_n", { result := "void", parameters := [object, "size_t"] }),
-    ("lean_usize_mul_checked", { result := "size_t", parameters := ["size_t", "size_t"] }),
-    ("lean_usize_add_checked", { result := "size_t", parameters := ["size_t", "size_t"] }),
     ("memcpy", { result := "void *", parameters := ["void *", "void const *", "size_t"] }),
     ("memcmp", { result := "int", parameters := ["void const *", "void const *", "size_t"] }),
     ("rt_nat_to_size", { result := "size_t", parameters := [object] }),
     ("rt_hash_bytes", { result := "uint64_t", parameters := ["uint8_t const *", "size_t", "uint64_t"] }),
     ("lean_list_to_array", { result := object, parameters := [object, object] }),
     ("lean_array_to_list_impl", { result := object, parameters := [object, object] })]
-  functions := [refuse, arrayNew, bytesNew, copyBytesArray, withCapacity, madeExclusive] ++ exported
+  functions := Checked.functions ++ [refuse, arrayNew, bytesNew, copyBytesArray, withCapacity, madeExclusive] ++ exported
 
 end Mini.Array

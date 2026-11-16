@@ -3,6 +3,11 @@ import Mini.Alloc
 import Mini.Hash
 import MiniStringTest
 import MiniMapTest
+import Mini.Secret
+import Mini.Constant
+import Mini.String
+import Mini.Array
+import Mini.Checked
 
 /-! Runs the allocator as the language defines it, with no C involved, and checks what it does. A run fails
 by itself if the allocator reads memory nothing has written, steps outside an array, or does anything else
@@ -91,6 +96,81 @@ def hashAgrees : Bool := Id.run do
     | _ => agrees := false
   return agrees
 
+/-! Comparing and choosing in time that does not depend on secrets: what the functions give, and the check
+that no secret decides their time. -/
+
+def secretChecks : List (String × Bool) := Id.run do
+  let ran (f : String) (args : List UInt64) (s : State) : Option UInt64 :=
+    match Secret.program.call (fun c _ _ => throw c) 100000 f args s with
+    | .ok (.gave v, _) => some v
+    | _ => none
+  -- Two byte arrays laid out as Lean's are, with 24 bytes of header, and compared for every length.
+  let mut equal := true
+  for (a, b) in [("abcdefgh", "abcdefgh"), ("abcdefgh", "abcdefgx"), ("abcdefgh", "xbcdefgh"), ("", ""),
+      ("\x00\xff", "\x00\xff"), ("\x00\xff", "\x00\xfe")] do
+    let (x, y) := (a.toUTF8, b.toUTF8)
+    let mut memory : UInt64 → Option UInt8 := fun _ => none
+    for i in [0:x.size] do memory := put memory (0x1000 + 24 + i.toUInt64) (some x[i]!)
+    for i in [0:y.size] do memory := put memory (0x2000 + 24 + i.toUInt64) (some y[i]!)
+    for n in [0:x.size + 1] do
+      let same := (x.extract 0 n).toList == (y.extract 0 n).toList
+      equal := equal && ran "silo_secret_equal" [0x1000, 0x2000, n.toUInt64] { memory } == some (if same then 1 else 0)
+  let select := [(1, 7, 9, 7), (0, 7, 9, 9), (1, 0xFFFFFFFFFFFFFFFF, 0, 0xFFFFFFFFFFFFFFFF), (0, 0, 5, 5)].all
+    fun (bit, x, y, want) => ran "silo_secret_select" [bit, x, y] {} == some want
+  let passes := Secret.secrets.all fun (name, secret) =>
+    match Secret.program.functions.find? (·.name == name) with
+    | some f => (Constant.check f secret).isOk
+    | none => false
+  -- What the check must refuse: comparing the way memcmp does, stopping at the first difference; reading
+  -- at an address a secret decides; and a call whose time it cannot see.
+  let early : Function := { name := "early", parameters := ["a", "b", "n"], body := [
+    .set "i" 0,
+    .loop (Expr.lt "i" "n") [
+      .branch (Expr.ne (.part 1 ("a" + "i")) (.part 1 ("b" + "i"))) [.give 0] [],
+      .set "i" ("i" + 1)],
+    .give 1] }
+  let lookup : Function := { name := "lookup", parameters := ["table", "k"], body := [.give (.load ("table" + "k" * 8))] }
+  let refused := !(Constant.check early []).isOk && !(Constant.check lookup ["k"]).isOk
+    && (match Str.program.functions.find? (·.name == "lean_string_eq_cold") with
+        | some f => !(Constant.check f []).isOk
+        | none => false)
+  -- The statements `Stmt.inBounds` writes compute the mask proved in Mini/WordProofs.lean: run on their own,
+  -- for indices and sizes at and around every edge.
+  let edges : List UInt64 := [0, 1, 2, 7, 8, 9, 255, 256, 0x7FFFFFFFFFFFFFFE, 0x7FFFFFFFFFFFFFFF, 0x8000000000000000]
+  let masked := edges.all fun i => edges.all fun n =>
+    let f : Function := { name := "f", parameters := ["i", "n"], body := Stmt.inBounds "i" "n" ++ [.give "i"] }
+    let p : Program := { about := "", preamble := "", globals := [], arrays := [], functions := [f] }
+    let ran := match p.call (fun c _ _ => throw c) 100 "f" [i, n] {} with
+      | .ok (.gave v, _) => some v
+      | _ => none
+    i ≥ 0x8000000000000000 || n > 0x8000000000000000 || ran == some (if i < n then i else 0)
+  return [
+    ("an index past a bounds check, masked: itself below the size, zero at or above it", masked),
+    ("secret equal: the same as comparing, for every length of six pairs", equal),
+    ("secret select: chooses by the bit", select),
+    ("secret equal and select: no secret decides a branch, an address or a division", passes),
+    ("the check refuses an early exit, a secret address, and the strings' own equality (memcmp)", refused)]
+
+/-! The checked sums and products stop where Lean's do, and give what they should elsewhere. -/
+
+def checkedChecks : List (String × Bool) :=
+  let ran (f : String) (a b : UInt64) : Option UInt64 :=
+    match Array.program.call (fun c _ _ => throw c) 1000 f [a, b] {} with
+    | .ok (.gave v, _) => some v
+    | _ => none
+  let stops (f : String) (a b : UInt64) : Bool :=
+    match Array.program.call (fun c _ _ => throw c) 1000 f [a, b] {} with
+    | .ok (.stopped _, _) => true
+    | _ => false
+  let big : UInt64 := 0xFFFFFFFFFFFFFFFF
+  [("checked sums: right below the top, and stop above it",
+      ran "add_checked" 3 4 == some 7 && ran "add_checked" (big - 1) 1 == some big && stops "add_checked" big 1
+        && stops "add_checked" (big / 2 + 1) (big / 2 + 1)),
+   ("checked products: right below the top, and stop above it",
+      ran "mul_checked" 6 7 == some 42 && ran "mul_checked" 0 big == some 0 && ran "mul_checked" big 1 == some big
+        && ran "mul_checked" 0x100000000 0xFFFFFFFF == some 0xFFFFFFFF00000000
+        && stops "mul_checked" 0x100000000 0x100000000 && stops "mul_checked" big 2)]
+
 def main : IO UInt32 := do
   match scenario with
   | .error why =>
@@ -99,6 +179,9 @@ def main : IO UInt32 := do
   | .ok checks =>
     let mut failures := 0
     for (name, held) in checks ++ [("the byte hash gives what Lean's own gives, for 41 lengths", hashAgrees)] do
+      IO.println s!"{if held then "ok   " else "FAIL "} {name}"
+      if !held then failures := failures + 1
+    for (name, held) in secretChecks ++ checkedChecks do
       IO.println s!"{if held then "ok   " else "FAIL "} {name}"
       if !held then failures := failures + 1
     for (name, check) in MapTest.checks do

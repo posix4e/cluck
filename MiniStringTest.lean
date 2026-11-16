@@ -151,7 +151,9 @@ def call (function : String) (arguments : List UInt64) (s : State) : Except Stri
 
 def box (n : Nat) : UInt64 := (n.toUInt64 <<< 1) ||| 1
 
-def samples : List String := ["", "a", "hello, world", "héllo wörld", "中文字", "𝄞x𝄞", "aé中𝄞"]
+/-- Short ones for every position, and ones long enough for the paths that take eight bytes at a time. -/
+def samples : List String := ["", "a", "hello, world", "héllo wörld", "中文字", "𝄞x𝄞", "aé中𝄞",
+  "abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyZ", "abcdefgh中ijklmnopqrstuvwxyz"]
 def chars : List Char := ['!', 'é', '中', '𝄞']
 
 /-- Each check is a name, and either nothing or what went wrong. -/

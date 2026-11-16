@@ -49,6 +49,8 @@ while IFS= read -r line; do
     # start-up code needs them. They stay: this is the hosted platform, which does stand on a C library.
     -lc | -lc_nonshared | -l:ld.so | -lpthread_nonshared) args+=("$arg") ;;
     -l* | -pthread) ;;
+    # Programs from Mini/ that Lake printed for Lean's own runtime: the runtime here has its own copies.
+    */printed/*.o) ;;
     *) args+=("$arg") ;;
   esac
 done < "$rsp"

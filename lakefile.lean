@@ -61,6 +61,23 @@ target machineHosted pkg : System.FilePath := do
   buildO (pkg.buildDir / "rt" / "hosted" / "machine.o") src
     #["-I", (← getLeanIncludeDir).toString] #["-O2", "-fPIC"] "cc"
 
+/-- Comparing and choosing in time that does not depend on secrets: `Secret.lean`, over a program in the small
+language (`Mini/Secret.lean`). -/
+@[default_target]
+lean_lib Secret
+
+/-- That program printed as C and compiled, for what runs on Lean's own runtime. (The minimal runtime prints
+and compiles it with the rest, `scripts/print-runtime`.) -/
+target secretHosted pkg : System.FilePath := do
+  let some printer ← findLeanExe? `«mini-print» | error "no mini-print"
+  let printed ← (← printer.fetch).mapM fun exe => do
+    let c := pkg.buildDir / "printed" / "secret.c"
+    IO.FS.createDirAll (pkg.buildDir / "printed")
+    IO.FS.writeFile c (← captureProc { cmd := exe.toString, args := #["secret"] })
+    return c
+  buildO (pkg.buildDir / "printed" / "secret.o") printed
+    #["-I", (← getLeanIncludeDir).toString] #["-O2", "-fPIC"] "cc"
+
 /-- The runtime self-test: one pure function whose transcript must be the same on every runtime. -/
 @[default_target]
 lean_lib SelfTest
@@ -69,7 +86,7 @@ lean_lib SelfTest
 @[default_target]
 lean_exe «rt-test» where
   root := `RtTest
-  moreLinkObjs := #[platformHosted]
+  moreLinkObjs := #[platformHosted, secretHosted]
 
 /-- The big-number test's arithmetic and what it writes down, for the program of that name and for the probe. -/
 @[default_target]

@@ -96,6 +96,9 @@ def free : Function where
     .call (some "bytes") "class_bytes" ["size_class"],
     .set "at" 0,
     .loop (Expr.lt "at" "bytes") [.store ("block" + "at") 0, .set "at" ("at" + 8)],
+    -- A compiler may drop stores nothing reads, and could come to see these that way: the block goes on a
+    -- list, and a later request gets it zeroed anyway. Not dropping them is the point.
+    .keep "block",
     .call (some "next") "list_get" ["size_class"],
     .store "block" "next",
     .call none "list_set" ["size_class", "block"]]

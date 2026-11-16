@@ -1,4 +1,5 @@
 import Mini.Lang
+import Mini.Checked
 
 /-! # Strings
 
@@ -46,7 +47,7 @@ def newString : Function where
   name := "new_string"
   parameters := ["size", "capacity", "length"]
   body := [
-    .callOther (some "room") "lean_usize_add_checked" [32, "capacity"],
+    .call (some "room") "add_checked" [32, "capacity"],
     .callOther (some "r") "lean_alloc_object" ["room"],
     .store "r" stringHeader,
     .store ("r" + 8) "size",
@@ -58,7 +59,7 @@ def byteAt : Function where
   name := "byte_at"
   about := "Byte `i` of the `size` bytes at `s`, or zero past the end."
   parameters := ["s", "size", "i"]
-  body := [.branch (Expr.lt "i" "size") [.give (.part 1 ("s" + "i"))] [], .give 0]
+  body := [.branch (Expr.lt "i" "size") (Stmt.inBounds "i" "size" ++ [.give (.part 1 ("s" + "i"))]) [], .give 0]
 
 /-- The four bytes from `at`, as `byte_at` gives them, into `b0` to `b3`. -/
 def fourBytes (s size at_ : Expr) : List Stmt := [
@@ -67,6 +68,17 @@ def fourBytes (s size at_ : Expr) : List Stmt := [
   .call (some "b2") "byte_at" [s, size, at_ + 2],
   .call (some "b3") "byte_at" [s, size, at_ + 3]]
 
+/-- High bit of every byte of a word. -/
+def highBits : Expr := .lit 0x8080808080808080
+
+def eightAscii : Function where
+  name := "eight_ascii"
+  about := "Whether the eight bytes from `at` are all there and all ASCII, read as one word: no byte with its high bit\nset. The trick glibc, musl and simdjson use to skip ASCII eight bytes at a time. Unlike theirs, the word is\nonly read when all eight bytes belong to the string; reading past the end, which they get away with by\nnot crossing a page, is a read of memory nothing wrote, and the language refuses it."
+  parameters := ["s", "size", "at"]
+  body := [
+    .branch (Expr.lt "size" ("at" + 8)) [.give 0] [],
+    .give (Expr.eq (Expr.and (.load ("s" + "at")) highBits) 0)]
+
 def utf8Length : Function where
   name := "utf8_length"
   about := "The number of characters in `size` bytes of well-formed UTF-8, or all ones if they are not well-formed."
@@ -74,11 +86,14 @@ def utf8Length : Function where
   body := [
     .set "count" 0,
     .set "at" 0,
-    .loop (Expr.lt "at" "size") (fourBytes "s" "size" "at" ++ [
-      .callOther (some "taken") "rt_utf8_strict" ["b0", "b1", "b2", "b3", "size" - "at"],
-      .branch (Expr.eq "taken" 0) [.give notUtf8] [],
-      .set "at" ("at" + "taken"),
-      .set "count" ("count" + 1)]),
+    .loop (Expr.lt "at" "size") [
+      .call (some "ascii") "eight_ascii" ["s", "size", "at"],
+      .branch (Expr.ne "ascii" 0) [.set "at" ("at" + 8), .set "count" ("count" + 8)]
+        (fourBytes "s" "size" "at" ++ [
+          .callOther (some "taken") "rt_utf8_strict" ["b0", "b1", "b2", "b3", "size" - "at"],
+          .branch (Expr.eq "taken" 0) [.give notUtf8] [],
+          .set "at" ("at" + "taken"),
+          .set "count" ("count" + 1)])],
     .give "count"]
 
 def scalarSize : Function where
@@ -104,7 +119,7 @@ def mkUnchecked : Function where
   seen := some { result := object, parameters := ["char const *", "size_t", "size_t"] }
   parameters := ["s", "size", "length"]
   body := [
-    .callOther (some "with_zero") "lean_usize_add_checked" ["size", 1],
+    .call (some "with_zero") "add_checked" ["size", 1],
     .call (some "r") "new_string" ["with_zero", "with_zero", "length"],
     copyBytes (bytes "r") "s" "size",
     .storePart 1 (bytes "r" + "size") 0,
@@ -137,10 +152,10 @@ def ofList : Function where
     .set "at" "chars",
     .loop (Expr.eq (Expr.and "at" 1) 0) [
       .call (some "n") "scalar_size" [head "at"],
-      .callOther (some "size") "lean_usize_add_checked" ["size", "n"],
+      .call (some "size") "add_checked" ["size", "n"],
       .set "length" ("length" + 1),
       .set "at" (tail "at")],
-    .callOther (some "with_zero") "lean_usize_add_checked" ["size", 1],
+    .call (some "with_zero") "add_checked" ["size", 1],
     .call (some "r") "new_string" ["with_zero", "with_zero", "length"],
     .set "to" (bytes "r"),
     .set "at" "chars",
@@ -171,9 +186,9 @@ def withRoom : Function where
   body := [
     .set "size" (sizeOf "s"),
     .set "capacity" (capacityOf "s"),
-    .callOther (some "needed") "lean_usize_add_checked" ["size", "extra"],
+    .call (some "needed") "add_checked" ["size", "extra"],
     .branch (Expr.le "needed" "capacity") [.give "s"] [],
-    .callOther (some "capacity") "lean_usize_add_checked" ["capacity", "needed"],
+    .call (some "capacity") "add_checked" ["capacity", "needed"],
     .call (some "r") "new_string" ["size", "capacity", lengthOf "s"],
     keepMark "s" "r",
     copyBytes (bytes "r") (bytes "s") "size",
@@ -189,12 +204,12 @@ def append : Function where
     .set "size1" (sizeOf "s1"),
     .set "size2" (sizeOf "s2"),
     .set "new_length" (lengthOf "s1" + lengthOf "s2"),
-    .callOther (some "new_size") "lean_usize_add_checked" ["size1", "size2"],
+    .call (some "new_size") "add_checked" ["size1", "size2"],
     .set "new_size" ("new_size" - 1),
     .branch (exclusive "s1")
       [.call (some "r") "string_with_room" ["s1", "size2" - 1]]
       [refuseLinear "s1",
-       .callOther (some "capacity") "lean_usize_mul_checked" ["new_size", 2],
+       .call (some "capacity") "mul_checked" ["new_size", 2],
        .call (some "r") "copy_string" ["s1", "capacity"]],
     copyBytes (bytes "r" + "size1" - 1) (bytes "s2") ("size2" - 1),
     .store ("r" + 8) "new_size",
@@ -273,7 +288,8 @@ def next : Function where
     .set "i" (unbox "i0"),
     .set "size" (sizeOf "s" - 1),
     .branch (Expr.le "size" "i") [.callOther (some "r") "lean_usize_to_nat" ["i" + 1], .give "r"] [],
-    .callOther (some "n") "rt_utf8_claims" [.part 1 (bytes "s" + "i"), 4],
+    .set "at" "i"] ++ Stmt.inBounds "at" "size" ++ [
+    .callOther (some "n") "rt_utf8_claims" [.part 1 (bytes "s" + "at"), 4],
     .give (box ("i" + "n"))]
 
 def nextFastCold : Function where
@@ -296,9 +312,11 @@ def fromTrusted : Function where
     .set "length" 0,
     .set "i" 0,
     .loop (Expr.lt "i" "size") [
-      .callOther (some "n") "rt_utf8_claims" [.part 1 ("from" + "i"), 6],
-      .set "i" ("i" + "n"),
-      .set "length" ("length" + 1)],
+      .call (some "ascii") "eight_ascii" ["from", "size", "i"],
+      .branch (Expr.ne "ascii" 0) [.set "i" ("i" + 8), .set "length" ("length" + 8)]
+        [.callOther (some "n") "rt_utf8_claims" [.part 1 ("from" + "i"), 6],
+         .set "i" ("i" + "n"),
+         .set "length" ("length" + 1)]],
     .call (some "r") "lean_mk_string_unchecked" ["from", "size", "length"],
     .give "r"]
 
@@ -315,12 +333,13 @@ def extract : Function where
     .set "size" (sizeOf "s" - 1),
     .branch (Expr.or (Expr.le "e" "b") (Expr.le "size" "b"))
       [.call (some "r") "lean_mk_string_unchecked" [bytes "s", 0, 0], .give "r"] [],
-    .call (some "starts") "starts_character" [.part 1 (bytes "s" + "b")],
+    .set "at" "b"] ++ Stmt.inBounds "at" "size" ++ [
+    .call (some "starts") "starts_character" [.part 1 (bytes "s" + "at")],
     .branch (Expr.eq "starts" 0) [.call (some "r") "lean_mk_string_unchecked" [bytes "s", 0, 0], .give "r"] [],
     .branch (Expr.lt "size" "e") [.set "e" "size"] [],
     .branch (Expr.lt "e" "size")
-      [.call (some "starts") "starts_character" [.part 1 (bytes "s" + "e")],
-       .branch (Expr.eq "starts" 0) [.set "e" "size"] []] [],
+      (Stmt.inBounds "e" "size" ++ [.call (some "starts") "starts_character" [.part 1 (bytes "s" + "e")],
+       .branch (Expr.eq "starts" 0) [.set "e" "size"] []]) [],
     .call (some "r") "string_from_trusted" [bytes "s" + "b", "e" - "b"],
     .give "r"]
 
@@ -334,8 +353,8 @@ def push : Function where
     .branch (exclusive "s")
       [.call (some "r") "string_with_room" ["s", 5]]
       [refuseLinear "s",
-       .callOther (some "capacity") "lean_usize_add_checked" ["size", 5],
-       .callOther (some "capacity") "lean_usize_mul_checked" ["capacity", 2],
+       .call (some "capacity") "add_checked" ["size", 5],
+       .call (some "capacity") "mul_checked" ["capacity", 2],
        .call (some "r") "copy_string" ["s", "capacity"]],
     .call (some "added") "put_scalar" [bytes "r" + "size" - 1, "c"],
     .store ("r" + 8) ("size" + "added"),
@@ -406,6 +425,11 @@ def less : Function where
     .set "shorter" "size1",
     .branch (Expr.lt "size2" "size1") [.set "shorter" "size2"] [],
     .set "i" 0,
+    -- Equal words are skipped eight bytes at a time; the first that differ are then gone through a byte at a
+    -- time, from where they start.
+    .set "words" 1,
+    .loop (Expr.and (Expr.le ("i" + 8) "shorter") "words") [
+      .branch (Expr.eq (.load (bytes "s1" + "i")) (.load (bytes "s2" + "i"))) [.set "i" ("i" + 8)] [.set "words" 0]],
     .loop (Expr.lt "i" "shorter") [
       .set "a" (.part 1 (bytes "s1" + "i")),
       .set "b" (.part 1 (bytes "s2" + "i")),
@@ -427,8 +451,6 @@ def program : Program where
     ("lean_dec_ref", { result := "void", parameters := [object] }),
     ("lean_nat_add", { result := object, parameters := [object, object] }),
     ("lean_usize_to_nat", { result := object, parameters := ["size_t"] }),
-    ("lean_usize_mul_checked", { result := "size_t", parameters := ["size_t", "size_t"] }),
-    ("lean_usize_add_checked", { result := "size_t", parameters := ["size_t", "size_t"] }),
     ("memcpy", { result := "void *", parameters := ["void *", "void const *", "size_t"] }),
     ("memcmp", { result := "int", parameters := ["void const *", "void const *", "size_t"] }),
     ("strlen", { result := "size_t", parameters := ["char const *"] }),
@@ -437,7 +459,7 @@ def program : Program where
     ("rt_utf8_read", { result := "uint64_t", parameters := ["uint8_t", "uint8_t", "uint8_t", "uint8_t", "size_t"] }),
     ("rt_utf8_write", { result := "uint64_t", parameters := ["uint32_t"] }),
     ("rt_utf8_claims", { result := "uint8_t", parameters := ["uint8_t", "uint8_t"] })]
-  functions := [newString, byteAt, utf8Length, scalarSize, putScalar, mkUnchecked, mk, ofList, copyString,
+  functions := Checked.functions ++ [newString, byteAt, eightAscii, utf8Length, scalarSize, putScalar, mkUnchecked, mk, ofList, copyString,
     withRoom, append, eqCold, ofSize, charAt, get, getFastCold, next, nextFastCold, startsCharacter,
     fromTrusted, extract, push, toList, toBytes, hash, sameBytes, less]
 

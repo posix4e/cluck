@@ -29,11 +29,22 @@ lean_obj_res silo_hw_windows(void) {
     return r;
 }
 
+/* `index` if it is below `size`, zero if not, with no branch (both below 2^63). A processor may run ahead
+of a bounds check, guessing that it passed; what it then reads with is this, which is in bounds either way.
+Linux's array_index_nospec (include/linux/nospec.h), in the portable form Stmt.inBounds prints for the
+programs in Mini/ (proved in Mini/WordProofs.lean); the empty assembly keeps the compiler from turning the
+mask back into a branch. */
+static uint64_t in_bounds(uint64_t index, uint64_t size) {
+    uint64_t mask = ((index | (size - 1 - index)) >> 63) - 1;
+    __asm__ volatile("" : "+r"(mask));
+    return index & mask;
+}
+
 static volatile uint32_t * register_at(uint64_t address) {
     for (size_t i = 0; i < boot_window_count; i++) {
         uint64_t base = boot_windows[i].base;
         if ((address & 3) == 0 && address >= base && address - base <= boot_windows[i].size - 4)
-            return (volatile uint32_t *)(uintptr_t)address;
+            return (volatile uint32_t *)(uintptr_t)(base + in_bounds(address - base, boot_windows[i].size - 3));
     }
     rt_stop("a driver reached for a register outside every device's window");
 }
@@ -63,7 +74,8 @@ static uint8_t * device_memory(uint64_t address, size_t size) {
     uint64_t start = (uint64_t)(uintptr_t)boot_device_start;
     if (address < start || address - start > device_used || size > device_used - (address - start))
         rt_stop("a driver reached for memory outside what it shares with devices");
-    return (uint8_t *)(uintptr_t)address;
+    /* Past the check, the offset is at most what is in use less the size; masked to that, guessed or not. */
+    return (uint8_t *)(uintptr_t)(start + in_bounds(address - start, device_used - size + 1));
 }
 
 lean_obj_res silo_hw_load(uint64_t address, size_t size) {

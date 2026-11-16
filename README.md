@@ -53,11 +53,13 @@ each, and what is only tested, is in [TODO.md](TODO.md).
   AWS root certificate it trusts, its test, and two documents from a real enclave.
 - `Runtime/`: the parts of the minimal runtime that are Lean: big-number arithmetic (`Big.lean`) and the
   rules of UTF-8 (`Utf8.lean`). `Runtime/BigProofs.lean`: what is proved about the first.
+- `Secret.lean`: `Secret.equal` and `Secret.select`, for a service that holds a secret: comparing byte
+  arrays and choosing between words in time that no secret decides.
 - `Mini/`: a small language for the code under Lean, written as data in Lean. `Lang.lean` is its syntax,
   `Run.lean` its meaning (an interpreter that fails wherever C leaves the outcome open), `Print.lean` its
   printer to C. The programs: `Alloc.lean` (the allocator), `Free.lean` (giving up references and freeing),
   `Number.lean` (what a big number is in memory), `Array.lean` (arrays and byte arrays), `Small.lean` (shifts,
-  powers and logarithms of small numbers), `Hash.lean` (Lean's byte hash), `String.lean` (strings), `Map.lean` (the page tables put in place at boot, printed into the boot stub rather than the runtime). `AllocProofs.lean`: what is
+  powers and logarithms of small numbers), `Hash.lean` (Lean's byte hash), `String.lean` (strings), `Map.lean` (the page tables put in place at boot, printed into the boot stub rather than the runtime), `Secret.lean` (comparing and choosing in time no secret decides), `Checked.lean` (sums and products of sizes that stop instead of wrapping). `Constant.lean` checks a function's text for any secret deciding its time; `WordProofs.lean` proves the arithmetic tricks. `AllocProofs.lean`: what is
   proved about the allocator. `mini-print` prints a program's C, which is not kept in the repository;
   `scripts/print-runtime` prints them all when the runtime is built. `mini-test` runs the allocator, the
   hash, strings and the mapping as the language defines them, with no C involved (`MiniStringTest.lean` plays what is

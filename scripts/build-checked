@@ -51,6 +51,8 @@ while IFS= read -r line; do
     -L | --sysroot) pending="$arg" ;;
     -lInit | -lStd) args+=("$arg") ;;
     -l* | -pthread | -fuse-ld=* | -Wl,*) ;;
+    # Programs from Mini/ that Lake printed for Lean's own runtime: the runtime here has its own copies.
+    */printed/*.o) ;;
     *) args+=("$arg") ;;
   esac
 done < "$rsp"

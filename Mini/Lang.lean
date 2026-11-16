@@ -48,6 +48,14 @@ inductive Stmt
   | callOther (result : Option String) (function : String) (arguments : List Expr)
   /-- A call out of the program for which that is not enough, as the C to write. -/
   | outside (result : Option String) (c : String)
+  /-- Nothing, as far as the language is concerned; the compiler is told it no longer knows what the local
+  holds. Without it a compiler may see that a mask computed with no branch is only ever all ones or zero,
+  and put the branch back (Linux's `OPTIMIZER_HIDE_VAR`). -/
+  | hide (name : String)
+  /-- Nothing, as far as the language is concerned; the compiler is told the memory at the address may be
+  read after this, so the writes before it have to happen. That is what keeps a wipe from being dropped as a
+  store nothing reads (`explicit_bzero` in OpenBSD, `memset_s` in C11). -/
+  | keep (address : Expr)
   /-- Stop the machine, saying why. Nothing after it runs. -/
   | stop (why : String)
   | give (value : Expr)
@@ -103,5 +111,15 @@ def Expr.eq (a b : Expr) : Expr := .op .eq a b
 def Expr.ne (a b : Expr) : Expr := .op .ne a b
 def Expr.lt (a b : Expr) : Expr := .op .lt a b
 def Expr.le (a b : Expr) : Expr := .op .le a b
+
+/-- `index` made zero, without a branch, unless it is below `size`: the bounds check before it may be guessed
+wrong by a processor running ahead, and this is what it then reads with. Both must be below 2^63; in that
+range the mask is all ones exactly when `index < size`. Linux's `array_index_nospec` (include/linux/nospec.h),
+whose x86 version is two instructions of assembly; this is its portable form, with the mask hidden from the
+compiler so it cannot be turned back into a branch. -/
+def Stmt.inBounds (index : String) (size : Expr) : List Stmt := [
+  .set "nospec_mask" (Expr.op .sub (Expr.shr (Expr.or (.var index) (size - 1 - .var index)) 63) 1),
+  .hide "nospec_mask",
+  .set index (Expr.and (.var index) (.var "nospec_mask"))]
 
 end Mini

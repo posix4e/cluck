@@ -208,6 +208,14 @@ it does not remove these. Four things to do about them:
 - [ ] Catch corruption where it cannot be prevented. The allocator's headers hold values that are checked on
       every free and reuse. Offer the same to services: a cell that keeps a value in two forms and stops the
       machine if they disagree when it is read, for a key, a counter or a limit.
+- [x] Tricks from C libraries, in the small language and proved or checked: an index past a bounds check
+      masked without a branch (Linux's `array_index_nospec`, `Stmt.inBounds`, in strings and in `hw.c`);
+      a compare and a select whose time no secret decides (libsodium, BearSSL: `Mini/Secret.lean`, used
+      from Lean as `Secret.equal` and `Secret.select`), with a check of any function's text for the same
+      (`Mini/Constant.lean`); the allocator's wipe kept from the compiler (OpenBSD's `explicit_bzero`,
+      `Stmt.keep`); eight ASCII bytes at a time (glibc, musl, simdjson), reading only what belongs to the
+      string; and sums and products of sizes checked in the language instead of assumed of Lean's header
+      (`Mini/Checked.lean`). The arithmetic in each is proved in `Mini/WordProofs.lean`.
 - [ ] Keep secrets out of reach of a guess: not beside input that is being parsed, and wiped the moment they
       are finished with. Say how in `CONTRIBUTING.md`, and make the runtime help where it can.
 - [ ] Say all of this in `THREAT_MODEL.md`, which today says only that speculation is left to AWS: what the

@@ -56,6 +56,8 @@ mutual
       match result with
       | some name => s!"{pad depth}{name} = (uint64_t)({c});\n"
       | none => s!"{pad depth}{c};\n"
+    | .hide name => s!"{pad depth}__asm__ volatile(\"\" : \"+r\"({name}));\n"
+    | .keep address => s!"{pad depth}__asm__ volatile(\"\" : : \"r\"({address.c}) : \"memory\");\n"
     | .stop why => s!"{pad depth}rt_stop({repr why});\n"
     | .give value => s!"{pad depth}return {value.c};\n"
   def block (others : List (String × Seen)) (depth : Nat) : List Stmt → String

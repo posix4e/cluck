@@ -116,8 +116,23 @@ checked by compiled code, so those theorems also trust the compiler that ran the
       Where `strict` finds a character, `read` returns the one those bytes encode and `claims` steps over
       exactly its bytes. Not stated: what `read` and `claims` answer on bytes that are not well formed, where
       they follow Lean's own runtime, which is C and has no definition here to be held against.
-- [ ] That `Mini/Number.lean` hands the arithmetic the right limbs and reads its answer rightly: tested, not
-      proved.
+- [ ] That `Mini/Number.lean` hands the arithmetic the right limbs and reads its answer rightly. Proved
+      for numbers that fit in a tagged word (`Mini/NumberProofs.lean`, on Lean's three standard axioms),
+      about the program as its language defines it:
+      - Going in: `limbs_of_word`, and `nat_limbs` for a natural number that arrives as a tagged word,
+        leave in memory an array holding the limbs of that number, with no zero limb on top. They do
+        nothing C leaves open and change nothing outside the room the allocator gave. All that is assumed
+        of the allocator is that it returns an address.
+      - `trimmed`, for any array of limbs: its loop reads only those limbs, changes nothing, and gives the
+        count without the zero limbs on top.
+      - Coming out: `nat_result` and `nat_from`, where the number in the array is below 2^63, give back
+        the tagged word for it (twice the number, and one), whatever zero limbs the arithmetic left on top.
+
+      Not proved: a number that is an object, going in (`checked`, `limbs_of_object`) or coming out
+      (`big_new`), which needs the allocator to hand out room that overlaps nothing in use; integers and
+      their signs (`int_limbs`, `int_sign`, `int_result`, where a zero with a minus sign is made plain
+      zero); and an operation as a whole, which calls compiled `Runtime/Big.lean` between the two ends,
+      so needs an assumption about what that call leaves in memory.
 
 ### The code under Lean, written in Lean
 

@@ -52,7 +52,7 @@ each, and what is only tested, is in [TODO.md](TODO.md).
 - `verify/`: the program that decides, off the host, whether an attestation document is to be believed, the
   AWS root certificate it trusts, its test, and two documents from a real enclave.
 - `Runtime/`: the parts of the minimal runtime that are Lean: big-number arithmetic (`Big.lean`) and the
-  rules of UTF-8 (`Utf8.lean`). `Runtime/BigProofs.lean`: what is proved about the first.
+  rules of UTF-8 (`Utf8.lean`). `Runtime/BigProofs.lean` and `Runtime/Utf8Proofs.lean`: what is proved about each.
 - `Secret.lean`: `Secret.equal` and `Secret.select`, for a service that holds a secret: comparing byte
   arrays and choosing between words in time that no secret decides.
 - `Mini/`: a small language for the code under Lean, written as data in Lean. `Lang.lean` is its syntax,

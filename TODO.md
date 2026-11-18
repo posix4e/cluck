@@ -83,7 +83,9 @@ the image.
 
 ### Proofs about the runtime's Lean
 
-`Runtime/BigProofs.lean`, checked by the build, on Lean's three standard axioms.
+`Runtime/BigProofs.lean`, checked by the build, on Lean's three standard axioms. `Runtime/Utf8Proofs.lean`,
+checked by the build too, but its questions about bytes are settled by `bv_decide`: a SAT solver's answer
+checked by compiled code, so those theorems also trust the compiler that ran the check.
 
 - [x] What number a row of limbs is, and that `trim` leaves it as it was.
 - [x] `add` returns the limbs of the sum; `sub` of the difference where there is one; subtraction of
@@ -92,10 +94,24 @@ the image.
 - [x] `compare` says which of two numbers is larger.
 - [x] One more decimal digit is times ten plus the digit.
 - [x] Signed multiplication.
-- [ ] Signed addition and comparison: follow from the above; not written.
-- [ ] Shifts, `and`, `or`, powers.
-- [ ] Division. Knuth's algorithm D; the long one.
-- [ ] `Runtime/Utf8.lean` against a plain statement of UTF-8.
+- [x] Signed addition and comparison, on numbers with no zero limb on top. Comparison also assumes that a
+      number passed as below zero is not zero: `intCompare` would call "minus zero" less than zero, and
+      nothing here shows `Mini/Number.lean` never passes one.
+- [x] Shifts left and right by any count a machine word holds (times and divided by that power of two,
+      rounding down), `and`, `or`, and powers for any exponent a machine word holds.
+- [x] Division by a single limb, and of a number with fewer limbs than its divisor: the quotient rounded
+      down and the remainder.
+- [ ] Division by two limbs or more. Knuth's algorithm D; the long one. Until it is done nothing is proved
+      about `natDiv`, `natMod`, `intEdiv` and `intEmod` as wholes, which go through it. `divide` says its
+      quotient has no zero limb on top, and division by one limb can leave one; that is harmless only
+      because `Mini/Number.lean` takes the zero limbs off every result.
+- [x] `Runtime/Utf8.lean` against the standard's table (RFC 3629), stated in plain arithmetic
+      (`Runtime/Utf8Proofs.lean`). `write` gives the table's bytes for every character up to U+10FFFF.
+      `strict` says one, two, three or four exactly when that many bytes are there and they are the encoding
+      of a character Unicode allows, so never for a surrogate, an overlong form or anything above U+10FFFF.
+      Where `strict` finds a character, `read` returns the one those bytes encode and `claims` steps over
+      exactly its bytes. Not stated: what `read` and `claims` answer on bytes that are not well formed, where
+      they follow Lean's own runtime, which is C and has no definition here to be held against.
 - [ ] That `Mini/Number.lean` hands the arithmetic the right limbs and reads its answer rightly: tested, not
       proved.
 

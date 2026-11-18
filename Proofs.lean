@@ -1,4 +1,5 @@
 import Runtime.BigProofs
+import Runtime.Utf8Proofs
 import Mini.Memory
 import Mini.AllocProofs
 import Mini.AllocHeap

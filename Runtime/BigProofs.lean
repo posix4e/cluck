@@ -393,6 +393,336 @@ theorem natSub_value (a b : Limbs) (ta : Trimmed a) (tb : Trimmed b) : value (na
     · simp only [h1, h2, ↓reduceIte, show ((2 : UInt8) == 2) = true from rfl]
       exact sub_value a b (by omega)
 
+/-! ## And, or -/
+
+/-- What `bitsLoop` does to a pair of limbs, done to a pair of numbers. -/
+def bitOp (either : Bool) (x y : Nat) : Nat := if either then x ||| y else x &&& y
+
+/-- The bits of a number are the bits of its lowest limb and the bits of the rest. -/
+theorem bitOp_split (either : Bool) (x y p q : Nat) (hx : x < B) (hy : y < B) :
+    bitOp either (x + B * p) (y + B * q) = bitOp either x y + B * bitOp either p q := by
+  have ex : x + B * p = 2 ^ 32 * p + x := by omega
+  have ey : y + B * q = 2 ^ 32 * q + y := by omega
+  have hx' : x < 2 ^ 32 := by omega
+  have hy' : y < 2 ^ 32 := by omega
+  cases either
+  · have hr : x &&& y < 2 ^ 32 := Nat.and_lt_two_pow x hy'
+    have er : (x &&& y) + B * (p &&& q) = 2 ^ 32 * (p &&& q) + (x &&& y) := by omega
+    simp only [bitOp, Bool.false_eq_true, ↓reduceIte]
+    rw [ex, ey, er]
+    apply Nat.eq_of_testBit_eq
+    intro j
+    rw [Nat.testBit_and, Nat.testBit_two_pow_mul_add _ hx', Nat.testBit_two_pow_mul_add _ hy',
+      Nat.testBit_two_pow_mul_add _ hr]
+    split <;> simp [Nat.testBit_and]
+  · have hr : x ||| y < 2 ^ 32 := Nat.or_lt_two_pow hx' hy'
+    have er : (x ||| y) + B * (p ||| q) = 2 ^ 32 * (p ||| q) + (x ||| y) := by omega
+    simp only [bitOp, ↓reduceIte]
+    rw [ex, ey, er]
+    apply Nat.eq_of_testBit_eq
+    intro j
+    rw [Nat.testBit_or, Nat.testBit_two_pow_mul_add _ hx', Nat.testBit_two_pow_mul_add _ hy',
+      Nat.testBit_two_pow_mul_add _ hr]
+    split <;> simp [Nat.testBit_or]
+
+theorem bitsLoop_value (a b : Limbs) (either : Bool) (n i : Nat) (r : Limbs)
+    (hend : ∀ k, n ≤ k → bitOp either (tail a k) (tail b k) = 0) :
+    value (bitsLoop a b either n i r) = value r + B ^ r.size * bitOp either (tail a i) (tail b i) := by
+  fun_induction bitsLoop a b either n i r with
+  | case1 i r h x ih =>
+    have hx : x.toNat = bitOp either (digit a i) (digit b i) := by
+      cases either <;> simp [x, bitOp, digit]
+    rw [ih, value_push, Array.size_push, Nat.pow_succ, hx, tail_step a i, tail_step b i,
+      bitOp_split _ _ _ _ _ (digit_lt a i) (digit_lt b i), Nat.add_assoc, Nat.mul_assoc, ← Nat.mul_add]
+  | case2 i r h => simp [hend i (by omega)]
+
+/-- The limbs `and` returns are those of the number with the bits both have. -/
+theorem and_value (a b : Limbs) : value (Runtime.Big.and a b) = value a &&& value b := by
+  have hend : ∀ k, (if a.size < b.size then a.size else b.size) ≤ k → bitOp false (tail a k) (tail b k) = 0 := by
+    intro k hk
+    by_cases h : a.size ≤ k
+    · simp [bitOp, tail_of_le a k h]
+    · have : b.size ≤ k := by split at hk <;> omega
+      simp [bitOp, tail_of_le b k this]
+  simp only [Runtime.Big.and]
+  rw [bitsLoop_value _ _ _ _ _ _ hend]
+  simp [bitOp, value, valueList, tail]
+
+/-- The limbs `or` returns are those of the number with the bits either has. -/
+theorem or_value (a b : Limbs) : value (Runtime.Big.or a b) = value a ||| value b := by
+  have hend : ∀ k, (if a.size < b.size then b.size else a.size) ≤ k → bitOp true (tail a k) (tail b k) = 0 := by
+    intro k hk
+    have ha : a.size ≤ k := by split at hk <;> omega
+    have hb : b.size ≤ k := by split at hk <;> omega
+    simp [bitOp, tail_of_le a k ha, tail_of_le b k hb]
+  simp only [Runtime.Big.or]
+  rw [bitsLoop_value _ _ _ _ _ _ hend]
+  simp [bitOp, value, valueList, tail]
+
+/-! ## Shifts -/
+
+theorem tail_eq_div (a : Limbs) (i : Nat) : tail a i = value a / B ^ i := by
+  rw [value_split a i, Nat.add_mul_div_left _ _ (Nat.pow_pos (by decide)), Nat.div_eq_of_lt (lower_lt a i),
+    Nat.zero_add]
+
+theorem shiftLeftLoop_value (a : Limbs) (bits : UInt64) (i : Nat) (carry : UInt64) (r : Limbs)
+    (hb : bits.toNat < 32) (hc : carry.toNat < 2 ^ bits.toNat) :
+    value (shiftLeftLoop a bits i carry r) = value r + B ^ r.size * (carry.toNat + 2 ^ bits.toNat * tail a i) := by
+  have hp : 2 ^ bits.toNat ≤ 2 ^ 31 := Nat.pow_le_pow_right (by decide) (by omega)
+  fun_induction shiftLeftLoop a bits i carry r with
+  | case1 i carry r h t ih =>
+    have la := digit_lt a i
+    have scaled : digit a i * 2 ^ bits.toNat ≤ 4294967295 * 2 ^ bits.toNat := Nat.mul_le_mul_right _ (by omega)
+    have ht : t.toNat = digit a i * 2 ^ bits.toNat + carry.toNat := by
+      have e1 : bits.toNat % 64 = bits.toNat := Nat.mod_eq_of_lt (by omega)
+      have e2 : digit a i <<< bits.toNat = digit a i * 2 ^ bits.toNat := Nat.shiftLeft_eq _ _
+      simp only [t, UInt64.toNat_or, UInt64.toNat_shiftLeft, limb_toNat, e1]
+      rw [Nat.mod_eq_of_lt (by rw [e2]; generalize 2 ^ bits.toNat = P at *; omega),
+        ← Nat.shiftLeft_add_eq_or_of_lt hc, e2]
+    have hhigh : (t >>> 32).toNat = t.toNat / B := by
+      simp [UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow]
+    have hlow : t.toUInt32.toNat = t.toNat % B := by simp
+    rw [ih (by rw [hhigh]; generalize 2 ^ bits.toNat = P at *; omega), value_push, Array.size_push, Nat.pow_succ,
+      hhigh, hlow, tail_step a i, Nat.add_assoc, Nat.mul_assoc, ← Nat.mul_add, Nat.mul_add (2 ^ bits.toNat),
+      Nat.mul_left_comm (2 ^ bits.toNat), Nat.mul_comm (2 ^ bits.toNat) (digit a i)]
+    congr 2
+    generalize 2 ^ bits.toNat * tail a (i + 1) = rest
+    generalize 2 ^ bits.toNat = P at *
+    omega
+  | case2 i carry r h =>
+    have hlow : carry.toUInt32.toNat = carry.toNat := by
+      simp only [UInt64.toNat_toUInt32]; omega
+    rw [value_push, hlow, tail_of_le a i (by omega)]
+    simp
+
+/-- `shiftLeft` multiplies by two for every bit and 2^32 for every whole limb. -/
+theorem shiftLeft_value (a : Limbs) (whole : Nat) (bits : UInt64) (hb : bits.toNat < 32) :
+    value (shiftLeft a whole bits) = value a * 2 ^ (32 * whole + bits.toNat) := by
+  have hB : B ^ whole = 2 ^ (32 * whole) := by rw [Nat.pow_mul]
+  rw [shiftLeft, shiftLeftLoop_value _ _ _ _ _ hb (Nat.two_pow_pos _), value_zeros, tail_zero, Nat.pow_add, ← hB]
+  simp [zeros, Nat.mul_comm, Nat.mul_assoc]
+
+/-- A shift left by any number of bits a machine word can count multiplies by two that many times. -/
+theorem shiftLeftBy_value (a : Limbs) (shift : USize) :
+    value (shiftLeftBy a shift) = value a * 2 ^ shift.toNat := by
+  have h32 : (32 : USize).toNat = 32 := USize.toNat_ofNat_of_lt_32 (by decide)
+  have whole : (shift / 32).toNat = shift.toNat / 32 := by rw [USize.toNat_div, h32]
+  have bits : (shift % 32).toUInt64.toNat = shift.toNat % 32 := by rw [USize.toNat_toUInt64, USize.toNat_mod, h32]
+  rw [shiftLeftBy, shiftLeft_value _ _ _ (by rw [bits]; omega), whole, bits]
+  congr 2
+  omega
+
+/-- Dividing two limbs and all above them by a power of two that divides the base: the lowest limb of the
+answer comes from the lowest two, and the rest is the same division one limb up. -/
+theorem shift_split (K M N d0 d1 T : Nat) (hK : 0 < K) (hN : K * M = N) (h0 : d0 < N) :
+    (d0 + N * (d1 + N * T)) / K = (d0 + N * d1) / K % N + N * ((d1 + N * T) / K) := by
+  subst hN
+  have e1 : d0 + K * M * (d1 + K * M * T) = (d0 + K * M * d1) + K * (M * (K * M) * T) := by
+    simp only [Nat.mul_add, Nat.mul_assoc, Nat.add_assoc]
+  have e2 : d1 + K * M * T = d1 + K * (M * T) := by rw [Nat.mul_assoc]
+  have e3 : (d0 + K * M * d1) / K / (K * M) = d1 / K := by
+    rw [Nat.div_div_eq_div_mul, Nat.mul_comm K (K * M), ← Nat.div_div_eq_div_mul,
+      Nat.add_mul_div_left _ _ (by omega), Nat.div_eq_of_lt h0, Nat.zero_add]
+  have e4 := Nat.mod_add_div ((d0 + K * M * d1) / K) (K * M)
+  rw [e3] at e4
+  rw [e1, Nat.add_mul_div_left _ _ hK, e2, Nat.add_mul_div_left _ _ hK, Nat.mul_add, ← Nat.add_assoc, e4]
+  congr 1
+  rw [Nat.mul_comm M (K * M), Nat.mul_assoc]
+
+theorem shiftRightLoop_value (a : Limbs) (bits : UInt64) (n i : Nat) (r : Limbs)
+    (hb : bits.toNat < 32) (hn : a.size ≤ n) :
+    value (shiftRightLoop a bits n i r) = value r + B ^ r.size * (tail a i / 2 ^ bits.toNat) := by
+  fun_induction shiftRightLoop a bits n i r with
+  | case1 i r h t ih =>
+    have l0 := digit_lt a i; have l1 := digit_lt a (i + 1)
+    have ht : t.toNat = (digit a i + B * digit a (i + 1)) / 2 ^ bits.toNat := by
+      have e1 : bits.toNat % 64 = bits.toNat := Nat.mod_eq_of_lt (by omega)
+      have e2 : digit a (i + 1) <<< 32 % 2 ^ 64 = digit a (i + 1) <<< 32 :=
+        Nat.mod_eq_of_lt (by rw [Nat.shiftLeft_eq]; omega)
+      simp only [t, UInt64.toNat_shiftRight, UInt64.toNat_or, UInt64.toNat_shiftLeft, limb_toNat, e1]
+      rw [show (32 : UInt64).toNat % 64 = 32 from rfl, e2,
+        ← Nat.shiftLeft_add_eq_or_of_lt (show digit a i < 2 ^ 32 by omega), Nat.shiftLeft_eq,
+        Nat.shiftRight_eq_div_pow,
+        show digit a (i + 1) * 2 ^ 32 + digit a i = digit a i + B * digit a (i + 1) by omega]
+    have hlow : t.toUInt32.toNat = t.toNat % B := by simp
+    have hKM : 2 ^ bits.toNat * 2 ^ (32 - bits.toNat) = B := by
+      rw [← Nat.pow_add, show bits.toNat + (32 - bits.toNat) = 32 by omega]
+    have key : tail a i / 2 ^ bits.toNat = t.toNat % B + B * (tail a (i + 1) / 2 ^ bits.toNat) := by
+      rw [ht, tail_step a i, tail_step a (i + 1)]
+      exact shift_split _ _ _ _ _ _ (Nat.two_pow_pos _) hKM l0
+    rw [ih, value_push, Array.size_push, Nat.pow_succ, hlow, key, Nat.add_assoc, Nat.mul_assoc, ← Nat.mul_add]
+  | case2 i r h => simp [tail_of_le a i (by omega)]
+
+/-- `shiftRight` over the whole of a number divides by two for every bit and 2^32 for every whole limb,
+rounding down. -/
+theorem shiftRight_value (a : Limbs) (whole n : Nat) (bits : UInt64) (hb : bits.toNat < 32) (hn : a.size ≤ n) :
+    value (shiftRight a whole n bits) = value a / 2 ^ (32 * whole + bits.toNat) := by
+  have hB : B ^ whole = 2 ^ (32 * whole) := by rw [Nat.pow_mul]
+  rw [shiftRight, shiftRightLoop_value _ _ _ _ _ hb hn, tail_eq_div, Nat.div_div_eq_div_mul, Nat.pow_add, ← hB]
+  simp [value, valueList]
+
+/-- A shift right by any number of bits a machine word can count halves that many times, rounding down. -/
+theorem shiftRightBy_value (a : Limbs) (shift : USize) :
+    value (shiftRightBy a shift) = value a / 2 ^ shift.toNat := by
+  have h32 : (32 : USize).toNat = 32 := USize.toNat_ofNat_of_lt_32 (by decide)
+  have whole : (shift / 32).toNat = shift.toNat / 32 := by rw [USize.toNat_div, h32]
+  have bits : (shift % 32).toUInt64.toNat = shift.toNat % 32 := by rw [USize.toNat_toUInt64, USize.toNat_mod, h32]
+  rw [shiftRightBy, shiftRight_value _ _ _ _ (by rw [bits]; omega) (Nat.le_refl _), whole, bits]
+  congr 2
+  omega
+
+/-! ## Division, where the divisor is one limb or the dividend is shorter
+
+Long division by two limbs or more (`divideLong`, Knuth's algorithm D) is not proved here. -/
+
+theorem lower_size (a : Limbs) : lower a a.size = value a := by
+  have := value_split a a.size
+  rw [tail_of_le a _ (Nat.le_refl _)] at this
+  simpa using this.symm
+
+/-- Division by one limb, from limb `i` down, with `rest` carried in from above: what it adds to the
+quotient, times the divisor, and what it leaves, make up `rest` and the limbs below `i`. -/
+theorem divideSmallLoop_value (a : Limbs) (d rest : UInt64) (q : Limbs) (i : Nat)
+    (hd : d.toNat < B) (hr : rest.toNat < d.toNat) (hi : i ≤ q.size) (hz : ∀ m, m < i → digit q m = 0) :
+    value (divideSmallLoop a d rest q i).1 * d.toNat + value (divideSmallLoop a d rest q i).2
+        = value q * d.toNat + rest.toNat * B ^ i + lower a i
+      ∧ value (divideSmallLoop a d rest q i).2 < d.toNat := by
+  induction i generalizing rest q with
+  | zero =>
+    have low : rest.toUInt32.toNat = rest.toNat := by simp only [UInt64.toNat_toUInt32]; omega
+    simp only [divideSmallLoop, value_push, lower, low]
+    simp [value, valueList]
+    exact hr
+  | succ i ih =>
+    have la := digit_lt a i
+    have dpos : 0 < d.toNat := by omega
+    simp only [divideSmallLoop]
+    generalize hp : (rest <<< 32) ||| limb a i = part
+    have hpart : part.toNat = rest.toNat * B + digit a i := by
+      subst hp
+      have e : rest.toNat <<< 32 % 2 ^ 64 = rest.toNat <<< 32 :=
+        Nat.mod_eq_of_lt (by rw [Nat.shiftLeft_eq]; omega)
+      simp only [UInt64.toNat_or, UInt64.toNat_shiftLeft, limb_toNat]
+      rw [show (32 : UInt64).toNat % 64 = 32 from rfl, e,
+        ← Nat.shiftLeft_add_eq_or_of_lt (show digit a i < 2 ^ 32 by omega), Nat.shiftLeft_eq]
+    have hq : (part / d).toNat = part.toNat / d.toNat := UInt64.toNat_div _ _
+    have hm : (part % d).toNat = part.toNat % d.toNat := UInt64.toNat_mod _ _
+    have qlt : part.toNat / d.toNat < B := by
+      rw [Nat.div_lt_iff_lt_mul dpos]
+      have : (rest.toNat + 1) * B ≤ d.toNat * B := Nat.mul_le_mul_right _ (by omega)
+      omega
+    have hlow : (part / d).toUInt32.toNat = part.toNat / d.toNat := by
+      simp only [UInt64.toNat_toUInt32, hq]; omega
+    have step := ih (part % d) (q.setIfInBounds i (part / d).toUInt32) (by rw [hm]; exact Nat.mod_lt _ dpos)
+      (by simp; omega) (fun m hm' => by rw [digit_set_ne _ _ _ _ (by omega)]; exact hz m (by omega))
+    have written := value_set q i (part / d).toUInt32 (by omega)
+    rw [hz i (by omega), hlow] at written
+    have e : value (q.setIfInBounds i (part / d).toUInt32) = value q + B ^ i * (part.toNat / d.toNat) := by
+      simpa using written
+    have dm := Nat.div_add_mod part.toNat d.toNat
+    have key : B ^ i * (part.toNat / d.toNat) * d.toNat + part.toNat % d.toNat * B ^ i
+        = rest.toNat * (B ^ i * B) + B ^ i * digit a i := by
+      calc B ^ i * (part.toNat / d.toNat) * d.toNat + part.toNat % d.toNat * B ^ i
+          = B ^ i * (d.toNat * (part.toNat / d.toNat) + part.toNat % d.toNat) := by
+            rw [Nat.mul_add, Nat.mul_assoc, Nat.mul_comm (part.toNat / d.toNat),
+              Nat.mul_comm (part.toNat % d.toNat)]
+        _ = B ^ i * (rest.toNat * B + digit a i) := by rw [dm, hpart]
+        _ = rest.toNat * (B ^ i * B) + B ^ i * digit a i := by rw [Nat.mul_add, Nat.mul_left_comm]
+    refine ⟨?_, step.2⟩
+    rw [step.1, e, hm, lower, Nat.pow_succ, Nat.add_mul]
+    omega
+
+/-- Division by a single limb that is not zero gives the quotient and the remainder. -/
+theorem divideSmall_value (a : Limbs) (d : UInt64) (hd : d.toNat < B) (hz : d.toNat ≠ 0) :
+    value (divideSmallLoop a d 0 (zeros a.size) a.size).1 = value a / d.toNat ∧
+    value (divideSmallLoop a d 0 (zeros a.size) a.size).2 = value a % d.toNat := by
+  have zero : (0 : UInt64).toNat = 0 := rfl
+  have h := divideSmallLoop_value a d 0 (zeros a.size) a.size hd (by omega) (by simp [zeros])
+    (fun m _ => digit_zeros _ m)
+  rw [value_zeros, zero, lower_size] at h
+  have whole : value (divideSmallLoop a d 0 (zeros a.size) a.size).2 +
+      d.toNat * value (divideSmallLoop a d 0 (zeros a.size) a.size).1 = value a := by
+    rw [Nat.add_comm, Nat.mul_comm]; simpa using h.1
+  have both := (Nat.div_mod_unique (by omega : 0 < d.toNat)).mpr ⟨whole, h.2⟩
+  exact ⟨both.1.symm, both.2.symm⟩
+
+theorem value_single (b : Limbs) (h : b.size = 1) : value b = digit b 0 := by
+  have s := value_split b 1
+  rw [tail_of_le b 1 (by omega)] at s
+  simpa [lower] using s
+
+/-- `divide`, for a divisor of one limb that is not zero: the quotient rounded down and the remainder. -/
+theorem divide_value_single (a b : Limbs) (h : b.size = 1) (hz : value b ≠ 0) :
+    value (divide a b).1 = value a / value b ∧ value (divide a b).2 = value a % value b := by
+  have vb := value_single b h
+  have lb := digit_lt b 0
+  unfold divide
+  by_cases short : a.size < b.size
+  · have empty : value a = 0 := by
+      have := value_lt_pow a
+      rw [show a.size = 0 by omega] at this
+      simpa using this
+    simp only [short, ↓reduceIte]
+    rw [empty, Nat.zero_div, Nat.zero_mod]
+    exact ⟨rfl, rfl⟩
+  · simp only [short, ↓reduceIte]
+    simp only [h, beq_self_eq_true, ↓reduceIte]
+    rw [vb, ← limb_toNat]
+    exact divideSmall_value a (limb b 0) (by rw [limb_toNat]; exact lb) (by rw [limb_toNat]; omega)
+
+/-- `divide`, for a dividend with fewer limbs than the divisor: nothing, and the dividend left over. -/
+theorem divide_value_shorter (a b : Limbs) (h : a.size < b.size) (tb : Trimmed b) :
+    value (divide a b).1 = value a / value b ∧ value (divide a b).2 = value a % value b := by
+  have lt := value_lt_of_shorter a b h tb
+  simp only [divide, h, ↓reduceIte]
+  rw [Nat.div_eq_of_lt lt, Nat.mod_eq_of_lt lt]
+  exact ⟨rfl, rfl⟩
+
+/-! ## Powers -/
+
+theorem value_one : value (one ()) = 1 := by simp [one, low, value, valueList]
+
+theorem powerLoop_value (power result : Limbs) (exponent : USize) (fuel : Nat) (h : exponent.toNat < 2 ^ fuel) :
+    value (powerLoop power result exponent fuel) = value result * value power ^ exponent.toNat := by
+  induction fuel generalizing power result exponent with
+  | zero =>
+    have z : exponent.toNat = 0 := by simpa using h
+    simp [powerLoop, z]
+  | succ fuel ih =>
+    have one : (1 : USize).toNat = 1 := USize.toNat_ofNat_of_lt_32 (by decide)
+    have half : (exponent >>> 1).toNat = exponent.toNat / 2 := by
+      have : (1 : USize).toNat % System.Platform.numBits = 1 := by
+        rw [one]; rcases System.Platform.numBits_eq with e | e <;> rw [e]
+      rw [USize.toNat_shiftRight, this, Nat.shiftRight_eq_div_pow, Nat.pow_one]
+    have bit : (exponent &&& 1).toNat = exponent.toNat % 2 := by
+      rw [USize.toNat_and, one, Nat.and_one_is_mod]
+    have step : value power ^ exponent.toNat =
+        value power ^ (exponent.toNat % 2) * (value power * value power) ^ (exponent.toNat / 2) := by
+      conv => lhs; rw [← Nat.mod_add_div exponent.toNat 2]
+      rw [Nat.pow_add, Nat.pow_mul, Nat.pow_two]
+    have hr : value (if exponent &&& 1 != 0 then trim (mul result power) else result) =
+        value result * value power ^ (exponent.toNat % 2) := by
+      by_cases o : exponent &&& 1 = 0
+      · have : exponent.toNat % 2 = 0 := by rw [← bit, o]; rfl
+        simp [o, this]
+      · have : (exponent &&& 1).toNat ≠ 0 := fun e => o (USize.toNat_inj.mp (by simpa using e))
+        have : exponent.toNat % 2 = 1 := by omega
+        simp [o, this, trim_value, mul_value]
+    unfold powerLoop
+    by_cases z : exponent = 0
+    · simp [z]
+    · by_cases z2 : exponent >>> 1 = 0
+      · have : exponent.toNat / 2 = 0 := by rw [← half, z2]; rfl
+        simp only [beq_iff_eq, z, z2, ↓reduceIte]
+        rw [hr, step, this, Nat.pow_zero, Nat.mul_one]
+      · simp only [beq_iff_eq, z, z2, ↓reduceIte]
+        rw [ih _ _ _ (by rw [half, Nat.pow_succ] at *; omega), hr, trim_value, mul_value, half, step, Nat.mul_assoc]
+
+/-- The limbs `power` returns are those of the power, for any exponent a machine word holds. Anything to
+the power 0 is 1. -/
+theorem power_value (a : Limbs) (exponent : USize) : value (power a exponent) = value a ^ exponent.toNat := by
+  rw [power, powerLoop_value _ _ _ _ (USize.toNat_lt exponent), value_one, Nat.one_mul]
+
 /-! ## Integers -/
 
 /-- The integer with this sign and these limbs. -/
@@ -412,5 +742,99 @@ theorem intMul_value (an : UInt8) (a : Limbs) (bn : UInt8) (b : Limbs) (ha : IsS
     signedValue (intMul an a bn b) = intOf (an != 0) a * intOf (bn != 0) b := by
   rw [intMul, signedValue_signed]
   rcases ha with rfl | rfl <;> rcases hb with rfl | rfl <;> simp [intOf, mul_value, Int.natCast_mul, Int.mul_neg, Int.neg_mul]
+
+/-- Signed addition, on numbers with no zero limb on top: `compare` has to say which is larger. -/
+theorem intAdd_value (an : UInt8) (a : Limbs) (bn : UInt8) (b : Limbs) (ha : IsSign an) (hb : IsSign bn)
+    (ta : Trimmed a) (tb : Trimmed b) :
+    signedValue (intAdd an a bn b) = intOf (an != 0) a + intOf (bn != 0) b := by
+  have same : ∀ s : UInt8, signedValue (intAdd s a s b) = intOf (s != 0) a + intOf (s != 0) b := by
+    intro s
+    simp only [intAdd, beq_self_eq_true, ↓reduceIte, signedValue_signed, intOf, add_value]
+    split <;> omega
+  have differ : ∀ s t : UInt8, (s == t) = false →
+      signedValue (intAdd s a t b) =
+        if value a < value b then intOf (t != 0) (sub b a)
+        else if value a = value b then 0 else intOf (s != 0) (sub a b) := by
+    intro s t h
+    simp only [intAdd, h, Bool.false_eq_true, ↓reduceIte, compare_order a b ta tb, order]
+    by_cases h1 : value a < value b
+    · simp only [h1, ↓reduceIte, show ((0 : UInt8) == 1) = false from rfl, show ((0 : UInt8) == 2) = false from rfl,
+        Bool.false_eq_true, signedValue_signed]
+    · by_cases h2 : value a = value b
+      · simp only [h2, Nat.lt_irrefl, ↓reduceIte, show ((1 : UInt8) == 1) = true from rfl, signedValue_signed]
+        simp [intOf, value, valueList]
+      · simp only [h1, h2, ↓reduceIte, show ((2 : UInt8) == 1) = false from rfl, show ((2 : UInt8) == 2) = true from rfl,
+          Bool.false_eq_true, signedValue_signed]
+  rcases ha with rfl | rfl <;> rcases hb with rfl | rfl
+  · exact same 0
+  · rw [differ 0 1 rfl]
+    by_cases h1 : value a < value b
+    · have := sub_value b a (by omega)
+      simp only [h1, ↓reduceIte, intOf, show ((1 : UInt8) != 0) = true from rfl, show ((0 : UInt8) != 0) = false from rfl,
+        Bool.false_eq_true, this]
+      omega
+    · by_cases h2 : value a = value b
+      · simp only [h2, Nat.lt_irrefl, ↓reduceIte, intOf, show ((1 : UInt8) != 0) = true from rfl,
+          show ((0 : UInt8) != 0) = false from rfl, Bool.false_eq_true]
+        omega
+      · have := sub_value a b (by omega)
+        simp only [h1, h2, ↓reduceIte, intOf, show ((1 : UInt8) != 0) = true from rfl,
+          show ((0 : UInt8) != 0) = false from rfl, Bool.false_eq_true, this]
+        omega
+  · rw [differ 1 0 rfl]
+    by_cases h1 : value a < value b
+    · have := sub_value b a (by omega)
+      simp only [h1, ↓reduceIte, intOf, show ((1 : UInt8) != 0) = true from rfl, show ((0 : UInt8) != 0) = false from rfl,
+        Bool.false_eq_true, this]
+      omega
+    · by_cases h2 : value a = value b
+      · simp only [h2, Nat.lt_irrefl, ↓reduceIte, intOf, show ((1 : UInt8) != 0) = true from rfl,
+          show ((0 : UInt8) != 0) = false from rfl, Bool.false_eq_true]
+        omega
+      · have := sub_value a b (by omega)
+        simp only [h1, h2, ↓reduceIte, intOf, show ((1 : UInt8) != 0) = true from rfl,
+          show ((0 : UInt8) != 0) = false from rfl, Bool.false_eq_true, this]
+        omega
+  · exact same 1
+
+/-- 0, 1 or 2 as the first integer is less than, equal to or greater than the second. -/
+def intOrder (x y : Int) : UInt8 := if x < y then 0 else if x = y then 1 else 2
+
+/-- Signed comparison, on numbers with no zero limb on top. A number passed as below zero is not zero:
+the runtime has no "minus zero", and `intCompare` would call it less than zero. -/
+theorem intCompare_order (an : UInt8) (a : Limbs) (bn : UInt8) (b : Limbs) (ha : IsSign an) (hb : IsSign bn)
+    (ta : Trimmed a) (tb : Trimmed b) (za : an = 1 → value a ≠ 0) (zb : bn = 1 → value b ≠ 0) :
+    intCompare an a bn b = intOrder (intOf (an != 0) a) (intOf (bn != 0) b) := by
+  rcases ha with rfl | rfl <;> rcases hb with rfl | rfl
+  · simp only [intCompare, show ((0 : UInt8) != 0) = false from rfl, Bool.false_eq_true, ↓reduceIte,
+      compare_order a b ta tb, order, intOrder, intOf]
+    by_cases h1 : value a < value b
+    · have : (value a : Int) < value b := by omega
+      simp [h1, this]
+    · by_cases h2 : value a = value b
+      · simp [h2]
+      · have h3 : ¬ (value a : Int) < value b := by omega
+        have h4 : (value a : Int) ≠ value b := by omega
+        simp [h1, h2, h3, h4]
+  · have := zb rfl
+    have h3 : ¬ (value a : Int) < -(value b : Int) := by omega
+    have h4 : (value a : Int) ≠ -(value b : Int) := by omega
+    simp [intCompare, intOrder, intOf, h3, h4]
+  · have := za rfl
+    have h3 : -(value a : Int) < (value b : Int) := by omega
+    simp [intCompare, intOrder, intOf, h3]
+  · simp only [intCompare, show ((1 : UInt8) != 1) = false from rfl, show ((1 : UInt8) != 0) = true from rfl,
+      Bool.false_eq_true, ↓reduceIte, compare_order a b ta tb, order, intOrder, intOf]
+    by_cases h1 : value a < value b
+    · have h3 : ¬ -(value a : Int) < -(value b : Int) := by omega
+      have h4 : -(value a : Int) ≠ -(value b : Int) := by omega
+      simp only [h1, ↓reduceIte, h3, h4]
+      rfl
+    · by_cases h2 : value a = value b
+      · simp only [h2, Nat.lt_irrefl, Int.lt_irrefl, ↓reduceIte]
+        rfl
+      · have h3 : -(value a : Int) < -(value b : Int) := by omega
+        simp only [h1, h2, ↓reduceIte, h3]
+        rfl
 
 end Runtime.Big

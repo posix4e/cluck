@@ -1,0 +1,212 @@
+--- a/OvmfPkg/VirtioNetDxe/VirtioNet.h
++++ b/OvmfPkg/VirtioNetDxe/VirtioNet.h
+@@ -80,6 +80,10 @@
+   VOID                           *RxRingMap;      // VirtioRingMap and
+                                                   // VirtioNetInitRing
+   UINT8                          *RxBuf;          // VirtioNetInitRx
++  UINTN                          RxHeaderBytes;
++  UINTN                          RxSlotBytes;
++  UINT16                         RxSlotCount;
++  UINT16                         RxNextAvail;
+   UINT16                         RxLastUsed;      // VirtioNetInitRx
+   UINTN                          RxBufNrPages;    // VirtioNetInitRx
+   EFI_PHYSICAL_ADDRESS           RxBufDeviceBase; // VirtioNetInitRx
+@@ -93,6 +97,9 @@
+   UINT16                         *TxFreeStack;     // VirtioNetInitTx
+   VIRTIO_1_0_NET_REQ             *TxSharedReq;     // VirtioNetInitTx
+   VOID                           *TxSharedReqMap;  // VirtioNetInitTx
++  EFI_PHYSICAL_ADDRESS           TxSlotAddress[VNET_MAX_PENDING];
++  BOOLEAN                        TxSlotActive[VNET_MAX_PENDING];
++  UINT16                         TxNextAvail;
+   UINT16                         TxLastUsed;       // VirtioNetInitTx
+   ORDERED_COLLECTION             *TxBufCollection; // VirtioNetInitTx
+ } VNET_DEV;
+--- a/OvmfPkg/VirtioNetDxe/SnpInitialize.c
++++ b/OvmfPkg/VirtioNetDxe/SnpInitialize.c
+@@ -71,7 +71,7 @@
+   // For each packet (RX and TX alike), we need two descriptors:
+   // one for the virtio-net request header, and another one for the data
+   //
+-  if (QueueSize < 2) {
++  if ((QueueSize < 2) || ((QueueSize & (QueueSize - 1)) != 0)) {
+     return EFI_UNSUPPORTED;
+   }
+ 
+@@ -257,8 +257,9 @@
+   // virtio-0.9.5, 2.4.2 Receiving Used Buffers From the Device
+   //
+   MemoryFence ();
+-  Dev->TxLastUsed = *Dev->TxRing.Used.Idx;
+-  ASSERT (Dev->TxLastUsed == 0);
++  Dev->TxLastUsed  = 0;
++  Dev->TxNextAvail = 0;
++  ZeroMem (Dev->TxSlotActive, sizeof Dev->TxSlotActive);
+ 
+   //
+   // want no interrupt when a transmit completes
+@@ -382,8 +383,11 @@
+   // virtio-0.9.5, 2.4.2 Receiving Used Buffers From the Device
+   //
+   MemoryFence ();
+-  Dev->RxLastUsed = *Dev->RxRing.Used.Idx;
+-  ASSERT (Dev->RxLastUsed == 0);
++  Dev->RxLastUsed    = 0;
++  Dev->RxNextAvail   = RxAlwaysPending;
++  Dev->RxHeaderBytes = VirtioNetReqSize;
++  Dev->RxSlotBytes   = RxBufSize;
++  Dev->RxSlotCount   = RxAlwaysPending;
+ 
+   //
+   // virtio-0.9.5, 2.4.2 Receiving Used Buffers From the Device:
+@@ -412,12 +416,14 @@
+     Dev->RxRing.Desc[DescIdx].Len   = (UINT32)VirtioNetReqSize;
+     Dev->RxRing.Desc[DescIdx].Flags = VRING_DESC_F_WRITE | VRING_DESC_F_NEXT;
+     Dev->RxRing.Desc[DescIdx].Next  = (UINT16)(DescIdx + 1);
+-    RxBufDeviceAddress             += Dev->RxRing.Desc[DescIdx++].Len;
++    RxBufDeviceAddress += VirtioNetReqSize;
++    ++DescIdx;
+ 
+     Dev->RxRing.Desc[DescIdx].Addr  = RxBufDeviceAddress;
+     Dev->RxRing.Desc[DescIdx].Len   = (UINT32)(RxBufSize - VirtioNetReqSize);
+     Dev->RxRing.Desc[DescIdx].Flags = VRING_DESC_F_WRITE;
+-    RxBufDeviceAddress             += Dev->RxRing.Desc[DescIdx++].Len;
++    RxBufDeviceAddress += RxBufSize - VirtioNetReqSize;
++    ++DescIdx;
+   }
+ 
+   //
+--- a/OvmfPkg/VirtioNetDxe/SnpReceive.c
++++ b/OvmfPkg/VirtioNetDxe/SnpReceive.c
+@@ -110,15 +110,18 @@
+   DescIdx     = Dev->RxRing.Used.UsedElem[UsedElemIdx].Id;
+   RxLen       = Dev->RxRing.Used.UsedElem[UsedElemIdx].Len;
+ 
+-  //
+-  // the virtio-net request header must be complete; we skip it
+-  //
+-  ASSERT (RxLen >= Dev->RxRing.Desc[DescIdx].Len);
+-  RxLen -= Dev->RxRing.Desc[DescIdx].Len;
+-  //
+-  // the host must not have filled in more data than requested
+-  //
+-  ASSERT (RxLen <= Dev->RxRing.Desc[DescIdx + 1].Len);
++  // Shared ring entries are device input. Use the fixed slot geometry
++  // retained in private memory when the receive buffers were posted.
++  if (((UINT16)(RxCurUsed - Dev->RxLastUsed) > Dev->RxSlotCount) ||
++      ((DescIdx & 1) != 0) || (DescIdx / 2 >= Dev->RxSlotCount) ||
++      (RxLen < Dev->RxHeaderBytes) || (RxLen > Dev->RxSlotBytes))
++  {
++    Status = EFI_DEVICE_ERROR;
++    goto Exit;
++  }
++
++  SpeculationBarrier ();
++  RxLen -= (UINT32)Dev->RxHeaderBytes;
+ 
+   OrigBufferSize = *BufferSize;
+   *BufferSize    = RxLen;
+@@ -137,10 +140,10 @@
+     *HeaderSize = Dev->Snm.MediaHeaderSize;
+   }
+ 
+-  RxBufOffset = (UINTN)(Dev->RxRing.Desc[DescIdx + 1].Addr -
+-                        Dev->RxBufDeviceBase);
++  RxBufOffset = (DescIdx / 2) * Dev->RxSlotBytes + Dev->RxHeaderBytes;
+   RxPtr = Dev->RxBuf + RxBufOffset;
+   CopyMem (Buffer, RxPtr, RxLen);
++  RxPtr = Buffer;
+ 
+   if (DestAddr != NULL) {
+     CopyMem (DestAddr, RxPtr, SIZE_OF_VNET (Mac));
+@@ -168,7 +171,7 @@
+   //
+   // virtio-0.9.5, 2.4.1 Supplying Buffers to The Device
+   //
+-  AvailIdx                                                   = *Dev->RxRing.Avail.Idx;
++  AvailIdx                                                   = Dev->RxNextAvail++;
+   Dev->RxRing.Avail.Ring[AvailIdx++ % Dev->RxRing.QueueSize] =
+     (UINT16)DescIdx;
+ 
+--- a/OvmfPkg/VirtioNetDxe/SnpTransmit.c
++++ b/OvmfPkg/VirtioNetDxe/SnpTransmit.c
+@@ -160,14 +160,15 @@
+   // virtio-0.9.5, 2.4.1 Supplying Buffers to The Device
+   //
+   DescIdx                            = Dev->TxFreeStack[Dev->TxCurPending++];
++  Dev->TxSlotAddress[DescIdx / 2]    = DeviceAddress;
++  Dev->TxSlotActive[DescIdx / 2]     = TRUE;
+   Dev->TxRing.Desc[DescIdx + 1].Addr = DeviceAddress;
+   Dev->TxRing.Desc[DescIdx + 1].Len  = (UINT32)BufferSize;
+ 
+   //
+-  // the available index is never written by the host, we can read it back
+-  // without a barrier
++  // Retain the producer index in private memory.
+   //
+-  AvailIdx                                                   = *Dev->TxRing.Avail.Idx;
++  AvailIdx                                                   = Dev->TxNextAvail++;
+   Dev->TxRing.Avail.Ring[AvailIdx++ % Dev->TxRing.QueueSize] = DescIdx;
+ 
+   MemoryFence ();
+--- a/OvmfPkg/VirtioNetDxe/SnpGetStatus.c
++++ b/OvmfPkg/VirtioNetDxe/SnpGetStatus.c
+@@ -101,6 +101,11 @@
+   TxCurUsed = *Dev->TxRing.Used.Idx;
+   MemoryFence ();
+ 
++  if ((UINT16)(TxCurUsed - Dev->TxLastUsed) > Dev->TxCurPending) {
++    Status = EFI_DEVICE_ERROR;
++    goto Exit;
++  }
++
+   if (InterruptStatus != NULL) {
+     //
+     // report the receive interrupt if there is data available for reception,
+@@ -128,23 +133,21 @@
+       // fetch the first descriptor among those that the hypervisor reports
+       // completed
+       //
+-      ASSERT (Dev->TxCurPending > 0);
+-      ASSERT (Dev->TxCurPending <= Dev->TxMaxPending);
++      UsedElemIdx = Dev->TxLastUsed % Dev->TxRing.QueueSize;
++      DescIdx     = Dev->TxRing.Used.UsedElem[UsedElemIdx].Id;
++      if (((DescIdx & 1) != 0) || (DescIdx / 2 >= Dev->TxMaxPending)) {
++        Status = EFI_DEVICE_ERROR;
++        goto Exit;
++      }
+ 
+-      UsedElemIdx = Dev->TxLastUsed++ % Dev->TxRing.QueueSize;
+-      DescIdx     = Dev->TxRing.Used.UsedElem[UsedElemIdx].Id;
+-      ASSERT (DescIdx < (UINT32)(2 * Dev->TxMaxPending - 1));
++      SpeculationBarrier ();
++      if (!Dev->TxSlotActive[DescIdx / 2]) {
++        Status = EFI_DEVICE_ERROR;
++        goto Exit;
++      }
+ 
+-      //
+-      // get the device address that has been enqueued for the caller's
+-      // transmit buffer
+-      //
+-      DeviceAddress = Dev->TxRing.Desc[DescIdx + 1].Addr;
+-
+-      //
+-      // now this descriptor can be used again to enqueue a transmit buffer
+-      //
+-      Dev->TxFreeStack[--Dev->TxCurPending] = (UINT16)DescIdx;
++      // Select the original mapping from the private submission record.
++      DeviceAddress = Dev->TxSlotAddress[DescIdx / 2];
+ 
+       //
+       // Unmap the device address and perform the reverse mapping to find the
+@@ -164,6 +167,10 @@
+         Status = EFI_DEVICE_ERROR;
+         goto Exit;
+       }
++
++      Dev->TxSlotActive[DescIdx / 2]        = FALSE;
++      Dev->TxFreeStack[--Dev->TxCurPending] = (UINT16)DescIdx;
++      ++Dev->TxLastUsed;
+     }
+   }
+ 

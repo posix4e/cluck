@@ -171,3 +171,33 @@ lean_exe ask where
 @[default_target]
 lean_exe «sim-test» where
   root := `SimTest
+
+target efiHosted pkg : System.FilePath := do
+  let src ← inputTextFile (pkg.dir / "rt" / "hosted" / "efi.c")
+  buildO (pkg.buildDir / "rt" / "efi_hosted.o") src
+    #["-I", (← getLeanIncludeDir).toString] #["-O2", "-fPIC"] "cc"
+
+@[default_target]
+lean_exe «tdx-os» where
+  root := `TdxMain
+  moreLinkObjs := #[platformHosted, efiHosted]
+
+@[default_target]
+lean_exe «net-internet-test» where
+  root := `NetInternetTest
+
+@[default_target]
+lean_exe «net-tcp-test» where
+  root := `NetTcpTest
+
+@[default_target]
+lean_exe «net-route-test» where
+  root := `NetRouteTest
+
+@[default_target]
+lean_exe «net-dns-test» where
+  root := `NetDnsTest
+
+lean_exe «dns-probe» where
+  root := `DnsProbe
+  moreLinkObjs := #[platformHosted, efiHosted]

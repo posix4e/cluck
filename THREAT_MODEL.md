@@ -7,6 +7,34 @@ service's own threat model.
 Each defence below is marked **built**, **partly** or **not built**. A defence that is not built is not a
 defence yet.
 
+## Intel TDX Ethernet target
+
+This target runs as a single x86-64 EFI application inside a trust domain. The following
+Nitro-specific claims about isolation, vsock, PCRs, page tables and the Secure Module apply to
+the Nitro target. The TDX target depends on Intel's hardware, TDX module, TDVF and its boot
+services, including its PCI, FAT and virtio drivers. Firmware owns the page tables, exceptions,
+device-facing memory and network queues for the lifetime of the application. The patched network driver checks completion counts, lengths and descriptor
+IDs at runtime and selects DMA buffers from driver-owned records. Its code processes
+I/O below the Lean Ethernet parser. The Nitro boot stub's W^X and stack-guard checks do not
+exercise this path.
+
+The host and anyone on the network can observe, change, replay or drop Ethernet traffic.
+ARP and Neighbor Discovery establish reachability. Neither authenticates a peer. The demo
+serves cleartext TCP and UDP, and exposes its framing and transport state to remote clients.
+The guest bounds TCP connections, buffered stream data, fragment assemblies and their lifetimes.
+An attacker can still occupy those limits, withhold acknowledgments, exhaust CPU time or
+prevent the firmware or virtual NIC from making progress. No secret should be exchanged on
+the strength of a TCP connection or checksum.
+
+The EFI image and its firmware are separate inputs to measurement. A TDREPORT binds the 64
+caller-supplied REPORTDATA bytes to the local TD. The host-side QGS helper transports it to
+Intel's quoting service and returns the quote bytes. A relying party must verify the signature
+and collateral, freshness, REPORTDATA, DEBUG attribute, expected MRTD and relevant RTMRs
+(including the measured boot of the expected EFI application) under its own policy. The
+launcher does not establish a verifier policy or bind a session key to the demo connection.
+A file hash of the EFI application alone is insufficient to establish the trust domain's
+identity. The development EFI image supplies no TDX evidence.
+
 ## What is being protected
 
 | Asset | When | Why it matters |

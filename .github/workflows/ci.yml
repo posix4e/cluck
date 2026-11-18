@@ -38,6 +38,12 @@ jobs:
         run: scripts/fuzz-alloc 300 400 "$((16#${GITHUB_SHA:0:8}))"
       - name: Pure tests
         run: .lake/build/bin/demo-test
+      - name: Userland Ethernet, routing and TCP
+        run: |
+          .lake/build/bin/net-internet-test
+          .lake/build/bin/net-tcp-test
+          .lake/build/bin/net-route-test
+          .lake/build/bin/net-dns-test
       - name: The command line and the queue layout
         run: .lake/build/bin/kernel-test
       - name: The vsock protocol, scenarios and fuzzer
@@ -121,7 +127,7 @@ jobs:
       - name: Install QEMU
         run: |
           sudo apt-get -o DPkg::Lock::Timeout=300 update -qq
-          sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq qemu-system-x86 socat
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq qemu-system-x86 ovmf socat
           qemu-system-x86_64 --version | head -1
       # What this runner can emulate, for whoever extends this job. Informational.
       - name: What the runner offers
@@ -133,6 +139,12 @@ jobs:
           ls -l /dev/vhost-vsock 2>&1 || true
           uname -r
       - run: lake build
+      - name: Build both EFI profiles and boot the development guest
+        run: |
+          scripts/build-efi tdx
+          scripts/build-efi dev
+          scripts/test-efi
+          scripts/test-efi-ipv6
       # Every image is built in three shapes (scripts/build-bare): an ELF file for a PVH loader; a Linux
       # kernel image, which is what a Nitro Enclave is given, entered here the way QEMU's BIOS-era loader
       # does, through its 32-bit entry; and the same image entered through its 64-bit entry.

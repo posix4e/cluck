@@ -4,6 +4,10 @@ A Lean unikernel for AWS Nitro Enclaves: Lean all the way down, booting with no 
 AWS-supplied boot files, answering its parent over vsock and returning an attestation that verifies on
 another machine. A service on it is a function from bytes to bytes; `Demo/` is the one that comes with it.
 
+The Intel TDX target boots through x86-64 UEFI and serves the demo over a virtio Ethernet link.
+The guest runs the Ethernet and IP protocols in Lean on the minimal runtime. See
+[building and running the TDX guest](TDX.md).
+
 What is done and what is left is in [TODO.md](TODO.md). What it defends against, and what it does not, is in
 [THREAT_MODEL.md](THREAT_MODEL.md). How to work on it is in [CONTRIBUTING.md](CONTRIBUTING.md). To build a
 service of your own on it, see "Building on it" below.
@@ -21,7 +25,7 @@ Licensed under the GNU Affero General Public License, version 3 ([LICENSE](LICEN
 | Minimal runtime, by hand | C, single-threaded | closures, making constants permanent, start-up, stopping, a few raw hardware primitives (`rt/`) |
 | Boot stub | assembly and a little C | the Linux boot protocol's header and entries, page tables, fatal-exception handlers |
 
-Every byte from the parent is parsed in Lean. The C and assembly underneath never interpret host data.
+In the Nitro target, every byte from the parent is parsed in Lean. The C and assembly underneath never interpret host data.
 
 The runtime is the part still moving out of C. About 1,470 lines of C are written by hand, 480 of them the
 boot code; the rest of what compiled Lean stands on is Lean, or a program in `Mini/`. What is proved about

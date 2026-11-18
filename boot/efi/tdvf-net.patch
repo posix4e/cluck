@@ -1,0 +1,20 @@
+--- a/OvmfPkg/IntelTdx/IntelTdxX64.dsc
++++ b/OvmfPkg/IntelTdx/IntelTdxX64.dsc
+@@ -651,6 +651,7 @@
+   OvmfPkg/VirtioPciDeviceDxe/VirtioPciDeviceDxe.inf
+   OvmfPkg/Virtio10Dxe/Virtio10.inf
+   OvmfPkg/VirtioBlkDxe/VirtioBlk.inf
++  OvmfPkg/VirtioNetDxe/VirtioNet.inf
+   OvmfPkg/VirtioScsiDxe/VirtioScsi.inf
+   MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
+   MdeModulePkg/Universal/TimestampDxe/TimestampDxe.inf
+--- a/OvmfPkg/IntelTdx/IntelTdxX64.fdf
++++ b/OvmfPkg/IntelTdx/IntelTdxX64.fdf
+@@ -209,6 +209,7 @@
+ INF  OvmfPkg/VirtioPciDeviceDxe/VirtioPciDeviceDxe.inf
+ INF  OvmfPkg/Virtio10Dxe/Virtio10.inf
+ INF  OvmfPkg/VirtioBlkDxe/VirtioBlk.inf
++INF  OvmfPkg/VirtioNetDxe/VirtioNet.inf
+ 
+ !if $(SECURE_BOOT_ENABLE) == TRUE
+   INF  SecurityPkg/VariableAuthenticated/SecureBootConfigDxe/SecureBootConfigDxe.inf

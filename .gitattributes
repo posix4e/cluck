@@ -1,0 +1,2 @@
+# Preserve edk2's CRLF context when applying the firmware patches.
+boot/efi/*.patch -text whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof

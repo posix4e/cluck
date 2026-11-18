@@ -3,6 +3,38 @@
 What is done and what is left, in the order it has to happen. "Done" means it runs and something checks it;
 where that something is only an emulator, the line says so.
 
+## Intel TDX Ethernet guest
+
+On 2026-11-18 the TDX EFI image booted on Intel hardware under Linux
+7.0.0-14-generic and QEMU 10.2.1 with the two TDVF patches in `boot/efi/`.
+The development EFI profile ran under QEMU TCG on an Arm Mac. The hardware
+image refused to start in ordinary emulation.
+
+- IPv4 hardware tests exercised concurrent TCP streams, the maximum 65,536-byte
+  demo payload, random data, the reference self-test digest, half-close, rejection of
+  invalid frame lengths, UDP echo and an 8,032-byte fragmented UDP datagram.
+- An independent peer exercised IPv6 neighbor discovery, ICMPv6 echo, UDP and the
+  framed TCP service over a QEMU point-to-point Ethernet link on real TDX.
+- The DNS probe used the guest's resolver to obtain both A records for
+  `ipv4only.arpa.` through QEMU on hardware. Native tests also exercised AAAA
+  lookup, TCP retransmission, reassembly and the static next-hop cache.
+- Intel QGS produced a 5,243-byte quote. Intel DCAP returned success with current
+  collateral, matching verifier REPORTDATA and DEBUG clear. A fresh boot's quote
+  matched the first boot's MRTD and all four RTMRs. The supplied verifier rejected
+  a stale challenge and a mismatched RTMR1 policy. Verification in this test ran
+  on the host. Application-level authentication and a deployment's own
+  off-host measurement policy remain separate work.
+
+| Tested binary | SHA-256 |
+|---|---|
+| TDX BOOTX64.EFI | `ddac15b56d362d845d3d029ad5a63b667cfe02538967fce5ca6d4782001b8159` |
+| Patched combined TDVF | `1598169e86de5fe7feaf30ca5243d0fa9434396e82a7d672d905a7cded94ec83` |
+
+The EFI image was rebuilt twice with the pinned Lean toolchain and produced the
+same SHA-256 on the build machine. The network uses static addresses. DHCP, SLAAC,
+TLS and a POSIX sockets interface are outside this implementation. Build and run
+instructions are in [TDX.md](TDX.md).
+
 ## The OS
 
 Lean all the way down, booting in a Nitro Enclave with no Linux, no libc and no AWS-supplied boot files,

@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Run the EFI image behind a modern virtio PCI NIC. Development boots use TCG
+# and split OVMF flash. The TDX target requires KVM and combined Intel TDVF.
+set -euo pipefail
+usage='usage: scripts/run-efi dev | tdx [executable]'
+[[ $# == 1 || $# == 2 ]] || { echo "$usage" >&2; exit 2; }
+mode=$1
+qemu=${SILO_QEMU:-qemu-system-x86_64}
+root=$(cd "$(dirname "$0")/.." && pwd)
+case "$mode" in
+  dev)
+    code=${SILO_OVMF_CODE:-}
+    vars=${SILO_OVMF_VARS:-}
+    if [[ -z "$code" && -z "$vars" ]]; then
+      for pair in \
+        "/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/OVMF/OVMF_VARS_4M.fd" \
+        "/usr/share/OVMF/OVMF_CODE.fd|/usr/share/OVMF/OVMF_VARS.fd" \
+        "$(dirname "$(command -v "$qemu")")/../share/qemu/edk2-x86_64-code.fd|$(dirname "$(command -v "$qemu")")/../share/qemu/edk2-i386-vars.fd"; do
+        if [[ -r "${pair%|*}" && -r "${pair#*|}" ]]; then
+          code=${pair%|*}; vars=${pair#*|}; break
+        fi
+      done
+    fi
+    [[ -r "$code" && -r "$vars" ]] || { echo "run-efi: set SILO_OVMF_CODE and SILO_OVMF_VARS to a matched pair" >&2; exit 2; }
+    args=(-machine q35 -accel tcg -cpu max
+      -drive "if=pflash,unit=0,format=raw,readonly=on,file=$code"
+      -drive "if=pflash,unit=1,format=raw,snapshot=on,file=$vars")
+    devices=disable-legacy=on ;;
+  tdx)
+    [[ "$(uname -s)-$(uname -m)" == Linux-x86_64 && -r /dev/kvm && -w /dev/kvm ]] || {
+      echo 'run-efi: TDX requires an Intel TDX-enabled x86-64 Linux KVM host' >&2; exit 2; }
+    tdvf=${SILO_TDVF:-"$root/.lake/build/efi/tdx/OVMF.fd"}
+    [[ -r "$tdvf" ]] || { echo 'run-efi: set SILO_TDVF to combined TDVF with VirtioNetDxe' >&2; exit 2; }
+    args=(-machine q35,kernel-irqchip=split,confidential-guest-support=tdx0 -accel kvm -cpu host
+      -object tdx-guest,id=tdx0 -bios "$tdvf")
+    devices=disable-legacy=on,iommu_platform=on ;;
+  *) echo "$usage" >&2; exit 2 ;;
+esac
+out="$root/.lake/build/efi/$mode"
+name=${2:-tdx-os}
+[[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]] || { echo "run-efi: invalid executable name" >&2; exit 2; }
+if [[ "$name" != tdx-os ]]; then out="$out/$name"; fi
+[[ -r "$out/BOOTX64.EFI" ]] || { echo "run-efi: build the $mode image with scripts/build-efi $mode $name first" >&2; exit 2; }
+port=${SILO_HOST_PORT:-5005}
+if [[ ! "$port" =~ ^[0-9]{1,5}$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
+  echo 'run-efi: invalid SILO_HOST_PORT' >&2; exit 2
+fi
+port=$((10#$port))
+# A FAT volume with the architecture's standard removable-media boot path.
+esp=$(mktemp -d "${TMPDIR:-/tmp}/silo-esp.XXXXXXXX")
+child=''
+cleanup() {
+  if [[ -n "$child" ]]; then kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; fi
+  rm -rf -- "$esp"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+mkdir -p "$esp/EFI/BOOT"
+cp "$out/BOOTX64.EFI" "$esp/EFI/BOOT/BOOTX64.EFI"
+net="user,id=net0,ipv4=on,ipv6=on,hostfwd=tcp:127.0.0.1:$port-10.0.2.15:5005,hostfwd=udp:127.0.0.1:$port-10.0.2.15:5005"
+if [[ -n "${SILO_NET_SOCKET:-}" ]]; then
+  # A point-to-point Ethernet link for raw-frame integration and IPv6 tests.
+  net="stream,id=net0,server=on,addr.type=unix,addr.path=$SILO_NET_SOCKET"
+fi
+"$qemu" "${args[@]}" -nodefaults -m 1G -smp 1 -display none -monitor none -serial stdio -no-reboot \
+  -drive "if=none,id=esp,format=raw,readonly=on,file=fat:$esp" \
+  -device "virtio-blk-pci,drive=esp,$devices,bootindex=1" \
+  -netdev "$net" -device "virtio-net-pci,netdev=net0,$devices,romfile=" </dev/null &
+child=$!
+wait "$child"
+child=''

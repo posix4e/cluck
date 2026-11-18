@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Boot a silo-os EFI guest and exercise its framed TCP service and UDP stack."""
+import argparse
+import os
+import socket
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+def framed(payload):
+    return struct.pack(">I", len(payload)) + payload
+
+
+def exact(sock, n):
+    out = bytearray()
+    while len(out) < n:
+        more = sock.recv(n - len(out))
+        if not more:
+            raise RuntimeError("early end of TCP stream")
+        out.extend(more)
+    return bytes(out)
+
+
+def reply(sock):
+    n, = struct.unpack(">I", exact(sock, 4))
+    if not 1 <= n <= 65536:
+        raise RuntimeError(f"out-of-range reply length {n}")
+    return exact(sock, n)
+
+
+def check_service(port, expected_selftest, tdx=False):
+    end = ("127.0.0.1", port)
+    with socket.create_connection(end, 15) as a, socket.create_connection(end, 15) as b:
+        # Leave one connection mid-frame while a second client completes a request.
+        ping = framed(b"\x01first")
+        a.sendall(ping[:3])
+        b.sendall(framed(b"\x01second"))
+        assert reply(b) == b"\x81second"
+        expected = bytes(range(255)) * 257
+        a.sendall(ping[3:] + framed(b"\x01" + expected) + framed(b"\x04"))
+        assert reply(a) == b"\x81first"
+        assert reply(a) == b"\x81" + expected  # 65536-byte payload spans Ethernet frames.
+        assert reply(a) == expected_selftest
+        challenge = os.urandom(64)
+        b.sendall(framed(b"\x03\x00\x20") + framed(b"\x05" + challenge))
+        random = reply(b)
+        assert random[:1] == b"\x83" and len(random) == 33
+        evidence = reply(b)
+        if tdx:
+            assert len(evidence) == 1025 and evidence[:1] == b"\x85"
+            assert evidence[129:193] == challenge  # REPORTMACSTRUCT.REPORTDATA
+        else:
+            assert evidence == b"\xff\x03"
+        b.sendall(framed(b"\x01last"))
+        b.shutdown(socket.SHUT_WR)
+        assert reply(b) == b"\x81last"
+        assert b.recv(1) == b""
+        a.sendall(struct.pack(">I", 65537))
+        assert a.recv(1) == b""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.settimeout(5)
+        udp.connect(end)
+        for payload in [b"udp", bytes(range(253)) * 5, bytes(range(251)) * 32]:
+            udp.send(payload)
+            assert udp.recv(65535) == payload
+
+
+def reference_selftest():
+    sim = Path(__file__).resolve().parents[1] / ".lake/build/bin/demo-sim"
+    out = subprocess.check_output([sim], input=framed(b"\x04"))
+    assert len(out) == 13 and out[:5] == bytes.fromhex("0000000984")
+    return out[4:]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", nargs="?", choices=("dev", "tdx"), default="dev")
+    parser.add_argument("--selftest", help="expected eight-byte self-test digest in hex; defaults to the hosted simulator")
+    parser.add_argument("--reportdata", help="64-byte verifier challenge in hex for a hardware quote")
+    parser.add_argument("--quote", type=Path, help="new output path for that hardware quote")
+    args = parser.parse_args()
+    if args.quote or args.reportdata:
+        if args.mode != "tdx" or not (args.quote and args.reportdata) or len(bytes.fromhex(args.reportdata)) != 64:
+            parser.error("--quote and --reportdata must be supplied together for TDX")
+    expected = (b"\x84" + bytes.fromhex(args.selftest)) if args.selftest else reference_selftest()
+    if len(expected) != 9:
+        parser.error("selftest must be an eight-byte digest in hex")
+    root = Path(__file__).resolve().parents[1]
+    with socket.socket() as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        port = reserved.getsockname()[1]
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "serial.log"
+        with log.open("wb") as output:
+            vm = subprocess.Popen([root / "scripts/run-efi", args.mode],
+                                  env={**os.environ, "SILO_HOST_PORT": str(port)},
+                                  stdout=output, stderr=subprocess.STDOUT)
+            try:
+                deadline = time.monotonic() + 90
+                while vm.poll() is None and time.monotonic() < deadline:
+                    if b"silo: EFI service stopped" in log.read_bytes():
+                        raise RuntimeError("guest stopped during startup")
+                    try:
+                        with socket.create_connection(("127.0.0.1", port), timeout=1) as probe:
+                            probe.sendall(framed(b"\x01ready"))
+                            if reply(probe) == b"\x81ready":
+                                break
+                    except (OSError, RuntimeError):
+                        time.sleep(0.2)
+                else:
+                    raise RuntimeError("guest did not reach the Ethernet service")
+                check_service(port, expected, args.mode == "tdx")
+                if args.quote:
+                    subprocess.run([root / "scripts/tdx-quote", "--port", str(port),
+                                    args.reportdata, args.quote], check=True)
+                print("UEFI guest passed concurrent TCP, maximum frame, self-test, random, "
+                      "TDREPORT platform behavior, half-close, malformed framing, and UDP echo.")
+            except Exception:
+                sys.stderr.write(log.read_text(errors="replace"))
+                raise
+            finally:
+                if vm.poll() is None:
+                    vm.terminate()
+                try:
+                    vm.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    vm.kill()
+                    vm.wait()
+
+
+if __name__ == "__main__":
+    main()

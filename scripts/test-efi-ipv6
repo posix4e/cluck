@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Drive IPv6 directly across a QEMU Ethernet link with an independent peer."""
+import argparse
+import ipaddress
+import os
+import runpy
+import socket
+import struct
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+exact = runpy.run_path(str(ROOT / "scripts/test-efi"))["exact"]
+HOST_MAC = bytes.fromhex("020000000002")
+HOST = ipaddress.IPv6Address("fec0::2").packed
+GUEST = ipaddress.IPv6Address("fec0::15").packed
+SOLICITED = ipaddress.IPv6Address("ff02::1:ff00:15").packed
+
+
+def checksum(data):
+    data += b"\x00" * (len(data) % 2)
+    n = sum(v for v, in struct.iter_unpack("!H", data))
+    while n >> 16:
+        n = (n & 65535) + (n >> 16)
+    return n ^ 65535
+
+
+def pseudo(src, dst, proto, body):
+    return src + dst + struct.pack("!I3xB", len(body), proto) + body
+
+
+def send(link, mac, dst, proto, body, at, hops):
+    code = checksum(pseudo(HOST, dst, proto, body))
+    body = body[:at] + struct.pack("!H", code or 65535) + body[at + 2:]
+    frame = mac + HOST_MAC + bytes.fromhex("86dd") + struct.pack("!IHBB", 6 << 28, len(body), proto, hops)
+    frame += HOST + dst + body
+    link.sendall(struct.pack("!I", len(frame)) + frame)
+
+
+def receive(link, proto):
+    while True:
+        size, = struct.unpack("!I", exact(link, 4))
+        if size > 65536:
+            raise ValueError("oversized Ethernet frame")
+        frame = exact(link, size)
+        if (len(frame) < 54 or frame[:6] != HOST_MAC or frame[12:14] != bytes.fromhex("86dd")
+                or frame[20] != proto or frame[22:38] != GUEST or frame[38:54] != HOST):
+            continue
+        length, = struct.unpack_from("!H", frame, 18)
+        body = frame[54:54+length]
+        assert len(body) == length and checksum(pseudo(GUEST, HOST, proto, body)) == 0
+        return frame[6:12], frame[21], body
+
+
+def conversation(link):
+    solicit = struct.pack("!BBHI", 135, 0, 0, 0) + GUEST + bytes([1, 1]) + HOST_MAC
+    send(link, bytes.fromhex("3333ff000015"), SOLICITED, 58, solicit, 2, 255)
+    mac, hops, advertisement = receive(link, 58)
+    assert hops == 255 and advertisement[:2] == bytes([136, 0])
+    assert advertisement[8:] == GUEST + bytes([2, 1]) + mac
+    echo = struct.pack("!BBHHH", 128, 0, 0, 314, 1) + b"silo-ipv6"
+    send(link, mac, GUEST, 58, echo, 2, 64)
+    _, _, answer = receive(link, 58)
+    assert answer[0] == 129 and answer[4:] == echo[4:]
+    data = b"UDP over IPv6"
+    udp = struct.pack("!HHHH", 4545, 5005, 8 + len(data), 0) + data
+    send(link, mac, GUEST, 17, udp, 6, 64)
+    _, _, answer = receive(link, 17)
+    assert struct.unpack_from("!HHH", answer) == (5005, 4545, 8 + len(data)) and answer[8:] == data
+
+    def tcp(seq, ack, flags, payload=b""):
+        segment = struct.pack("!HHIIBBHHH", 4321, 5005, seq, ack, 5 << 4, flags, 32000, 0, 0)
+        send(link, mac, GUEST, 6, segment + payload, 16, 64)
+
+    tcp(30, 0, 2)
+    _, _, segment = receive(link, 6)
+    sport, dport, seq, ack = struct.unpack_from("!HHII", segment)
+    assert (sport, dport, ack, segment[13] & 0x12) == (5005, 4321, 31, 0x12)
+    tcp(31, (seq + 1) % 2**32, 0x10)
+    request = b"\x00\x00\x00\x03\x01v6"
+    tcp(31, (seq + 1) % 2**32, 0x18, request)
+    while True:
+        _, _, segment = receive(link, 6)
+        payload = segment[(segment[12] >> 4) * 4:]
+        if payload:
+            assert payload == b"\x00\x00\x00\x03\x81v6"
+            break
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("mode", nargs="?", choices=("dev", "tdx"), default="dev")
+    args = parser.parse_args()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = str(Path(tmp) / "link.sock")
+        serial = Path(tmp) / "serial"
+        with serial.open("wb") as out, socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as link:
+            vm = subprocess.Popen([ROOT / "scripts/run-efi", args.mode],
+                                  env={**os.environ, "SILO_NET_SOCKET": path}, stdout=out, stderr=out)
+            try:
+                deadline = time.monotonic() + 90
+                while vm.poll() is None and time.monotonic() < deadline and not os.path.exists(path):
+                    time.sleep(0.1)
+                link.connect(path)
+                link.settimeout(10)
+                while vm.poll() is None and time.monotonic() < deadline:
+                    output = serial.read_bytes()
+                    if b"silo: EFI service stopped" in output:
+                        raise RuntimeError("guest stopped during startup")
+                    if b"serving TCP and UDP 5005" in output:
+                        break
+                    time.sleep(0.2)
+                else:
+                    raise RuntimeError("guest did not reach the Ethernet service")
+                conversation(link)
+                print("UEFI Ethernet link passed IPv6 neighbor discovery, ICMPv6, UDP, and framed TCP.")
+            except Exception:
+                print(serial.read_text(errors="replace"))
+                raise
+            finally:
+                vm.terminate()
+                try:
+                    vm.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    vm.kill()
+                    vm.wait()
+
+
+if __name__ == "__main__":
+    main()

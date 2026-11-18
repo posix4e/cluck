@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Build a relocatable EFI application using the existing minimal runtime and
+# the x64 Linux release of Lean's compiled Init and Std. No EFI SDK is needed.
+set -euo pipefail
+profile="${1:-tdx}"
+case "$profile" in
+  tdx) require_tdx=1 ;;
+  dev) require_tdx=0 ;;
+  *) echo "usage: scripts/build-efi [tdx|dev] [executable]" >&2; exit 2 ;;
+esac
+name="${2:-tdx-os}"
+os="$(cd "$(dirname "$0")/.." && pwd)"
+prefix="$(lean --print-prefix)"
+if [[ "$(uname -s)-$(uname -m)" == Linux-x86_64 ]]; then
+  libs="$prefix/lib/lean"
+else
+  version="$(lean --version | sed -E 's/.*version ([0-9.]+).*/\1/')"
+  libs="${SILO_LINUX_TOOLCHAIN:-$HOME/.elan/cross/lean-$version-linux}/lib/lean"
+fi
+[[ -f "$libs/libInit.a" && -f "$libs/libStd.a" ]] || {
+  echo "build-efi: missing x86-64 Linux Lean archives in $libs" >&2; exit 2;
+}
+lake build mini-print "$name"
+out=".lake/build/efi/$profile"
+if [[ "$name" != tdx-os ]]; then out="$out/$name"; fi
+objects="$out/obj-$name"
+mkdir -p "$objects"
+ld="$prefix/bin/ld.lld"
+if [[ ! -x "$ld" ]]; then
+  ln -sf "$prefix/bin/ld64.lld" "$objects/ld.lld"
+  ld="$objects/ld.lld"
+fi
+flags=(--target=x86_64-unknown-none-elf -ffreestanding -nostdinc -isystem "$prefix/include/clang"
+       -I "$prefix/include" -I "$os/rt" -O2 -fno-stack-protector -mno-red-zone -fPIE
+       -ffile-prefix-map="$os/"= -ffile-prefix-map="$prefix/"=lean-toolchain/
+       -fdata-sections -ffunction-sections)
+inputs=()
+compile() {
+  local from="$1"; shift
+  local obj="$objects/${#inputs[@]}.o"
+  "$prefix/bin/clang" -c "${flags[@]}" "$@" "$from" -o "$obj"
+  inputs+=("$obj")
+}
+"$os/scripts/print-runtime" "$objects/printed"
+for src in "$os"/rt/*.c "$objects"/printed/*.c; do
+  compile "$src" -Wall -Wextra -Werror
+done
+compile "$os/rt/bare/libc.c" -fno-builtin -Wall -Wextra -Werror
+compile "$os/rt/bare/platform.c" -Wall -Wextra -Werror
+compile "$os/boot/efi/platform.c" -DREQUIRE_TDX="$require_tdx" -Wall -Wextra -Werror
+# C from Lake's actual dependency closure, never its hosted platform objects.
+while IFS= read -r arg; do
+  arg="${arg#\"}"; arg="${arg%\"}"
+  case "$arg" in *.c.o.export) compile "${arg%.o.export}" -DNDEBUG -w ;; esac
+done < ".lake/build/bin/$name.rsp"
+"$ld" -pie --no-dynamic-linker -z text -z defs --gc-sections -T "$os/boot/efi/link.ld" \
+  -Map="$objects/image.map" -o "$objects/image.elf" "${inputs[@]}" \
+  --start-group "$libs/libInit.a" "$libs/libStd.a" --end-group
+python3 "$os/boot/efi/mkefi.py" "$objects/image.elf" "$out/BOOTX64.EFI"
+echo "$out/BOOTX64.EFI"

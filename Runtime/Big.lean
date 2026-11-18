@@ -220,7 +220,8 @@ def divideLong (a b : Limbs) : Limbs × Limbs :=
   let (q, u) := divideLongLoop v (shiftLeft a 0 s) (zeros (a.size - n + 1)) (a.size - n + 1)
   (q, shiftRight u 0 n s)
 
-/-- The quotient rounded down and the remainder, for `b` other than zero; neither has a zero limb on top. -/
+/-- The quotient rounded down and the remainder, for `b` other than zero with no zero limb on top. Either
+may come back with zero limbs on top; whoever makes a number of them takes those off. -/
 def divide (a b : Limbs) : Limbs × Limbs :=
   if a.size < b.size then (Array.mkEmpty 0, a)
   else if b.size == 1 then divideSmallLoop a (limb b 0) 0 (zeros a.size) a.size

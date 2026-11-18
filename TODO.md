@@ -99,12 +99,16 @@ checked by compiled code, so those theorems also trust the compiler that ran the
       nothing here shows `Mini/Number.lean` never passes one.
 - [x] Shifts left and right by any count a machine word holds (times and divided by that power of two,
       rounding down), `and`, `or`, and powers for any exponent a machine word holds.
-- [x] Division by a single limb, and of a number with fewer limbs than its divisor: the quotient rounded
-      down and the remainder.
-- [ ] Division by two limbs or more. Knuth's algorithm D; the long one. Until it is done nothing is proved
-      about `natDiv`, `natMod`, `intEdiv` and `intEmod` as wholes, which go through it. `divide` says its
-      quotient has no zero limb on top, and division by one limb can leave one; that is harmless only
-      because `Mini/Number.lean` takes the zero limbs off every result.
+- [x] Division: the quotient rounded down and the remainder, for any dividend and any divisor that is not
+      zero and has no zero limb on top. By a single limb, and by two limbs or more, which is Knuth's
+      algorithm D. Proved of that one: the shift sets the divisor's top bit; each guess at a quotient limb
+      is never too small and at most one too large, and `refine` gets there in at most twice round, so its
+      count of four is never used up; taking the guess off says rightly whether it went below zero; and
+      putting the divisor back once then leaves the right remainder, the carry out of the top cancelling
+      the borrow. On top of it `natDiv` (by zero gives zero), `natMod`, `intEdiv` and `intEmod` are what
+      Lean's `Nat` and `Int` define. A quotient or remainder can come back with zero limbs on top, and a
+      zero quotient with a minus sign; `Mini/Number.lean` takes the limbs off and makes any zero plain
+      zero, which is tested, not proved (the next line).
 - [x] `Runtime/Utf8.lean` against the standard's table (RFC 3629), stated in plain arithmetic
       (`Runtime/Utf8Proofs.lean`). `write` gives the table's bytes for every character up to U+10FFFF.
       `strict` says one, two, three or four exactly when that many bytes are there and they are the encoding

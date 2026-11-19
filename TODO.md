@@ -97,7 +97,8 @@ checked by compiled code, so those theorems also trust the compiler that ran the
 - [x] Signed addition and comparison, on numbers with no zero limb on top. Comparison also assumes that a
       number passed as below zero is not zero: `intCompare` would call "minus zero" less than zero.
       `Mini/Number.lean` is shown never to pass one for an integer that arrives as a tagged word (the sign
-      it passes is 1 only for a number below zero); for one that arrives as an object it is not shown.
+      it passes is 1 only for a number below zero), nor for one that arrives as an object of the kind this
+      program makes, whose top limb is not zero. That `checked` stops on any other object is not proved.
 - [x] Shifts left and right by any count a machine word holds (times and divided by that power of two,
       rounding down), `and`, `or`, and powers for any exponent a machine word holds.
 - [x] Division: the quotient rounded down and the remainder, for any dividend and any divisor that is not
@@ -109,8 +110,7 @@ checked by compiled code, so those theorems also trust the compiler that ran the
       the borrow. On top of it `natDiv` (by zero gives zero), `natMod`, `intEdiv` and `intEmod` are what
       Lean's `Nat` and `Int` define. A quotient or remainder can come back with zero limbs on top, and a
       zero quotient with a minus sign; `Mini/Number.lean` takes the limbs off and makes any zero plain
-      zero, which is proved where the answer fits in a tagged word and tested beyond that (the item after
-      the next).
+      zero, which is proved (the item after the next).
 - [x] `Runtime/Utf8.lean` against the standard's table (RFC 3629), stated in plain arithmetic
       (`Runtime/Utf8Proofs.lean`). `write` gives the table's bytes for every character up to U+10FFFF.
       `strict` says one, two, three or four exactly when that many bytes are there and they are the encoding
@@ -118,9 +118,12 @@ checked by compiled code, so those theorems also trust the compiler that ran the
       Where `strict` finds a character, `read` returns the one those bytes encode and `claims` steps over
       exactly its bytes. Not stated: what `read` and `claims` answer on bytes that are not well formed, where
       they follow Lean's own runtime, which is C and has no definition here to be held against.
-- [ ] That `Mini/Number.lean` hands the arithmetic the right limbs and reads its answer rightly. Proved
-      for numbers that fit in a tagged word (`Mini/NumberProofs.lean`, on Lean's three standard axioms),
-      about the program as its language defines it:
+- [ ] That `Mini/Number.lean` hands the arithmetic the right limbs and reads its answer rightly. Proved at
+      both ends of a call to the arithmetic, for numbers of every size (`Mini/NumberProofs.lean`, on Lean's
+      three standard axioms), about the program as its language defines it. Not proved: an operation as a
+      whole (the last paragraph here).
+
+      A number that fits in a tagged word:
       - Going in, a natural number: `limbs_of_word`, and `nat_limbs` for one that arrives as a tagged
         word, leave in memory an array holding the limbs of that number, with no zero limb on top. They do
         nothing C leaves open and change nothing outside the room the allocator gave. All that is assumed
@@ -139,10 +142,30 @@ checked by compiled code, so those theorems also trust the compiler that ran the
         plain zero. The integer `int_from` is proved to read is `signedValue`, the one
         `Runtime/BigProofs.lean` proves the arithmetic's answers about.
 
-      Not proved: a number that is an object, going in (`checked`, `limbs_of_object`) or coming out
-      (`big_new`), which needs the allocator to hand out room that overlaps nothing in use; and an
-      operation as a whole, which calls compiled `Runtime/Big.lean` between the two ends, so needs an
-      assumption about what that call leaves in memory.
+      A number that is an object (a header, a sign, a count and that many limbs of four bytes):
+      - Going in: `checked` passes an object whose top limb is not zero and whose sign is 0 or 1, gives its
+        count and changes nothing. `limbs_of_object` leaves an array holding the object's limbs. On those,
+        `nat_limbs` does so for a natural number of 2^63 or more, `int_limbs` for an integer outside
+        -2^31 to 2^31 - 1, and `int_sign` gives the sign the object holds.
+      - Coming out: `big_new` leaves an object holding a sign and the first limbs of an array. On it,
+        `nat_result` and `nat_from` for a number of 2^63 or more, and `int_result` and `int_from` for an
+        integer outside -2^31 to 2^31 - 1, give back an object holding the array's limbs without the zero
+        ones on top, so the same number, with a top limb that is not zero. What goes out is therefore what
+        the theorems about going in assume of what comes in.
+      - What these assume of the allocator, as hypotheses in each statement: the room it hands out shares
+        no byte with the object or array being read, and handing it out left that object or array as it
+        was. Nothing is assumed of what the room held. Also assumed: that an object's address has its
+        lowest bit clear, which is how the program tells it from a tagged word, and that an array has
+        fewer than 2^32 limbs. Where an array is given up at the end (`nat_from`,
+        `int_from`), the object is shown right in the state `lean_dec` is handed; what `lean_dec` then
+        does to memory is the allocator's and is not stated.
+      - Not proved of `checked`: that it stops on an object that is not well formed. The theorems say what
+        happens for an object that is.
+
+      Not proved: an operation as a whole, such as `lean_nat_big_add`. Each calls compiled
+      `Runtime/Big.lean` between the two ends, so it needs an assumption about what that call leaves in
+      memory (an array holding the limbs `Runtime/Big.lean` computes, and the arguments' arrays given up),
+      and the two allocator assumptions above would have to be discharged against `Mini/Alloc.lean`.
 
 ### The code under Lean, written in Lean
 

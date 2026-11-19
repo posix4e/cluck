@@ -12,10 +12,13 @@ this is about the two ends of a call: that the limbs handed to it are those of t
 that what goes back to compiled Lean is the number in the limbs it returned. Nothing here runs; no image
 imports it.
 
-What the program calls outside itself is an assumption in each statement: here, that `lean_alloc_object`
-returns some address, and that `lean_dec` returns. Nothing is assumed of the memory there.
+What the program calls outside itself is an assumption in each statement: that `lean_alloc_object` returns
+some address, and that `lean_dec` returns. For a number that fits in a tagged word nothing more is assumed.
+For one that is an object, two things are assumed of the room `lean_alloc_object` hands out, since the
+program reads an object or an array while it writes into that room: the room shares no byte with what is
+being read, and making the room left what is being read as it was. Nothing is assumed of what the room held.
 
-Proved so far for numbers that fit in a tagged word, natural numbers and integers both. -/
+First numbers that fit in a tagged word, natural numbers and then integers; then numbers that are objects. -/
 
 namespace Mini.Number
 
@@ -894,6 +897,990 @@ theorem intFrom_word (outside : Outside) (array : UInt64) (limbs : Runtime.Big.L
     simp [Program.call, find_intFrom, find_intResult, intFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
       sizeOf, drop, limbAt, unbox, Expr.eq, Expr.ne, Expr.shr, hsize]
     simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, cpos, read, hl, dec,
+      unbox_boxed, nz]
+
+/-! ## Running a function a statement at a time
+
+A function with a loop in it is taken a statement at a time, so that the loop is met as a whole and what is
+proved of it by induction can be used. -/
+
+theorem runAll_on (p : Program) (outside : Outside) (fuel : Nat) (st : Stmt) (rest : List Stmt)
+    (s s1 : State) (locals locals1 : Locals)
+    (h : Stmt.run p outside fuel st s locals = .ok (.on, s1, locals1)) :
+    runAll p outside (fuel + 1) (st :: rest) s locals = runAll p outside fuel rest s1 locals1 := by
+  rw [runAll, h]
+  rfl
+
+theorem runAll_gave (p : Program) (outside : Outside) (fuel : Nat) (st : Stmt) (rest : List Stmt)
+    (s s1 : State) (locals locals1 : Locals) (value : UInt64)
+    (h : Stmt.run p outside fuel st s locals = .ok (.gave value, s1, locals1)) :
+    runAll p outside (fuel + 1) (st :: rest) s locals = .ok (.gave value, s1, locals1) := by
+  rw [runAll, h]
+  rfl
+
+/-- What running a function's body says about calling it by name. -/
+theorem call_of_runAll (p : Program) (outside : Outside) (fuel : Nat) (function : String) (f : Function)
+    (arguments : List UInt64) (s after : State) (ending : Ending) (locals : Locals)
+    (found : p.functions.find? (fun f => f.name == function) = some f)
+    (run : runAll p outside fuel f.body s (bind (fun _ => none) f.parameters arguments)
+      = .ok (ending, after, locals)) :
+    p.call outside fuel function arguments s = .ok (ending, after) := by
+  unfold Program.call
+  rw [found]
+  dsimp only
+  rw [run]
+  rfl
+
+/-! ## Rooms that share no byte -/
+
+/-- A read sees only the bytes it reads. -/
+theorem readBytes_congr (m m' : UInt64 → Option UInt8) (x : UInt64) (n : Nat)
+    (same : ∀ i, i < n → m (x + UInt64.ofNat i) = m' (x + UInt64.ofNat i)) :
+    readBytes m x n = readBytes m' x n := by
+  induction n generalizing x with
+  | zero => rfl
+  | succ n ih =>
+    have here : m x = m' x := by simpa using same 0 (by omega)
+    have further : readBytes m (x + 1) n = readBytes m' (x + 1) n :=
+      ih (x + 1) (fun i hi => by
+        have := same (i + 1) (by omega)
+        rwa [show x + UInt64.ofNat (i + 1) = x + 1 + UInt64.ofNat i from by
+          rw [UInt64.ofNat_add, UInt64.add_assoc, UInt64.add_comm (UInt64.ofNat i)]; rfl] at this)
+    simp only [readBytes, here, further]
+
+theorem offset_add (a : UInt64) (x i : Nat) :
+    a + UInt64.ofNat x + UInt64.ofNat i = a + UInt64.ofNat (x + i) := by
+  rw [UInt64.ofNat_add, UInt64.add_assoc]
+
+/-- A write inside one room leaves a read inside another, which shares no byte with it, as it was. -/
+theorem read_across (memory : UInt64 → Option UInt8) (a b word : UInt64) (x c roomA y n roomB : Nat)
+    (hx : x + c ≤ roomA) (hy : y + n ≤ roomB)
+    (apart : ∀ k, k < roomA → ∀ j, j < roomB → a + UInt64.ofNat k ≠ b + UInt64.ofNat j) :
+    readBytes (writeBytes memory (a + UInt64.ofNat x) word c) (b + UInt64.ofNat y) n
+      = readBytes memory (b + UInt64.ofNat y) n := by
+  refine readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk => ?_)
+  rw [offset_add, offset_add]
+  exact apart _ (by omega) _ (by omega)
+
+/-- A write and a read at two runs counted from one address, which do not meet. -/
+theorem read_beside (memory : UInt64 → Option UInt8) (a word : UInt64) (x c y n : Nat)
+    (hx : x + c < 9223372036854775808) (hy : y + n < 9223372036854775808) (apart : x + c ≤ y ∨ y + n ≤ x) :
+    readBytes (writeBytes memory (a + UInt64.ofNat x) word c) (a + UInt64.ofNat y) n
+      = readBytes memory (a + UInt64.ofNat y) n := by
+  refine readBytes_writeBytes_other _ _ _ _ _ _ (fun i hi k hk h => ?_)
+  rw [offset_add, offset_add] at h
+  have := congrArg UInt64.toNat h
+  simp only [UInt64.toNat_add, UInt64.toNat_ofNat'] at this
+  have := a.toNat_lt
+  omega
+
+/-- A write inside a room leaves everything outside the room as it was. -/
+theorem write_within (memory : UInt64 → Option UInt8) (a word q : UInt64) (x c room : Nat) (h : x + c ≤ room)
+    (outside : ∀ k, k < room → a + UInt64.ofNat k ≠ q) :
+    writeBytes memory (a + UInt64.ofNat x) word c q = memory q := by
+  refine writeBytes_other _ _ _ _ _ (fun k hk => ?_)
+  rw [offset_add]
+  exact outside _ (by omega)
+
+/-- Reading back four bytes that were just written, of a word that fits in them. -/
+theorem read_part (memory : UInt64 → Option UInt8) (a word : UInt64) (h : word.toNat < 4294967296) :
+    readBytes (writeBytes memory a word 4) a 4 = .ok word := by
+  obtain ⟨r, hr, hvalue⟩ := readBytes_writeBytes memory a word 4 (by omega)
+  have : r = word := UInt64.toNat_inj.mp (by
+    rw [hvalue, show 2 ^ (8 * 4) = 4294967296 from rfl]
+    omega)
+  rw [hr, this]
+
+/-! ## A number that is an object -/
+
+theorem find_checked : program.functions.find? (fun f => f.name == "checked") = some checked := rfl
+theorem find_limbsOfObject :
+    program.functions.find? (fun f => f.name == "limbs_of_object") = some limbsOfObject := rfl
+
+/-- A big number at an address, as much of it as this program makes and reads: a header that says it is a
+number, four bytes of sign, four bytes of count, and that many limbs of four bytes each. -/
+def ObjectOf (memory : UInt64 → Option UInt8) (o negative : UInt64) (limbs : Runtime.Big.Limbs) : Prop :=
+  (∃ header, readBytes memory o 8 = .ok header ∧ header >>> 56 = UInt64.ofNat numberKind) ∧
+  readBytes memory (o + 8) 4 = .ok negative ∧
+  readBytes memory (o + 12) 4 = .ok (UInt64.ofNat limbs.size) ∧
+  ∀ i, (h : i < limbs.size) → readBytes memory (o + UInt64.ofNat (16 + 4 * i)) 4 = .ok limbs[i].toUInt64
+
+/-- The address of the limb below a count that is not zero. -/
+theorem below_object_count (o : UInt64) (n : Nat) :
+    o + 16 + (UInt64.ofNat (n + 1) - 1) * 4 = o + UInt64.ofNat (16 + 4 * n) := by
+  apply UInt64.toNat_inj.mp
+  simp only [UInt64.toNat_add, UInt64.toNat_mul, UInt64.toNat_sub, UInt64.toNat_ofNat',
+    show (16 : UInt64).toNat = 16 from rfl, show (4 : UInt64).toNat = 4 from rfl,
+    show (1 : UInt64).toNat = 1 from rfl]
+  omega
+
+theorem limb_nonzero (limb : UInt32) (h : limb ≠ 0) : limb.toUInt64 ≠ 0 := fun z => h (UInt32.toNat_inj.mp (by
+  have := congrArg UInt64.toNat z
+  simpa using this))
+
+/-- `checked` passes an object that is a number as this program makes them, with a top limb that is not zero
+and a sign of 0 or 1, and gives its count. It reads the object and changes nothing. -/
+theorem checked_runs (outside : Outside) (fuel : Nat) (o negative : UInt64) (limbs : Runtime.Big.Limbs)
+    (s : State) (holds : ObjectOf s.memory o negative limbs) (small : limbs.size < 4294967296)
+    (top : Runtime.Big.digit limbs (limbs.size - 1) ≠ 0) (sign : negative ≤ 1) :
+    program.call outside (fuel + 6) "checked" [o] s = .ok (.gave (UInt64.ofNat limbs.size), s) := by
+  obtain ⟨⟨header, hread, hkind⟩, hneg, hcount, hlimbs⟩ := holds
+  have pos : 0 < limbs.size := by
+    refine Nat.pos_of_ne_zero (fun z => top ?_)
+    simp [Runtime.Big.digit, Array.getD, z]
+  obtain ⟨m, size⟩ : ∃ m, limbs.size = m + 1 := ⟨limbs.size - 1, by omega⟩
+  have read := hlimbs m (by omega)
+  rw [← below_object_count] at read
+  have nz : (limbs[m]'(by omega)).toUInt64 ≠ 0 := limb_nonzero _ (fun z => top (by
+    simp [Runtime.Big.digit, Array.getD, size, z]))
+  rw [size] at hcount ⊢
+  generalize hc : UInt64.ofNat (m + 1) = c at hcount read
+  have cpos : c ≠ 0 := by
+    intro z
+    have := congrArg UInt64.toNat (hc.trans z)
+    simp only [UInt64.toNat_ofNat', show (0 : UInt64).toNat = 0 from rfl] at this
+    omega
+  simp [Program.call, find_checked, checked, runAll, Stmt.run, Expr.run, Op.run, bind, put, countOf, negativeOf,
+    objectLimb, Expr.or, Expr.ne, Expr.eq, Expr.lt, Expr.shr, hread, hcount]
+  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hkind, hneg, read, cpos, nz,
+    sign]
+
+/-! ## Copying an object's limbs into an array -/
+
+/-- The loop in `limbs_of_object`, under a name of its own. -/
+def copyLoop (p : Program) (outside : Outside) (fuel : Nat) (s : State) (locals : Locals) :=
+  Stmt.run p outside fuel (.loop (Expr.lt "i" "count")
+    [.store ("array" + 24 + "i" * 8) (box (objectLimb "o" "i")), .set "i" ("i" + 1)]) s locals
+
+theorem element_address (array : UInt64) (i : Nat) :
+    array + 24 + UInt64.ofNat i * 8 = array + UInt64.ofNat (24 + 8 * i) := by
+  apply UInt64.toNat_inj.mp
+  simp only [UInt64.toNat_add, UInt64.toNat_mul, UInt64.toNat_ofNat', show (24 : UInt64).toNat = 24 from rfl,
+    show (8 : UInt64).toNat = 8 from rfl]
+  omega
+
+theorem limb_address (o : UInt64) (i : Nat) : o + 16 + UInt64.ofNat i * 4 = o + UInt64.ofNat (16 + 4 * i) := by
+  apply UInt64.toNat_inj.mp
+  simp only [UInt64.toNat_add, UInt64.toNat_mul, UInt64.toNat_ofNat', show (16 : UInt64).toNat = 16 from rfl,
+    show (4 : UInt64).toNat = 4 from rfl]
+  omega
+
+/-- The loop, from any limb on: it writes each limb of the object from there up into the array as a tagged
+word, and nothing else. What it has written below stays, and so does everything outside the array's room. The
+array's room and the object share no byte. -/
+theorem copy_loop (p : Program) (outside : Outside) (o array : UInt64) (limbs : Runtime.Big.Limbs)
+    (small : limbs.size < 4294967296)
+    (apart : ∀ k, k < 24 + 8 * limbs.size → ∀ j, j < 16 + 4 * limbs.size →
+      array + UInt64.ofNat k ≠ o + UInt64.ofNat j) :
+    ∀ (remaining i : Nat) (s : State) (locals : Locals) (extra : Nat), i + remaining = limbs.size →
+      locals "i" = some (UInt64.ofNat i) → locals "count" = some (UInt64.ofNat limbs.size) →
+      locals "o" = some o → locals "array" = some array →
+      (∀ j, (h : j < limbs.size) →
+        readBytes s.memory (o + UInt64.ofNat (16 + 4 * j)) 4 = .ok limbs[j].toUInt64) →
+      ∃ memory after,
+        copyLoop p outside (remaining + extra + 6) s locals = .ok (.on, { s with memory := memory }, after)
+        ∧ after "array" = some array
+        ∧ (∀ j, (h : j < limbs.size) → i ≤ j →
+            readBytes memory (array + UInt64.ofNat (24 + 8 * j)) 8 = .ok (boxed limbs[j].toUInt64))
+        ∧ (∀ x n, x + n ≤ 24 + 8 * i →
+            readBytes memory (array + UInt64.ofNat x) n = readBytes s.memory (array + UInt64.ofNat x) n)
+        ∧ ∀ q, (∀ k, k < 24 + 8 * limbs.size → array + UInt64.ofNat k ≠ q) → memory q = s.memory q := by
+  intro remaining
+  induction remaining with
+  | zero =>
+    intro i s locals extra hsum hi hcount ho harray hobj
+    have e : i = limbs.size := by omega
+    subst e
+    refine ⟨s.memory, locals, ?_, harray, fun j h hij => absurd h (by omega), fun _ _ _ => rfl, fun _ _ => rfl⟩
+    simp [copyLoop, Stmt.run, Expr.run, Op.run, Expr.lt, hi, hcount]
+    rfl
+  | succ remaining ih =>
+    intro i s locals extra hsum hi hcount ho harray hobj
+    have ilt : i < limbs.size := by omega
+    have limb := hobj i ilt
+    have ea := element_address array i
+    have lt : UInt64.ofNat i < UInt64.ofNat limbs.size := by
+      rw [UInt64.lt_iff_toNat_lt]
+      simp only [UInt64.toNat_ofNat']
+      omega
+    have next : UInt64.ofNat i + 1 = UInt64.ofNat (i + 1) := by rw [UInt64.ofNat_add]; rfl
+    rw [← limb_address] at limb
+    generalize hiw : UInt64.ofNat i = iw at hi limb lt next ea
+    generalize hcw : UInt64.ofNat limbs.size = cw at hcount lt
+    obtain ⟨memory, after, hrun, harr, helems, hbelow, hframe⟩ := ih (i + 1)
+      { s with memory := writeBytes s.memory (array + 24 + iw * 8) (limbs[i].toUInt64 <<< 1 ||| 1) 8 }
+      (put locals "i" (some (iw + 1))) extra (by omega) (by rw [← next]; simp [put])
+      (by rw [hcw]; simp [put, hcount]) (by simp [put, ho]) (by simp [put, harray])
+      (fun j h => by
+        rw [ea]
+        exact (read_across _ array o _ (24 + 8 * i) 8 (24 + 8 * limbs.size) (16 + 4 * j) 4
+          (16 + 4 * limbs.size) (by omega) (by omega) apart).trans (hobj j h))
+    refine ⟨memory, after, ?_, harr, ?_, ?_, ?_⟩
+    · unfold copyLoop at hrun ⊢
+      rw [show remaining + 1 + extra + 6 = (remaining + extra + 6) + 1 from by omega, Mini.Alloc.loop_turn]
+      generalize hround : Stmt.run p outside (remaining + extra + 6) (.loop (Expr.lt "i" "count")
+        [.store ("array" + 24 + "i" * 8) (box (objectLimb "o" "i")), .set "i" ("i" + 1)]) = round at hrun ⊢
+      simp [Stmt.run, runAll, Expr.run, Op.run, Expr.lt, Expr.or, Expr.shl, box, objectLimb, hi, hcount, ho,
+        harray, limb, lt]
+      simp [Bind.bind, Except.bind, hrun]
+    · intro j h hij
+      by_cases e : j = i
+      · subst e
+        exact (hbelow (24 + 8 * j) 8 (by omega)).trans (by
+          rw [ea]
+          exact readBytes_writeBytes_word _ _ _)
+      · exact helems j h (by omega)
+    · intro x n hxn
+      exact (hbelow x n (by omega)).trans (by
+        rw [ea]
+        exact read_beside _ array _ (24 + 8 * i) 8 x n (by omega) (by omega) (by omega))
+    · intro q hq
+      exact (hframe q hq).trans (by
+        rw [ea]
+        exact write_within _ array _ q (24 + 8 * i) 8 (24 + 8 * limbs.size) (by omega) hq)
+
+/-- `limbs_of_object` hands the arithmetic the limbs of an object: given room for an array that shares no
+byte with the object, it leaves there an array holding the object's limbs, does nothing C leaves open, and
+changes nothing outside that room. -/
+theorem limbsOfObject_array (outside : Outside) (extra : Nat) (o array : UInt64) (limbs : Runtime.Big.Limbs)
+    (s s' : State) (small : limbs.size < 4294967296)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * limbs.size)] s = .ok (array, s'))
+    (object : ∀ j, (h : j < limbs.size) →
+      readBytes s'.memory (o + UInt64.ofNat (16 + 4 * j)) 4 = .ok limbs[j].toUInt64)
+    (apart : ∀ k, k < 24 + 8 * limbs.size → ∀ j, j < 16 + 4 * limbs.size →
+      array + UInt64.ofNat k ≠ o + UInt64.ofNat j) :
+    ∃ memory,
+      program.call outside (limbs.size + extra + 14) "limbs_of_object" [o, UInt64.ofNat limbs.size] s
+        = .ok (.gave array, { s' with memory := memory })
+      ∧ ArrayOf memory array limbs
+      ∧ ∀ q, (∀ k, k < 24 + 8 * limbs.size → array + UInt64.ofNat k ≠ q) → memory q = s'.memory q := by
+  have room : (24 : UInt64) + UInt64.ofNat limbs.size * 8 = UInt64.ofNat (24 + 8 * limbs.size) := by
+    apply UInt64.toNat_inj.mp
+    simp only [UInt64.toNat_add, UInt64.toNat_mul, UInt64.toNat_ofNat', show (24 : UInt64).toNat = 24 from rfl,
+      show (8 : UInt64).toNat = 8 from rfl]
+    omega
+  rw [← room] at alloc
+  obtain ⟨l0, hl0⟩ := runAll_of_call program outside _ "array_new" arrayNew _ s _ _ find_arrayNew
+    (arrayNew_runs outside (limbs.size + extra + 2) (UInt64.ofNat limbs.size) array s s' alloc)
+  generalize hlocals : bind (fun _ => none) ["o", "count"] [o, UInt64.ofNat limbs.size] = locals
+  have lo : locals "o" = some o := by rw [← hlocals]; simp [bind, put]
+  have lcount : locals "count" = some (UInt64.ofNat limbs.size) := by rw [← hlocals]; simp [bind, put]
+  generalize hs1 : ({ s' with memory := headed s'.memory array (UInt64.ofNat limbs.size) } : State) = s1
+  have s1memory : s1.memory = headed s'.memory array (UInt64.ofNat limbs.size) := by rw [← hs1]
+  have st1 : Stmt.run program outside (limbs.size + extra + 13) (.call (some "array") "array_new" ["count"]) s
+      locals = .ok (.on, s1, put locals "array" (some array)) := by
+    have hl0' : runAll program outside (limbs.size + extra + 12) arrayNew.body s
+        (bind (fun _ => none) arrayNew.parameters [UInt64.ofNat limbs.size]) = .ok (.gave array, s1, l0) := by
+      rw [← hs1]; exact hl0
+    simp [Stmt.run, find_arrayNew, Expr.run, lcount, hl0']
+    rfl
+  have st2 : Stmt.run program outside (limbs.size + extra + 12) (.set "i" 0) s1
+      (put locals "array" (some array)) = .ok (.on, s1, put (put locals "array" (some array)) "i" (some 0)) := by
+    simp [Stmt.run, Expr.run]
+    rfl
+  obtain ⟨memory, after, hloop, harr, helems, hbelow, hframe⟩ := copy_loop program outside o array limbs small
+    apart limbs.size 0 s1 (put (put locals "array" (some array)) "i" (some 0)) (extra + 5) (by omega)
+    (by simp [put]) (by simp [put, lcount]) (by simp [put, lo]) (by simp [put])
+    (fun j h => by
+      rw [s1memory]
+      refine (readBytes_congr _ _ _ _ (fun i hi => ?_)).trans (object j h)
+      refine headed_outside _ _ _ _ (24 + 8 * limbs.size) (by omega) (fun k hk => ?_)
+      rw [offset_add]
+      exact apart k hk _ (by omega))
+  have st4 : Stmt.run program outside (limbs.size + extra + 10) (.give "array") { s1 with memory := memory } after
+      = .ok (.gave array, { s1 with memory := memory }, after) := by
+    simp [Stmt.run, Expr.run, harr]
+    rfl
+  refine ⟨memory, ?_, ⟨?_, ?_, fun i h => helems i h (Nat.zero_le _)⟩, ?_⟩
+  · have same : ({ s1 with memory := memory } : State) = { s' with memory := memory } := by rw [← hs1]
+    rw [← same]
+    refine call_of_runAll program outside _ "limbs_of_object" limbsOfObject _ s _ _ after find_limbsOfObject ?_
+    show runAll program outside (limbs.size + extra + 13 + 1) [.call (some "array") "array_new" ["count"],
+      .set "i" 0, .loop (Expr.lt "i" "count")
+        [.store ("array" + 24 + "i" * 8) (box (objectLimb "o" "i")), .set "i" ("i" + 1)],
+      .give "array"] s (bind (fun _ => none) ["o", "count"] [o, UInt64.ofNat limbs.size]) = _
+    rw [hlocals]
+    exact (runAll_on _ _ _ _ _ _ _ _ _ st1).trans ((runAll_on _ _ (limbs.size + extra + 12) _ _ _ _ _ _ st2).trans
+      ((runAll_on _ _ (limbs.size + extra + 11) _ _ _ _ _ _ hloop).trans
+        (runAll_gave _ _ (limbs.size + extra + 10) _ _ _ _ _ _ _ st4)))
+  · have := hbelow 0 8 (by omega)
+    rw [s1memory] at this
+    exact (by simpa using this : readBytes memory array 8 = _).trans (headed_header _ _ _)
+  · have := hbelow 8 8 (by omega)
+    rw [s1memory] at this
+    exact this.trans (headed_size _ _ _)
+  · intro q hq
+    exact (hframe q hq).trans (by
+      rw [s1memory]
+      exact headed_outside _ _ _ _ (24 + 8 * limbs.size) (by omega) hq)
+
+/-- An object whose bytes an allocation left alone still holds what it held. -/
+theorem object_kept (memory memory' : UInt64 → Option UInt8) (o negative : UInt64) (limbs : Runtime.Big.Limbs)
+    (holds : ObjectOf memory o negative limbs)
+    (kept : ∀ j, j < 16 + 4 * limbs.size → memory' (o + UInt64.ofNat j) = memory (o + UInt64.ofNat j)) :
+    ObjectOf memory' o negative limbs := by
+  obtain ⟨⟨header, hread, hkind⟩, hneg, hcount, hlimbs⟩ := holds
+  refine ⟨⟨header, ?_, hkind⟩, ?_, ?_, fun i h => ?_⟩
+  · exact (readBytes_congr _ _ _ _ (fun i hi => kept i (by omega))).trans hread
+  · exact (readBytes_congr _ _ (o + UInt64.ofNat 8) _ (fun i hi => by
+      rw [offset_add]; exact kept _ (by omega))).trans hneg
+  · exact (readBytes_congr _ _ (o + UInt64.ofNat 12) _ (fun i hi => by
+      rw [offset_add]; exact kept _ (by omega))).trans hcount
+  · exact (readBytes_congr _ _ _ _ (fun k hk => by
+      rw [offset_add]; exact kept _ (by omega))).trans (hlimbs i h)
+
+/-- A natural number of 2^63 or more arrives as an object. `nat_limbs` hands the arithmetic its limbs: given
+room for an array that shares no byte with the object, where making the room left the object alone, it
+leaves there an array holding the object's limbs and changes nothing outside that room. -/
+theorem natLimbs_object (outside : Outside) (extra : Nat) (o array : UInt64) (limbs : Runtime.Big.Limbs)
+    (s s' : State) (pointer : o &&& 1 = 0) (holds : ObjectOf s.memory o 0 limbs)
+    (small : limbs.size < 4294967296) (nozero : Runtime.Big.Trimmed limbs)
+    (big : 9223372036854775808 ≤ Runtime.Big.value limbs)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * limbs.size)] s = .ok (array, s'))
+    (kept : ∀ j, j < 16 + 4 * limbs.size → s'.memory (o + UInt64.ofNat j) = s.memory (o + UInt64.ofNat j))
+    (apart : ∀ k, k < 24 + 8 * limbs.size → ∀ j, j < 16 + 4 * limbs.size →
+      array + UInt64.ofNat k ≠ o + UInt64.ofNat j) :
+    ∃ memory,
+      program.call outside (limbs.size + extra + 20) "nat_limbs" [o] s
+        = .ok (.gave array, { s' with memory := memory })
+      ∧ ArrayOf memory array limbs
+      ∧ ∀ q, (∀ k, k < 24 + 8 * limbs.size → array + UInt64.ofNat k ≠ q) → memory q = s'.memory q := by
+  have vlt := Runtime.Big.value_lt_pow limbs
+  have size2 : 2 ≤ limbs.size := by
+    have : limbs.size = 0 ∨ limbs.size = 1 ∨ 2 ≤ limbs.size := by omega
+    rcases this with e | e | e
+    · rw [e, Nat.pow_zero] at vlt; omega
+    · rw [e, Nat.pow_one] at vlt; omega
+    · exact e
+  have topd : Runtime.Big.digit limbs (limbs.size - 1) ≠ 0 := nozero.resolve_left (by omega)
+  have after := object_kept s.memory s'.memory o 0 limbs holds kept
+  obtain ⟨memory, run, array_, frame⟩ := limbsOfObject_array outside extra o array limbs s s' small alloc
+    after.2.2.2 apart
+  refine ⟨memory, ?_, array_, frame⟩
+  obtain ⟨lc, hlc⟩ := runAll_of_call program outside _ "checked" checked _ s _ _ find_checked
+    (checked_runs outside (limbs.size + extra + 11) o 0 limbs s holds small topd (by decide))
+  obtain ⟨lo, hlo⟩ := runAll_of_call program outside _ "limbs_of_object" limbsOfObject _ s _ _
+    find_limbsOfObject run
+  have hneg := holds.2.1
+  have r1 : readBytes s.memory (o + 16 + 4) 4 = .ok (limbs[1]'(by omega)).toUInt64 := by
+    rw [UInt64.add_assoc]; exact holds.2.2.2 1 (by omega)
+  have ge2 : (2 : UInt64) ≤ UInt64.ofNat limbs.size := by
+    rw [UInt64.le_iff_toNat_le]
+    simp only [UInt64.toNat_ofNat', show (2 : UInt64).toNat = 2 from rfl]
+    omega
+  have third : ((if UInt64.ofNat limbs.size = 2 then (1 : UInt64) else 0)
+      &&& (if (limbs[1]'(by omega)).toUInt64 < 2147483648 then 1 else 0)) = 0 := by
+    by_cases c2 : UInt64.ofNat limbs.size = 2
+    · have e : limbs.size = 2 := by
+        have := congrArg UInt64.toNat c2
+        simp only [UInt64.toNat_ofNat', show (2 : UInt64).toNat = 2 from rfl] at this
+        omega
+      have ls := Runtime.Big.lower_size limbs
+      rw [e] at ls
+      have v2 : Runtime.Big.value limbs
+          = (limbs[0]'(by omega)).toNat + 4294967296 * (limbs[1]'(by omega)).toNat := by
+        rw [← ls]
+        simp [Runtime.Big.lower, Runtime.Big.digit, Array.getD, show 1 < limbs.size by omega,
+          show 0 < limbs.size by omega]
+      have h1 : ¬ (limbs[1]'(by omega)).toUInt64 < 2147483648 := by
+        rw [UInt64.lt_iff_toNat_lt]
+        simp only [UInt32.toNat_toUInt64, show (2147483648 : UInt64).toNat = 2147483648 from rfl]
+        have := (limbs[0]'(by omega)).toNat_lt
+        omega
+      simp [h1]
+    · simp [c2]
+  generalize UInt64.ofNat limbs.size = cw at hlc hlo ge2 third
+  simp [Program.call, find_natLimbs, find_checked, find_limbsOfObject, natLimbs, runAll, Stmt.run, Expr.run, Op.run,
+    bind, put, isWord, negativeOf, objectLimb, Number.top, Expr.ne, Expr.and, Expr.or, Expr.eq, Expr.lt, pointer, hlc]
+  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hneg, r1, ge2, third, hlo]
+
+/-- `int_sign` of an object is the sign it holds. -/
+theorem intSign_object (outside : Outside) (fuel : Nat) (o negative : UInt64) (limbs : Runtime.Big.Limbs)
+    (s : State) (pointer : o &&& 1 = 0) (holds : ObjectOf s.memory o negative limbs) :
+    program.call outside (fuel + 4) "int_sign" [o] s = .ok (.gave negative, s) := by
+  have hneg := holds.2.1
+  simp [Program.call, find_intSign, intSign, runAll, Stmt.run, Expr.run, Op.run, bind, put, isWord, negativeOf,
+    Expr.ne, Expr.and, Expr.shr, pointer, hneg]
+  rfl
+
+/-- An integer outside the range a tagged word holds arrives as an object. `int_limbs` hands the arithmetic
+its limbs, on the same terms as `nat_limbs` does for a natural number. -/
+theorem intLimbs_object (outside : Outside) (extra : Nat) (o array negative : UInt64)
+    (limbs : Runtime.Big.Limbs) (s s' : State) (pointer : o &&& 1 = 0)
+    (holds : ObjectOf s.memory o negative limbs) (small : limbs.size < 4294967296)
+    (nozero : Runtime.Big.Trimmed limbs) (sign : negative ≤ 1)
+    (range : withSign negative (Runtime.Big.value limbs) < -2147483648
+      ∨ 2147483648 ≤ withSign negative (Runtime.Big.value limbs))
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * limbs.size)] s = .ok (array, s'))
+    (kept : ∀ j, j < 16 + 4 * limbs.size → s'.memory (o + UInt64.ofNat j) = s.memory (o + UInt64.ofNat j))
+    (apart : ∀ k, k < 24 + 8 * limbs.size → ∀ j, j < 16 + 4 * limbs.size →
+      array + UInt64.ofNat k ≠ o + UInt64.ofNat j) :
+    ∃ memory,
+      program.call outside (limbs.size + extra + 19) "int_limbs" [o] s
+        = .ok (.gave array, { s' with memory := memory })
+      ∧ ArrayOf memory array limbs
+      ∧ ∀ q, (∀ k, k < 24 + 8 * limbs.size → array + UInt64.ofNat k ≠ q) → memory q = s'.memory q := by
+  have vbig : 2147483648 ≤ Runtime.Big.value limbs := by
+    by_cases z : negative = 0 <;> simp [withSign, z] at range <;> omega
+  have vlt := Runtime.Big.value_lt_pow limbs
+  have size1 : 1 ≤ limbs.size := by
+    refine Nat.pos_of_ne_zero (fun e => ?_)
+    rw [e, Nat.pow_zero] at vlt
+    omega
+  have topd : Runtime.Big.digit limbs (limbs.size - 1) ≠ 0 := nozero.resolve_left (by omega)
+  have after := object_kept s.memory s'.memory o negative limbs holds kept
+  obtain ⟨memory, run, array_, frame⟩ := limbsOfObject_array outside extra o array limbs s s' small alloc
+    after.2.2.2 apart
+  refine ⟨memory, ?_, array_, frame⟩
+  obtain ⟨lc, hlc⟩ := runAll_of_call program outside _ "checked" checked _ s _ _ find_checked
+    (checked_runs outside (limbs.size + extra + 10) o negative limbs s holds small topd sign)
+  obtain ⟨lo, hlo⟩ := runAll_of_call program outside _ "limbs_of_object" limbsOfObject _ s _ _
+    find_limbsOfObject run
+  have hneg := holds.2.1
+  have r0 : readBytes s.memory (o + 16) 4 = .ok (limbs[0]'(by omega)).toUInt64 := holds.2.2.2 0 (by omega)
+  by_cases one : limbs.size = 1
+  · have c1 : UInt64.ofNat limbs.size = 1 := by rw [one]; rfl
+    have ls := Runtime.Big.lower_size limbs
+    rw [one] at ls
+    have v1 : Runtime.Big.value limbs = (limbs[0]'(by omega)).toNat := by
+      rw [← ls]
+      simp [Runtime.Big.lower, Runtime.Big.digit, Array.getD, show 0 < limbs.size by omega]
+    have h1 : (2147483648 : UInt64) ≤ (limbs[0]'(by omega)).toUInt64 := by
+      rw [UInt64.le_iff_toNat_le]
+      simp only [UInt32.toNat_toUInt64, show (2147483648 : UInt64).toNat = 2147483648 from rfl]
+      omega
+    rw [c1] at hlc hlo
+    by_cases z : negative = 0
+    · simp [Program.call, find_intLimbs, find_checked, find_limbsOfObject, intLimbs, runAll, Stmt.run, Expr.run,
+        Op.run, bind, put, isWord, negativeOf, objectLimb, Number.top, Expr.ne, Expr.and, Expr.or, Expr.eq, Expr.lt,
+        pointer, hlc]
+      simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hneg, r0, h1, z, hlo]
+    · have far : (limbs[0]'(by omega)).toUInt64 ≠ 2147483648 := by
+        intro e
+        have := congrArg UInt64.toNat e
+        simp only [UInt32.toNat_toUInt64, show (2147483648 : UInt64).toNat = 2147483648 from rfl] at this
+        simp [withSign, z] at range
+        omega
+      simp [Program.call, find_intLimbs, find_checked, find_limbsOfObject, intLimbs, runAll, Stmt.run, Expr.run,
+        Op.run, bind, put, isWord, negativeOf, objectLimb, Number.top, Expr.ne, Expr.and, Expr.or, Expr.eq, Expr.lt,
+        pointer, hlc]
+      simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hneg, r0, h1, z, far, hlo]
+  · have cn : UInt64.ofNat limbs.size ≠ 1 := by
+      intro e
+      have := congrArg UInt64.toNat e
+      simp only [UInt64.toNat_ofNat', show (1 : UInt64).toNat = 1 from rfl] at this
+      omega
+    generalize UInt64.ofNat limbs.size = cw at hlc hlo cn
+    simp [Program.call, find_intLimbs, find_checked, find_limbsOfObject, intLimbs, runAll, Stmt.run, Expr.run,
+      Op.run, bind, put, isWord, negativeOf, objectLimb, Number.top, Expr.ne, Expr.and, Expr.or, Expr.eq, Expr.lt,
+      pointer, hlc]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, cn, hlo]
+
+/-! ## Making an object of an answer -/
+
+theorem find_bigNew : program.functions.find? (fun f => f.name == "big_new") = some bigNew := rfl
+
+/-- The header of a number with one reference. -/
+def numberHeader : UInt64 := UInt64.ofNat (1 + numberKind * 2 ^ 56)
+
+/-- The loop in `big_new`, under a name of its own. -/
+def fillLoop (p : Program) (outside : Outside) (fuel : Nat) (s : State) (locals : Locals) :=
+  Stmt.run p outside fuel (.loop (Expr.lt "i" "count")
+    [.storePart 4 ("o" + 16 + "i" * 4) (limbAt "array" "i"), .set "i" ("i" + 1)]) s locals
+
+/-- The loop, from any limb on: it writes each of the array's limbs from there up to the count into the
+object, four bytes each, and nothing else. The object's room and the array share no byte. -/
+theorem fill_loop (p : Program) (outside : Outside) (o array : UInt64) (limbs : Runtime.Big.Limbs) (count : Nat)
+    (hcount : count ≤ limbs.size) (small : limbs.size < 4294967296)
+    (apart : ∀ k, k < 16 + 4 * count → ∀ j, j < 24 + 8 * limbs.size →
+      o + UInt64.ofNat k ≠ array + UInt64.ofNat j) :
+    ∀ (remaining i : Nat) (s : State) (locals : Locals) (extra : Nat), i + remaining = count →
+      locals "i" = some (UInt64.ofNat i) → locals "count" = some (UInt64.ofNat count) →
+      locals "o" = some o → locals "array" = some array →
+      (∀ j, (h : j < limbs.size) →
+        readBytes s.memory (array + UInt64.ofNat (24 + 8 * j)) 8 = .ok (boxed limbs[j].toUInt64)) →
+      ∃ memory after,
+        fillLoop p outside (remaining + extra + 6) s locals = .ok (.on, { s with memory := memory }, after)
+        ∧ after "o" = some o
+        ∧ (∀ j, (h : j < limbs.size) → i ≤ j → j < count →
+            readBytes memory (o + UInt64.ofNat (16 + 4 * j)) 4 = .ok limbs[j].toUInt64)
+        ∧ (∀ x n, x + n ≤ 16 + 4 * i →
+            readBytes memory (o + UInt64.ofNat x) n = readBytes s.memory (o + UInt64.ofNat x) n)
+        ∧ ∀ q, (∀ k, k < 16 + 4 * count → o + UInt64.ofNat k ≠ q) → memory q = s.memory q := by
+  intro remaining
+  induction remaining with
+  | zero =>
+    intro i s locals extra hsum hi hc ho harray helements
+    have e : i = count := by omega
+    subst e
+    refine ⟨s.memory, locals, ?_, ho, fun j h hij hjc => absurd hjc (by omega), fun _ _ _ => rfl, fun _ _ => rfl⟩
+    simp [fillLoop, Stmt.run, Expr.run, Op.run, Expr.lt, hi, hc]
+    rfl
+  | succ remaining ih =>
+    intro i s locals extra hsum hi hc ho harray helements
+    have ilt : i < limbs.size := by omega
+    have limb := helements i ilt
+    have eo := limb_address o i
+    have lt : UInt64.ofNat i < UInt64.ofNat count := by
+      rw [UInt64.lt_iff_toNat_lt]
+      simp only [UInt64.toNat_ofNat']
+      omega
+    have next : UInt64.ofNat i + 1 = UInt64.ofNat (i + 1) := by rw [UInt64.ofNat_add]; rfl
+    rw [← element_address] at limb
+    generalize hiw : UInt64.ofNat i = iw at hi limb lt next eo
+    generalize hcw : UInt64.ofNat count = cw at hc lt
+    obtain ⟨memory, after, hrun, hafter, hlimbs, hbelow, hframe⟩ := ih (i + 1)
+      { s with memory := writeBytes s.memory (o + 16 + iw * 4) limbs[i].toUInt64 4 }
+      (put locals "i" (some (iw + 1))) extra (by omega) (by rw [← next]; simp [put])
+      (by rw [hcw]; simp [put, hc]) (by simp [put, ho]) (by simp [put, harray])
+      (fun j h => by
+        rw [eo]
+        exact (read_across _ o array _ (16 + 4 * i) 4 (16 + 4 * count) (24 + 8 * j) 8
+          (24 + 8 * limbs.size) (by omega) (by omega) apart).trans (helements j h))
+    refine ⟨memory, after, ?_, hafter, ?_, ?_, ?_⟩
+    · unfold fillLoop at hrun ⊢
+      rw [show remaining + 1 + extra + 6 = (remaining + extra + 6) + 1 from by omega, Mini.Alloc.loop_turn]
+      generalize hround : Stmt.run p outside (remaining + extra + 6) (.loop (Expr.lt "i" "count")
+        [.storePart 4 ("o" + 16 + "i" * 4) (limbAt "array" "i"), .set "i" ("i" + 1)]) = round at hrun ⊢
+      simp [Stmt.run, runAll, Expr.run, Op.run, Expr.lt, Expr.shr, limbAt, unbox, hi, hc, ho, harray, limb, lt]
+      simp [Bind.bind, Except.bind, unbox_boxed, hrun]
+    · intro j h hij hjc
+      by_cases e : j = i
+      · subst e
+        exact (hbelow (16 + 4 * j) 4 (by omega)).trans (by
+          rw [eo]
+          exact read_part _ _ _ (by simp; exact limbs[j].toNat_lt))
+      · exact hlimbs j h (by omega) hjc
+    · intro x n hxn
+      exact (hbelow x n (by omega)).trans (by
+        rw [eo]
+        exact read_beside _ o _ (16 + 4 * i) 4 x n (by omega) (by omega) (by omega))
+    · intro q hq
+      exact (hframe q hq).trans (by
+        rw [eo]
+        exact write_within _ o _ q (16 + 4 * i) 4 (16 + 4 * count) (by omega) hq)
+
+/-- `big_new` makes the object for a sign and the first `count` limbs of an array: given room that shares no
+byte with the array, it leaves there an object holding that sign and those limbs, does nothing C leaves
+open, and changes nothing outside that room. -/
+theorem bigNew_object (outside : Outside) (extra : Nat) (negative array o : UInt64) (limbs : Runtime.Big.Limbs)
+    (count : Nat) (s s' : State) (hcount : count ≤ limbs.size) (small : limbs.size < 4294967296)
+    (sign : negative ≤ 1)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * count)] s = .ok (o, s'))
+    (elements : ∀ j, (h : j < limbs.size) →
+      readBytes s'.memory (array + UInt64.ofNat (24 + 8 * j)) 8 = .ok (boxed limbs[j].toUInt64))
+    (apart : ∀ k, k < 16 + 4 * count → ∀ j, j < 24 + 8 * limbs.size →
+      o + UInt64.ofNat k ≠ array + UInt64.ofNat j) :
+    ∃ memory,
+      program.call outside (count + extra + 16) "big_new" [negative, array, UInt64.ofNat count] s
+        = .ok (.gave o, { s' with memory := memory })
+      ∧ ObjectOf memory o negative (limbs.extract 0 count)
+      ∧ ∀ q, (∀ k, k < 16 + 4 * count → o + UInt64.ofNat k ≠ q) → memory q = s'.memory q := by
+  have room : (16 : UInt64) + UInt64.ofNat count * 4 = UInt64.ofNat (16 + 4 * count) := by
+    apply UInt64.toNat_inj.mp
+    simp only [UInt64.toNat_add, UInt64.toNat_mul, UInt64.toNat_ofNat', show (16 : UInt64).toNat = 16 from rfl,
+      show (4 : UInt64).toNat = 4 from rfl]
+    omega
+  rw [← room] at alloc
+  have fits : UInt64.ofNat count ≤ 4294967295 := by
+    rw [UInt64.le_iff_toNat_le]
+    simp only [UInt64.toNat_ofNat', show (4294967295 : UInt64).toNat = 4294967295 from rfl]
+    omega
+  have cnat : (UInt64.ofNat count).toNat < 4294967296 := by
+    simp only [UInt64.toNat_ofNat']
+    omega
+  have nnat : negative.toNat < 4294967296 := by
+    rw [UInt64.le_iff_toNat_le] at sign
+    have : (1 : UInt64).toNat = 1 := rfl
+    omega
+  generalize hcw : UInt64.ofNat count = cw at alloc fits cnat
+  generalize hlocals : bind (fun _ => none) ["negative", "array", "count"] [negative, array, cw] = locals
+  have lneg : locals "negative" = some negative := by rw [← hlocals]; simp [bind, put]
+  have larray : locals "array" = some array := by rw [← hlocals]; simp [bind, put]
+  have lcount : locals "count" = some cw := by rw [← hlocals]; simp [bind, put]
+  generalize hm : writeBytes (writeBytes (writeBytes s'.memory o numberHeader 8) (o + 8) negative 4) (o + 12) cw 4
+    = written
+  have outsideRoom : ∀ q, (∀ k, k < 16 + 4 * count → o + UInt64.ofNat k ≠ q) → written q = s'.memory q := by
+    intro q hq
+    rw [← hm]
+    exact (write_within _ o _ q 12 4 (16 + 4 * count) (by omega) hq).trans
+      ((write_within _ o _ q 8 4 (16 + 4 * count) (by omega) hq).trans
+        (writeBytes_other _ _ _ _ _ (fun k hk => hq k (by omega))))
+  have st0 : Stmt.run program outside (count + extra + 15) (.branch (Expr.lt low32 "count") [outOfMemory] []) s
+      locals = .ok (.on, s, locals) := by
+    simp [Stmt.run, runAll, Expr.run, Op.run, Expr.lt, low32, lcount, fits]
+    rfl
+  have st1 : Stmt.run program outside (count + extra + 14)
+      (.callOther (some "o") "lean_alloc_object" [16 + "count" * 4]) s locals
+      = .ok (.on, s', put locals "o" (some o)) := by
+    simp [Stmt.run, Expr.run, Op.run, lcount, alloc]
+    rfl
+  have st2 : Stmt.run program outside (count + extra + 13) (.store "o" (header numberKind)) s'
+      (put locals "o" (some o))
+      = .ok (.on, { s' with memory := writeBytes s'.memory o numberHeader 8 }, put locals "o" (some o)) := by
+    simp [Stmt.run, Expr.run, header, put]
+    rfl
+  have st3 : Stmt.run program outside (count + extra + 12) (.storePart 4 ("o" + 8) "negative")
+      { s' with memory := writeBytes s'.memory o numberHeader 8 } (put locals "o" (some o))
+      = .ok (.on, { s' with memory := writeBytes (writeBytes s'.memory o numberHeader 8) (o + 8) negative 4 },
+          put locals "o" (some o)) := by
+    simp [Stmt.run, Expr.run, Op.run, put, lneg]
+    rfl
+  have st4 : Stmt.run program outside (count + extra + 11) (.storePart 4 ("o" + 12) "count")
+      { s' with memory := writeBytes (writeBytes s'.memory o numberHeader 8) (o + 8) negative 4 }
+      (put locals "o" (some o))
+      = .ok (.on, { s' with memory := written }, put locals "o" (some o)) := by
+    rw [← hm]
+    simp [Stmt.run, Expr.run, Op.run, put, lcount]
+    rfl
+  have st5 : Stmt.run program outside (count + extra + 10) (.set "i" 0) { s' with memory := written }
+      (put locals "o" (some o))
+      = .ok (.on, { s' with memory := written }, put (put locals "o" (some o)) "i" (some 0)) := by
+    simp [Stmt.run, Expr.run]
+    rfl
+  obtain ⟨memory, after, hloop, hafter, hlimbs, hbelow, hframe⟩ := fill_loop program outside o array limbs count
+    hcount small apart count 0 { s' with memory := written } (put (put locals "o" (some o)) "i" (some 0))
+    (extra + 3) (by omega) (by simp [put]) (by rw [hcw]; simp [put, lcount]) (by simp [put])
+    (by simp [put, larray])
+    (fun j h => by
+      refine (readBytes_congr _ _ _ _ (fun i hi => ?_)).trans (elements j h)
+      refine outsideRoom _ (fun k hk => ?_)
+      rw [offset_add]
+      exact apart k hk _ (by omega))
+  have st7 : Stmt.run program outside (count + extra + 8) (.give "o") { s' with memory := memory } after
+      = .ok (.gave o, { s' with memory := memory }, after) := by
+    simp [Stmt.run, Expr.run, hafter]
+    rfl
+  have size : (limbs.extract 0 count).size = count := by simp; omega
+  refine ⟨memory, ?_, ⟨⟨numberHeader, ?_, by decide⟩, ?_, ?_, fun i h => ?_⟩, ?_⟩
+  · refine call_of_runAll program outside _ "big_new" bigNew _ s _ _ after find_bigNew ?_
+    show runAll program outside (count + extra + 15 + 1) [.branch (Expr.lt low32 "count") [outOfMemory] [],
+      .callOther (some "o") "lean_alloc_object" [16 + "count" * 4],
+      .store "o" (header numberKind),
+      .storePart 4 ("o" + 8) "negative",
+      .storePart 4 ("o" + 12) "count",
+      .set "i" 0,
+      .loop (Expr.lt "i" "count")
+        [.storePart 4 ("o" + 16 + "i" * 4) (limbAt "array" "i"), .set "i" ("i" + 1)],
+      .give "o"] s (bind (fun _ => none) ["negative", "array", "count"] [negative, array, cw]) = _
+    rw [hlocals]
+    exact (runAll_on _ _ _ _ _ _ _ _ _ st0).trans ((runAll_on _ _ (count + extra + 14) _ _ _ _ _ _ st1).trans
+      ((runAll_on _ _ (count + extra + 13) _ _ _ _ _ _ st2).trans
+        ((runAll_on _ _ (count + extra + 12) _ _ _ _ _ _ st3).trans
+          ((runAll_on _ _ (count + extra + 11) _ _ _ _ _ _ st4).trans
+            ((runAll_on _ _ (count + extra + 10) _ _ _ _ _ _ st5).trans
+              ((runAll_on _ _ (count + extra + 9) _ _ _ _ _ _ hloop).trans
+                (runAll_gave _ _ (count + extra + 8) _ _ _ _ _ _ _ st7)))))))
+  · have := hbelow 0 8 (by omega)
+    refine (by simpa using this : readBytes memory o 8 = readBytes written o 8).trans ?_
+    rw [← hm]
+    have h0 : readBytes (writeBytes (writeBytes (writeBytes s'.memory o numberHeader 8) (o + 8) negative 4)
+        (o + 12) cw 4) (o + UInt64.ofNat 0) 8 = .ok numberHeader :=
+      (read_beside _ o _ 12 4 0 8 (by omega) (by omega) (by omega)).trans
+        ((read_beside _ o _ 8 4 0 8 (by omega) (by omega) (by omega)).trans
+          (by simpa using readBytes_writeBytes_word s'.memory o numberHeader))
+    simpa using h0
+  · refine (hbelow 8 4 (by omega)).trans ?_
+    show readBytes written (o + UInt64.ofNat 8) 4 = _
+    rw [← hm]
+    exact (read_beside _ o _ 12 4 8 4 (by omega) (by omega) (by omega)).trans (read_part _ _ _ nnat)
+  · refine (hbelow 12 4 (by omega)).trans ?_
+    show readBytes written (o + UInt64.ofNat 12) 4 = _
+    rw [← hm, size, hcw]
+    exact read_part _ _ _ cnat
+  · rw [size] at h
+    have := hlimbs i (by omega) (Nat.zero_le _) h
+    simpa using this
+  · intro q hq
+    exact (hframe q hq).trans (outsideRoom q hq)
+
+/-! ## An answer too large for a tagged word -/
+
+/-- The first `n` limbs of an array without the zero limbs on top: what the object for an answer holds. -/
+def keptLimbs (limbs : Runtime.Big.Limbs) (n : Nat) : Runtime.Big.Limbs := limbs.extract 0 (trimCount limbs n)
+
+theorem keptLimbs_size (limbs : Runtime.Big.Limbs) (n : Nat) (hn : n ≤ limbs.size) :
+    (keptLimbs limbs n).size = trimCount limbs n := by
+  have := trimCount_le limbs n
+  simp [keptLimbs]
+  omega
+
+theorem keptLimbs_digit (limbs : Runtime.Big.Limbs) (n i : Nat) (hn : n ≤ limbs.size)
+    (hi : i < trimCount limbs n) : Runtime.Big.digit (keptLimbs limbs n) i = Runtime.Big.digit limbs i := by
+  have := trimCount_le limbs n
+  have inside : i < limbs.size := by omega
+  have within : i < min (trimCount limbs n) limbs.size := by omega
+  simp [Runtime.Big.digit, Array.getD, keptLimbs, inside, within]
+
+/-- They are the number in the first `n` limbs. -/
+theorem keptLimbs_value (limbs : Runtime.Big.Limbs) (n : Nat) (hn : n ≤ limbs.size) :
+    Runtime.Big.value (keptLimbs limbs n) = Runtime.Big.lower limbs n := by
+  rw [← Runtime.Big.lower_size, keptLimbs_size _ _ hn, lower_trimCount limbs n]
+  exact lower_congr _ _ _ (fun i hi => keptLimbs_digit limbs n i hn hi)
+
+/-- And the top one is not zero, the rule every object that leaves this program keeps. -/
+theorem keptLimbs_trimmed (limbs : Runtime.Big.Limbs) (n : Nat) (hn : n ≤ limbs.size) :
+    Runtime.Big.Trimmed (keptLimbs limbs n) := by
+  rw [Runtime.Big.Trimmed, keptLimbs_size _ _ hn]
+  cases h : trimCount limbs n with
+  | zero => exact Or.inl rfl
+  | succ m =>
+    refine Or.inr ?_
+    rw [Nat.add_sub_cancel, keptLimbs_digit limbs n m hn (by omega)]
+    exact trimCount_top limbs n m h
+
+/-- An array whose bytes an allocation left alone still holds its limbs. -/
+theorem elements_kept (memory memory' : UInt64 → Option UInt8) (array : UInt64) (limbs : Runtime.Big.Limbs)
+    (elements : ∀ j, (h : j < limbs.size) →
+      readBytes memory (array + UInt64.ofNat (24 + 8 * j)) 8 = .ok (boxed limbs[j].toUInt64))
+    (kept : ∀ j, j < 24 + 8 * limbs.size → memory' (array + UInt64.ofNat j) = memory (array + UInt64.ofNat j)) :
+    ∀ j, (h : j < limbs.size) →
+      readBytes memory' (array + UInt64.ofNat (24 + 8 * j)) 8 = .ok (boxed limbs[j].toUInt64) :=
+  fun j h => (readBytes_congr _ _ _ _ (fun k hk => by
+    rw [offset_add]; exact kept _ (by omega))).trans (elements j h)
+
+theorem word_ne (c k : Nat) (hc : c < 4294967296) (hk : k < 4294967296) (h : c ≠ k) :
+    UInt64.ofNat c ≠ UInt64.ofNat k := by
+  intro e
+  have := congrArg UInt64.toNat e
+  simp only [UInt64.toNat_ofNat'] at this
+  omega
+
+/-- `nat_result` reads an answer rightly where the answer is 2^63 or more: from an array of limbs in memory,
+given room that shares no byte with the array, where making the room left the array alone, it makes there an
+object holding the array's limbs without the zero ones on top (`keptLimbs`, whose number is the array's and
+whose top limb is not zero), and changes nothing outside that room. -/
+theorem natResult_object (outside : Outside) (array o : UInt64) (limbs : Runtime.Big.Limbs) (s s' : State)
+    (extra : Nat) (small : limbs.size < 4294967296)
+    (elements : ∀ j, (h : j < limbs.size) →
+      readBytes s.memory (array + UInt64.ofNat (24 + 8 * j)) 8 = .ok (boxed limbs[j].toUInt64))
+    (big : 9223372036854775808 ≤ Runtime.Big.value limbs)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * trimCount limbs limbs.size)] s = .ok (o, s'))
+    (kept : ∀ j, j < 24 + 8 * limbs.size → s'.memory (array + UInt64.ofNat j) = s.memory (array + UInt64.ofNat j))
+    (apart : ∀ k, k < 16 + 4 * trimCount limbs limbs.size → ∀ j, j < 24 + 8 * limbs.size →
+      o + UInt64.ofNat k ≠ array + UInt64.ofNat j) :
+    ∃ memory,
+      program.call outside (limbs.size + extra + 22) "nat_result" [array, UInt64.ofNat limbs.size] s
+        = .ok (.gave o, { s' with memory := memory })
+      ∧ ObjectOf memory o 0 (keptLimbs limbs limbs.size)
+      ∧ ∀ q, (∀ k, k < 16 + 4 * trimCount limbs limbs.size → o + UInt64.ofNat k ≠ q) →
+          memory q = s'.memory q := by
+  have run := trimmed_runs outside array limbs s (by omega) elements limbs.size (extra + 12) (Nat.le_refl _)
+  rw [show limbs.size + (extra + 12) + 8 = limbs.size + extra + 20 from by omega] at run
+  obtain ⟨l, hl⟩ := runAll_of_call program outside _ "trimmed" trimmed _ s _ _ find_trimmed run
+  have hv := value_trimCount limbs limbs.size (Runtime.Big.tail_of_le limbs _ (Nat.le_refl _))
+  have hle := trimCount_le limbs limbs.size
+  generalize hc : trimCount limbs limbs.size = c at hl hv hle alloc apart
+  have lowlt := Runtime.Big.lower_lt limbs c
+  have c2 : 2 ≤ c := by
+    have : c = 0 ∨ c = 1 ∨ 2 ≤ c := by omega
+    rcases this with e | e | e
+    · subst e; rw [Nat.pow_zero] at lowlt; omega
+    · subst e; rw [Nat.pow_one] at lowlt; omega
+    · exact e
+  obtain ⟨memory, made, object, frame⟩ := bigNew_object outside (limbs.size - c + extra) 0 array o limbs c s s'
+    hle small (by decide) alloc (elements_kept _ _ _ _ elements kept) apart
+  rw [show c + (limbs.size - c + extra) + 16 = limbs.size + extra + 16 from by omega] at made
+  obtain ⟨l2, hl2⟩ := runAll_of_call program outside _ "big_new" bigNew _ s _ _ find_bigNew made
+  refine ⟨memory, ?_, by rw [keptLimbs, hc]; exact object, frame⟩
+  have r1 : readBytes s.memory (array + 24 + 8) 8 = .ok (boxed (limbs[1]'(by omega)).toUInt64) := by
+    rw [UInt64.add_assoc]; exact elements 1 (by omega)
+  have n0 : UInt64.ofNat c ≠ 0 := word_ne c 0 (by omega) (by omega) (by omega)
+  have n1 : UInt64.ofNat c ≠ 1 := word_ne c 1 (by omega) (by omega) (by omega)
+  have third : ((if UInt64.ofNat c = 2 then (1 : UInt64) else 0)
+      &&& (if (limbs[1]'(by omega)).toUInt64 < 2147483648 then 1 else 0)) = 0 := by
+    by_cases e2 : UInt64.ofNat c = 2
+    · have e : c = 2 := by
+        have := congrArg UInt64.toNat e2
+        simp only [UInt64.toNat_ofNat', show (2 : UInt64).toNat = 2 from rfl] at this
+        omega
+      rw [e] at hv
+      have v2 : Runtime.Big.value limbs
+          = (limbs[0]'(by omega)).toNat + 4294967296 * (limbs[1]'(by omega)).toNat := by
+        rw [hv]
+        simp [Runtime.Big.lower, Runtime.Big.digit, Array.getD, show 1 < limbs.size by omega,
+          show 0 < limbs.size by omega]
+      have h1 : ¬ (limbs[1]'(by omega)).toUInt64 < 2147483648 := by
+        rw [UInt64.lt_iff_toNat_lt]
+        simp only [UInt32.toNat_toUInt64, show (2147483648 : UInt64).toNat = 2147483648 from rfl]
+        have := (limbs[0]'(by omega)).toNat_lt
+        omega
+      simp [h1]
+    · simp [e2]
+  generalize UInt64.ofNat c = cw at hl hl2 n0 n1 third
+  simp [Program.call, find_natResult, find_trimmed, find_bigNew, natResult, runAll, Stmt.run, Expr.run, Op.run, bind,
+    put, hl, box, Expr.eq, Expr.or, Expr.shl]
+  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, Expr.run, Op.run, limbAt,
+    unbox, Expr.shr, Expr.and, Expr.lt, Number.top, r1, unbox_boxed, n0, n1, third, hl2]
+
+/-- `int_result` reads an answer rightly where the answer is outside the range a tagged word holds: from a
+sign and the first `n` limbs of an array, given room on the same terms as `nat_result`, it makes there an
+object holding that sign and those limbs without the zero ones on top, and changes nothing outside that
+room. -/
+theorem intResult_object (outside : Outside) (array negative o : UInt64) (limbs : Runtime.Big.Limbs)
+    (s s' : State) (n extra : Nat) (small : limbs.size < 4294967296)
+    (elements : ∀ j, (h : j < limbs.size) →
+      readBytes s.memory (array + UInt64.ofNat (24 + 8 * j)) 8 = .ok (boxed limbs[j].toUInt64))
+    (hn : n ≤ limbs.size) (sign : negative ≤ 1)
+    (range : withSign negative (Runtime.Big.lower limbs n) < -2147483648
+      ∨ 2147483648 ≤ withSign negative (Runtime.Big.lower limbs n))
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * trimCount limbs n)] s = .ok (o, s'))
+    (kept : ∀ j, j < 24 + 8 * limbs.size → s'.memory (array + UInt64.ofNat j) = s.memory (array + UInt64.ofNat j))
+    (apart : ∀ k, k < 16 + 4 * trimCount limbs n → ∀ j, j < 24 + 8 * limbs.size →
+      o + UInt64.ofNat k ≠ array + UInt64.ofNat j) :
+    ∃ memory,
+      program.call outside (n + extra + 21) "int_result" [negative, array, UInt64.ofNat n] s
+        = .ok (.gave o, { s' with memory := memory })
+      ∧ ObjectOf memory o negative (keptLimbs limbs n)
+      ∧ ∀ q, (∀ k, k < 16 + 4 * trimCount limbs n → o + UInt64.ofNat k ≠ q) → memory q = s'.memory q := by
+  have run := trimmed_runs outside array limbs s (by omega) elements n (extra + 11) hn
+  rw [show n + (extra + 11) + 8 = n + extra + 19 from by omega] at run
+  obtain ⟨l, hl⟩ := runAll_of_call program outside _ "trimmed" trimmed _ s _ _ find_trimmed run
+  have hv := lower_trimCount limbs n
+  have hle := trimCount_le limbs n
+  have vbig : 2147483648 ≤ Runtime.Big.lower limbs n := by
+    by_cases z : negative = 0 <;> simp [withSign, z] at range <;> omega
+  generalize hc : trimCount limbs n = c at hl hv hle alloc apart
+  have c1 : 1 ≤ c := by
+    refine Nat.pos_of_ne_zero (fun e => ?_)
+    subst e
+    have : Runtime.Big.lower limbs 0 = 0 := rfl
+    omega
+  obtain ⟨memory, made, object, frame⟩ := bigNew_object outside (n - c + extra) negative array o limbs c s s'
+    (by omega) small sign alloc (elements_kept _ _ _ _ elements kept) apart
+  rw [show c + (n - c + extra) + 16 = n + extra + 16 from by omega] at made
+  obtain ⟨l2, hl2⟩ := runAll_of_call program outside _ "big_new" bigNew _ s _ _ find_bigNew made
+  refine ⟨memory, ?_, by rw [keptLimbs, hc]; exact object, frame⟩
+  by_cases one : c = 1
+  · subst one
+    have hl1 : runAll program outside (n + extra + 19) trimmed.body s
+        (bind (fun _ => none) trimmed.parameters [array, UInt64.ofNat n]) = .ok (.gave 1, s, l) := hl
+    have hl2' : runAll program outside (n + extra + 16) bigNew.body s
+        (bind (fun _ => none) bigNew.parameters [negative, array, 1])
+        = .ok (.gave o, { s' with memory := memory }, l2) := hl2
+    have r0 : readBytes s.memory (array + 24) 8 = .ok (boxed (limbs[0]'(by omega)).toUInt64) :=
+      elements 0 (by omega)
+    have v1 : Runtime.Big.lower limbs n = (limbs[0]'(by omega)).toNat := by
+      rw [hv]; simp [Runtime.Big.lower, Runtime.Big.digit, Array.getD, show 0 < limbs.size by omega]
+    rw [v1] at range
+    by_cases z : negative = 0
+    · subst z
+      have nlt : ¬ (limbs[0]'(by omega)).toUInt64 < 2147483648 := by
+        rw [UInt64.lt_iff_toNat_lt]
+        simp only [UInt32.toNat_toUInt64, show (2147483648 : UInt64).toNat = 2147483648 from rfl]
+        simp [withSign] at range
+        omega
+      simp [Program.call, find_intResult, find_trimmed, find_bigNew, intResult, runAll, Stmt.run, Expr.run, Op.run,
+        bind, put, hl1, box, Expr.eq, Expr.or, Expr.shl]
+      simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, Expr.run, Op.run, limbAt,
+        unbox, Expr.shr, Expr.and, Expr.lt, Expr.le, Expr.ne, Number.top, r0, unbox_boxed, nlt, hl2']
+    · have nle : ¬ (limbs[0]'(by omega)).toUInt64 ≤ 2147483648 := by
+        rw [UInt64.le_iff_toNat_le]
+        simp only [UInt32.toNat_toUInt64, show (2147483648 : UInt64).toNat = 2147483648 from rfl]
+        simp [withSign, z] at range
+        omega
+      simp [Program.call, find_intResult, find_trimmed, find_bigNew, intResult, runAll, Stmt.run, Expr.run, Op.run,
+        bind, put, hl1, box, Expr.eq, Expr.or, Expr.shl]
+      simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, Expr.run, Op.run, limbAt,
+        unbox, Expr.shr, Expr.and, Expr.lt, Expr.le, Expr.ne, Number.top, r0, unbox_boxed, nle, z, hl2']
+  · have n0 : UInt64.ofNat c ≠ 0 := word_ne c 0 (by omega) (by omega) (by omega)
+    have n1 : UInt64.ofNat c ≠ 1 := word_ne c 1 (by omega) (by omega) one
+    generalize UInt64.ofNat c = cw at hl hl2 n0 n1
+    simp [Program.call, find_intResult, find_trimmed, find_bigNew, intResult, runAll, Stmt.run, Expr.run, Op.run,
+      bind, put, hl, box, Expr.eq, Expr.or, Expr.shl]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, n0, n1, hl2]
+
+/-- `nat_from` where the answer is 2^63 or more: it gives back the object `nat_result` makes, then gives the
+array up. The state it ends in is the one `lean_dec` leaves from a state in which the object is right; what
+giving up does is the allocator's. -/
+theorem natFrom_object (outside : Outside) (array o : UInt64) (limbs : Runtime.Big.Limbs) (s s' : State)
+    (extra : Nat) (small : limbs.size < 4294967296) (holds : ArrayOf s.memory array limbs)
+    (big : 9223372036854775808 ≤ Runtime.Big.value limbs)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * trimCount limbs limbs.size)] s = .ok (o, s'))
+    (kept : ∀ j, j < 24 + 8 * limbs.size → s'.memory (array + UInt64.ofNat j) = s.memory (array + UInt64.ofNat j))
+    (apart : ∀ k, k < 16 + 4 * trimCount limbs limbs.size → ∀ j, j < 24 + 8 * limbs.size →
+      o + UInt64.ofNat k ≠ array + UInt64.ofNat j)
+    (dec : ∀ t : State, ∃ r, outside "lean_dec" [array] t = .ok r) :
+    ∃ memory unused after,
+      program.call outside (limbs.size + extra + 24) "nat_from" [array] s = .ok (.gave o, after)
+      ∧ outside "lean_dec" [array] { s' with memory := memory } = .ok (unused, after)
+      ∧ ObjectOf memory o 0 (keptLimbs limbs limbs.size)
+      ∧ ∀ q, (∀ k, k < 16 + 4 * trimCount limbs limbs.size → o + UInt64.ofNat k ≠ q) →
+          memory q = s'.memory q := by
+  obtain ⟨memory, run, object, frame⟩ := natResult_object outside array o limbs s s' extra small holds.2.2 big
+    alloc kept apart
+  obtain ⟨⟨unused, after⟩, hdec⟩ := dec { s' with memory := memory }
+  obtain ⟨l, hl⟩ := runAll_of_call program outside _ "nat_result" natResult _ s _ _ find_natResult run
+  have size := holds.2.1
+  refine ⟨memory, unused, after, ?_, hdec, object, frame⟩
+  simp [Program.call, find_natFrom, find_natResult, natFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+    sizeOf, drop, size]
+  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hl, hdec]
+
+/-- `int_from` where the answer is outside the range a tagged word holds: it gives back the object
+`int_result` makes, holding the sign and the limbs of the integer in the array (`signedValue`), then gives
+the array up. -/
+theorem intFrom_object (outside : Outside) (array o : UInt64) (limbs : Runtime.Big.Limbs) (s s' : State)
+    (n extra : Nat) (small : limbs.size < 4294967296) (holds : ArrayOf s.memory array limbs)
+    (size : limbs.size = n + 1)
+    (range : Runtime.Big.signedValue limbs < -2147483648 ∨ 2147483648 ≤ Runtime.Big.signedValue limbs)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * trimCount limbs n)] s = .ok (o, s'))
+    (kept : ∀ j, j < 24 + 8 * limbs.size → s'.memory (array + UInt64.ofNat j) = s.memory (array + UInt64.ofNat j))
+    (apart : ∀ k, k < 16 + 4 * trimCount limbs n → ∀ j, j < 24 + 8 * limbs.size →
+      o + UInt64.ofNat k ≠ array + UInt64.ofNat j)
+    (dec : ∀ t : State, ∃ r, outside "lean_dec" [array] t = .ok r) :
+    ∃ memory unused after negative,
+      program.call outside (n + extra + 25) "int_from" [array] s = .ok (.gave o, after)
+      ∧ outside "lean_dec" [array] { s' with memory := memory } = .ok (unused, after)
+      ∧ ObjectOf memory o negative (keptLimbs limbs n)
+      ∧ withSign negative (Runtime.Big.value (keptLimbs limbs n)) = Runtime.Big.signedValue limbs
+      ∧ ∀ q, (∀ k, k < 16 + 4 * trimCount limbs n → o + UInt64.ofNat k ≠ q) → memory q = s'.memory q := by
+  have hsize := holds.2.1
+  rw [size] at hsize
+  have read := holds.2.2 n (by omega)
+  rw [← below_count] at read
+  have pop : Runtime.Big.value limbs.pop = Runtime.Big.lower limbs n := by
+    rw [value_pop_lower, size, Nat.add_sub_cancel]
+  have keptv := keptLimbs_value limbs n (by omega)
+  generalize hc : UInt64.ofNat (n + 1) = c at hsize read
+  have cpos : c ≠ 0 := by
+    intro z
+    have := congrArg UInt64.toNat (hc.trans z)
+    simp only [UInt64.toNat_ofNat', show (0 : UInt64).toNat = 0 from rfl] at this
+    omega
+  have cless : UInt64.ofNat n = c - 1 := by
+    rw [← hc]
+    apply UInt64.toNat_inj.mp
+    simp only [UInt64.toNat_sub, UInt64.toNat_ofNat', show (1 : UInt64).toNat = 1 from rfl]
+    omega
+  by_cases top : limbs[n]'(by omega) = 0
+  · have sv : Runtime.Big.signedValue limbs = withSign 0 (Runtime.Big.lower limbs n) := by
+      simp [Runtime.Big.signedValue, Runtime.Big.intOf, size, Array.getD, top, pop, withSign]
+    rw [sv] at range ⊢
+    obtain ⟨memory, run, object, frame⟩ := intResult_object outside array 0 o limbs s s' n extra small holds.2.2
+      (by omega) (by decide) range alloc kept apart
+    obtain ⟨⟨unused, after⟩, hdec⟩ := dec { s' with memory := memory }
+    obtain ⟨l, hl⟩ := runAll_of_call program outside _ "int_result" intResult _ s _ _ find_intResult run
+    rw [cless] at hl
+    have hz : (limbs[n]'(by omega)).toUInt64 = 0 := by rw [top]; rfl
+    refine ⟨memory, unused, after, 0, ?_, hdec, object, by rw [keptv], frame⟩
+    simp [Program.call, find_intFrom, find_intResult, intFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+      sizeOf, drop, limbAt, unbox, Expr.eq, Expr.ne, Expr.shr, hsize]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, cpos, read, hz, hl, hdec,
+      show boxed 0 >>> 1 = 0 from by decide]
+  · have nz := limb_nonzero _ top
+    have sv : Runtime.Big.signedValue limbs = withSign 1 (Runtime.Big.lower limbs n) := by
+      simp [Runtime.Big.signedValue, Runtime.Big.intOf, size, Array.getD, top, pop, withSign]
+    rw [sv] at range ⊢
+    obtain ⟨memory, run, object, frame⟩ := intResult_object outside array 1 o limbs s s' n extra small holds.2.2
+      (by omega) (by decide) range alloc kept apart
+    obtain ⟨⟨unused, after⟩, hdec⟩ := dec { s' with memory := memory }
+    obtain ⟨l, hl⟩ := runAll_of_call program outside _ "int_result" intResult _ s _ _ find_intResult run
+    rw [cless] at hl
+    refine ⟨memory, unused, after, 1, ?_, hdec, object, by rw [keptv], frame⟩
+    simp [Program.call, find_intFrom, find_intResult, intFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+      sizeOf, drop, limbAt, unbox, Expr.eq, Expr.ne, Expr.shr, hsize]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, cpos, read, hl, hdec,
       unbox_boxed, nz]
 
 end Mini.Number

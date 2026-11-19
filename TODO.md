@@ -95,8 +95,9 @@ checked by compiled code, so those theorems also trust the compiler that ran the
 - [x] One more decimal digit is times ten plus the digit.
 - [x] Signed multiplication.
 - [x] Signed addition and comparison, on numbers with no zero limb on top. Comparison also assumes that a
-      number passed as below zero is not zero: `intCompare` would call "minus zero" less than zero, and
-      nothing here shows `Mini/Number.lean` never passes one.
+      number passed as below zero is not zero: `intCompare` would call "minus zero" less than zero.
+      `Mini/Number.lean` is shown never to pass one for an integer that arrives as a tagged word (the sign
+      it passes is 1 only for a number below zero); for one that arrives as an object it is not shown.
 - [x] Shifts left and right by any count a machine word holds (times and divided by that power of two,
       rounding down), `and`, `or`, and powers for any exponent a machine word holds.
 - [x] Division: the quotient rounded down and the remainder, for any dividend and any divisor that is not
@@ -108,7 +109,8 @@ checked by compiled code, so those theorems also trust the compiler that ran the
       the borrow. On top of it `natDiv` (by zero gives zero), `natMod`, `intEdiv` and `intEmod` are what
       Lean's `Nat` and `Int` define. A quotient or remainder can come back with zero limbs on top, and a
       zero quotient with a minus sign; `Mini/Number.lean` takes the limbs off and makes any zero plain
-      zero, which is tested, not proved (the next line).
+      zero, which is proved where the answer fits in a tagged word and tested beyond that (the item after
+      the next).
 - [x] `Runtime/Utf8.lean` against the standard's table (RFC 3629), stated in plain arithmetic
       (`Runtime/Utf8Proofs.lean`). `write` gives the table's bytes for every character up to U+10FFFF.
       `strict` says one, two, three or four exactly when that many bytes are there and they are the encoding
@@ -119,20 +121,28 @@ checked by compiled code, so those theorems also trust the compiler that ran the
 - [ ] That `Mini/Number.lean` hands the arithmetic the right limbs and reads its answer rightly. Proved
       for numbers that fit in a tagged word (`Mini/NumberProofs.lean`, on Lean's three standard axioms),
       about the program as its language defines it:
-      - Going in: `limbs_of_word`, and `nat_limbs` for a natural number that arrives as a tagged word,
-        leave in memory an array holding the limbs of that number, with no zero limb on top. They do
+      - Going in, a natural number: `limbs_of_word`, and `nat_limbs` for one that arrives as a tagged
+        word, leave in memory an array holding the limbs of that number, with no zero limb on top. They do
         nothing C leaves open and change nothing outside the room the allocator gave. All that is assumed
         of the allocator is that it returns an address.
+      - Going in, an integer from -2^31 to 2^31 - 1, which arrives as a tagged word holding its 32 bits:
+        `int_sign` gives 1 if it is below zero and 0 if not, and `int_limbs` leaves an array holding the
+        limbs of the integer without its sign, -2^31 included, on the same terms as above.
       - `trimmed`, for any array of limbs: its loop reads only those limbs, changes nothing, and gives the
         count without the zero limbs on top.
-      - Coming out: `nat_result` and `nat_from`, where the number in the array is below 2^63, give back
-        the tagged word for it (twice the number, and one), whatever zero limbs the arithmetic left on top.
+      - Coming out, a natural number: `nat_result` and `nat_from`, where the number in the array is below
+        2^63, give back the tagged word for it (twice the number, and one), whatever zero limbs the
+        arithmetic left on top.
+      - Coming out, an integer: `int_result`, and `int_from` on an array as the arithmetic returns one
+        (limbs, then a sign), where the integer is from -2^31 to 2^31 - 1, give back the tagged word
+        holding its 32 bits, whatever zero limbs were left on top. A zero with a minus sign comes back as
+        plain zero. The integer `int_from` is proved to read is `signedValue`, the one
+        `Runtime/BigProofs.lean` proves the arithmetic's answers about.
 
       Not proved: a number that is an object, going in (`checked`, `limbs_of_object`) or coming out
-      (`big_new`), which needs the allocator to hand out room that overlaps nothing in use; integers and
-      their signs (`int_limbs`, `int_sign`, `int_result`, where a zero with a minus sign is made plain
-      zero); and an operation as a whole, which calls compiled `Runtime/Big.lean` between the two ends,
-      so needs an assumption about what that call leaves in memory.
+      (`big_new`), which needs the allocator to hand out room that overlaps nothing in use; and an
+      operation as a whole, which calls compiled `Runtime/Big.lean` between the two ends, so needs an
+      assumption about what that call leaves in memory.
 
 ### The code under Lean, written in Lean
 

@@ -13,7 +13,9 @@ that what goes back to compiled Lean is the number in the limbs it returned. Not
 imports it.
 
 What the program calls outside itself is an assumption in each statement: here, that `lean_alloc_object`
-returns some address. Nothing is assumed of the memory there. -/
+returns some address, and that `lean_dec` returns. Nothing is assumed of the memory there.
+
+Proved so far for numbers that fit in a tagged word, natural numbers and integers both. -/
 
 namespace Mini.Number
 
@@ -583,5 +585,315 @@ theorem natFrom_word (outside : Outside) (array : UInt64) (limbs : Runtime.Big.L
   simp [Program.call, find_natFrom, find_natResult, natFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
     sizeOf, drop, size]
   simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hl, dec]
+
+/-! ## An integer that arrives as a tagged word -/
+
+theorem find_intSign : program.functions.find? (fun f => f.name == "int_sign") = some intSign := rfl
+theorem find_intLimbs : program.functions.find? (fun f => f.name == "int_limbs") = some intLimbs := rfl
+
+/-- An integer from -2^31 to 2^31 - 1 as compiled Lean holds it: its 32 bits, as a tagged word. This is
+`lean_box((unsigned)n)` in `<lean/lean.h>`; the bits above the 32 are zero, whatever the sign. -/
+def intWord (i : Int) : UInt64 := boxed (UInt64.ofNat (i % 4294967296).toNat)
+
+/-- The 32 bits of an integer in that range, as a number. -/
+theorem bits_lt (i : Int) : (i % 4294967296).toNat < 4294967296 := by omega
+
+theorem intWord_toNat (i : Int) : (intWord i).toNat = 2 * (i % 4294967296).toNat + 1 := by
+  have lt := bits_lt i
+  rw [intWord, boxed_small _ (by simp only [UInt64.toNat_ofNat']; omega)]
+  simp only [UInt64.toNat_ofNat']
+  omega
+
+theorem intWord_tagged (i : Int) : intWord i &&& 1 ≠ 0 := by
+  intro h
+  have := congrArg UInt64.toNat h
+  rw [UInt64.toNat_and, intWord_toNat, show (1 : UInt64).toNat = 1 from rfl, Nat.and_one_is_mod] at this
+  have z : (0 : UInt64).toNat = 0 := rfl
+  omega
+
+/-- `int_sign` of a tagged word is bit 32 of it: the top bit of the 32 it holds. -/
+theorem intSign_tagged (outside : Outside) (fuel : Nat) (o : UInt64) (s : State) (tagged : o &&& 1 ≠ 0) :
+    program.call outside (fuel + 4) "int_sign" [o] s = .ok (.gave ((o >>> 32) &&& 1), s) := by
+  simp [Program.call, find_intSign, intSign, runAll, Stmt.run, Expr.run, Op.run, bind, put, isWord, Expr.ne,
+    Expr.and, Expr.shr, tagged]
+  rfl
+
+/-- `int_sign` says rightly whether an integer that arrives as a tagged word is below zero. -/
+theorem intSign_word (outside : Outside) (fuel : Nat) (i : Int) (s : State)
+    (lo : -2147483648 ≤ i) (hi : i < 2147483648) :
+    program.call outside (fuel + 4) "int_sign" [intWord i] s = .ok (.gave (if i < 0 then 1 else 0), s) := by
+  rw [intSign_tagged outside fuel _ s (intWord_tagged i)]
+  have bit : (intWord i >>> 32) &&& 1 = if i < 0 then 1 else 0 := by
+    apply UInt64.toNat_inj.mp
+    rw [UInt64.toNat_and, UInt64.toNat_shiftRight, intWord_toNat, show (1 : UInt64).toNat = 1 from rfl,
+      Nat.and_one_is_mod, show (32 : UInt64).toNat % 64 = 32 from rfl, Nat.shiftRight_eq_div_pow]
+    split
+    · show _ = 1
+      omega
+    · show _ = 0
+      omega
+  rw [bit]
+
+/-- What a tagged word holds without its sign: its 32 bits, or for a word whose top bit of those is set, what
+they are the negation of within 32 bits. -/
+def magnitude (o : UInt64) : UInt64 :=
+  if (2147483648 : UInt64) ≤ (o >>> 1) &&& 4294967295 then -((o >>> 1) &&& 4294967295) &&& 4294967295
+  else (o >>> 1) &&& 4294967295
+
+/-- For an integer in the range a tagged word holds, that is the integer without its sign. -/
+theorem magnitude_intWord (i : Int) (lo : -2147483648 ≤ i) (hi : i < 2147483648) :
+    magnitude (intWord i) = UInt64.ofNat i.natAbs := by
+  have low : ((intWord i >>> 1) &&& 4294967295).toNat = (i % 4294967296).toNat := by
+    rw [UInt64.toNat_and, UInt64.toNat_shiftRight, intWord_toNat,
+      show (4294967295 : UInt64).toNat = 2 ^ 32 - 1 from rfl, Nat.and_two_pow_sub_one_eq_mod,
+      show (1 : UInt64).toNat % 64 = 1 from rfl, Nat.shiftRight_eq_div_pow]
+    omega
+  apply UInt64.toNat_inj.mp
+  unfold magnitude
+  split
+  · rename_i h
+    rw [UInt64.le_iff_toNat_le, low] at h
+    rw [UInt64.toNat_and, UInt64.toNat_neg, low, show (4294967295 : UInt64).toNat = 2 ^ 32 - 1 from rfl,
+      Nat.and_two_pow_sub_one_eq_mod, UInt64.toNat_ofNat', show UInt64.size = 18446744073709551616 from rfl]
+    have t : (2147483648 : UInt64).toNat = 2147483648 := rfl
+    omega
+  · rename_i h
+    rw [UInt64.le_iff_toNat_le, low] at h
+    rw [low, UInt64.toNat_ofNat']
+    have t : (2147483648 : UInt64).toNat = 2147483648 := rfl
+    omega
+
+/-- `int_limbs` hands the arithmetic the limbs of what a tagged word holds without its sign. -/
+theorem intLimbs_tagged (outside : Outside) (fuel : Nat) (o array : UInt64) (s s' : State) (tagged : o &&& 1 ≠ 0)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * (wordLimbs (magnitude o)).size)] s
+      = .ok (array, s')) :
+    ∃ memory,
+      program.call outside (fuel + 26) "int_limbs" [o] s = .ok (.gave array, { s' with memory := memory })
+      ∧ ArrayOf memory array (wordLimbs (magnitude o))
+      ∧ ∀ p, (∀ k, k < 24 + 8 * (wordLimbs (magnitude o)).size → array + UInt64.ofNat k ≠ p) →
+          memory p = s'.memory p := by
+  obtain ⟨memory, run, holds, frame⟩ := limbsOfWord_array outside fuel (magnitude o) array s s' alloc
+  obtain ⟨l, hl⟩ := runAll_of_call program outside (fuel + 20) "limbs_of_word" limbsOfWord [magnitude o] s _ _
+    find_limbsOfWord run
+  refine ⟨memory, ?_, holds, frame⟩
+  by_cases neg : (2147483648 : UInt64) ≤ (o >>> 1) &&& 4294967295
+  · have m : magnitude o = -((o >>> 1) &&& 4294967295) &&& 4294967295 := by simp [magnitude, neg]
+    have nlt : ¬ (o >>> 1) &&& 4294967295 < 2147483648 := UInt64.not_lt.mpr neg
+    rw [m] at hl
+    simp [Program.call, find_intLimbs, find_limbsOfWord, intLimbs, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+      isWord, unbox, low32, top, Expr.ne, Expr.and, Expr.shr, Expr.le, tagged, nlt]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hl]
+  · have m : magnitude o = (o >>> 1) &&& 4294967295 := by simp [magnitude, neg]
+    have lt : (o >>> 1) &&& 4294967295 < 2147483648 := UInt64.not_le.mp neg
+    rw [m] at hl
+    simp [Program.call, find_intLimbs, find_limbsOfWord, intLimbs, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+      isWord, unbox, low32, top, Expr.ne, Expr.and, Expr.shr, Expr.le, tagged, lt]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hl]
+
+/-- `int_limbs` hands the arithmetic the right limbs for an integer that arrives as a tagged word: those of
+the integer without its sign, with no zero limb on top. -/
+theorem intLimbs_word (outside : Outside) (fuel : Nat) (i : Int) (array : UInt64) (s s' : State)
+    (lo : -2147483648 ≤ i) (hi : i < 2147483648)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * (wordLimbs (UInt64.ofNat i.natAbs)).size)] s
+      = .ok (array, s')) :
+    ∃ memory,
+      program.call outside (fuel + 26) "int_limbs" [intWord i] s
+        = .ok (.gave array, { s' with memory := memory })
+      ∧ ArrayOf memory array (wordLimbs (UInt64.ofNat i.natAbs))
+      ∧ Runtime.Big.value (wordLimbs (UInt64.ofNat i.natAbs)) = i.natAbs
+      ∧ ∀ p, (∀ k, k < 24 + 8 * (wordLimbs (UInt64.ofNat i.natAbs)).size → array + UInt64.ofNat k ≠ p) →
+          memory p = s'.memory p := by
+  rw [← magnitude_intWord i lo hi] at alloc ⊢
+  obtain ⟨memory, run, holds, frame⟩ := intLimbs_tagged outside fuel _ array s s' (intWord_tagged i) alloc
+  refine ⟨memory, run, holds, ?_, frame⟩
+  rw [wordLimbs_value, magnitude_intWord i lo hi, UInt64.toNat_ofNat']
+  omega
+
+/-! ## Reading an integer answer that fits in a tagged word -/
+
+theorem find_intResult : program.functions.find? (fun f => f.name == "int_result") = some intResult := rfl
+theorem find_intFrom : program.functions.find? (fun f => f.name == "int_from") = some intFrom := rfl
+
+/-- The number in the first `n` limbs is the number in those `trimmed` keeps. -/
+theorem lower_trimCount (limbs : Runtime.Big.Limbs) (n : Nat) :
+    Runtime.Big.lower limbs n = Runtime.Big.lower limbs (trimCount limbs n) := by
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+    unfold trimCount
+    split
+    · rename_i z
+      have d : Runtime.Big.digit limbs n = 0 := by simp [Runtime.Big.digit, z]
+      rw [← ih]
+      show Runtime.Big.lower limbs n + 4294967296 ^ n * Runtime.Big.digit limbs n = _
+      rw [d, Nat.mul_zero, Nat.add_zero]
+    · rfl
+
+/-- The integer with a size and a sign, the sign as the program passes it: a word that is zero for none. -/
+def withSign (negative : UInt64) (size : Nat) : Int := if negative = 0 then (size : Int) else -(size : Int)
+
+theorem intWord_nat (m : Nat) (h : m < 4294967296) : intWord (m : Int) = boxed (UInt64.ofNat m) := by
+  rw [intWord, show ((m : Int) % 4294967296).toNat = m from by omega]
+
+theorem intWord_neg (x : UInt64) (pos : 0 < x.toNat) (h : x.toNat ≤ 2147483648) :
+    intWord (-(x.toNat : Int)) = boxed (-x &&& 4294967295) := by
+  rw [intWord]
+  congr 1
+  apply UInt64.toNat_inj.mp
+  rw [UInt64.toNat_and, UInt64.toNat_neg, show (4294967295 : UInt64).toNat = 2 ^ 32 - 1 from rfl,
+    Nat.and_two_pow_sub_one_eq_mod, UInt64.toNat_ofNat', show UInt64.size = 18446744073709551616 from rfl]
+  omega
+
+/-- `int_result` reads an answer rightly where the answer is in the range a tagged word holds: from a sign
+and the first `n` limbs of an array in memory it gives back the tagged word for that integer, and changes
+nothing. The limbs may have zero limbs on top, and a sign on zero comes back as plain zero. -/
+theorem intResult_word (outside : Outside) (array negative : UInt64) (limbs : Runtime.Big.Limbs) (s : State)
+    (n extra : Nat) (small : limbs.size < 2305843009213693952)
+    (elements : ∀ i, (h : i < limbs.size) →
+      readBytes s.memory (array + UInt64.ofNat (24 + 8 * i)) 8 = .ok (boxed limbs[i].toUInt64))
+    (hn : n ≤ limbs.size)
+    (lo : -2147483648 ≤ withSign negative (Runtime.Big.lower limbs n))
+    (hi : withSign negative (Runtime.Big.lower limbs n) < 2147483648) :
+    program.call outside (n + extra + 10) "int_result" [negative, array, UInt64.ofNat n] s
+      = .ok (.gave (intWord (withSign negative (Runtime.Big.lower limbs n))), s) := by
+  have run := trimmed_runs outside array limbs s small elements n extra hn
+  obtain ⟨l, hl⟩ := runAll_of_call program outside _ "trimmed" trimmed _ s _ _ find_trimmed run
+  have hv := lower_trimCount limbs n
+  have hle := trimCount_le limbs n
+  have bound : Runtime.Big.lower limbs n ≤ 2147483648 := by
+    by_cases z : negative = 0 <;> simp [withSign, z] at lo hi <;> omega
+  generalize hc : trimCount limbs n = c at hl hv hle
+  rcases c with _ | _ | c
+  · have v0 : Runtime.Big.lower limbs n = 0 := hv
+    have hl0 : runAll program outside (n + extra + 8) trimmed.body s
+        (bind (fun _ => none) trimmed.parameters [array, UInt64.ofNat n]) = .ok (.gave 0, s, l) := hl
+    have w : withSign negative 0 = 0 := by unfold withSign; split <;> rfl
+    rw [v0, w]
+    simp [Program.call, find_intResult, find_trimmed, intResult, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+      hl0, box, Expr.eq, Expr.or, Expr.shl]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put]
+    rfl
+  · have size1 : 0 < limbs.size := by omega
+    have hl1 : runAll program outside (n + extra + 8) trimmed.body s
+        (bind (fun _ => none) trimmed.parameters [array, UInt64.ofNat n]) = .ok (.gave 1, s, l) := hl
+    have r0 : readBytes s.memory (array + 24) 8 = .ok (boxed limbs[0].toUInt64) := elements 0 size1
+    have v1 : Runtime.Big.lower limbs n = limbs[0].toNat := by
+      rw [hv]; simp [Runtime.Big.lower, Runtime.Big.digit, Array.getD, size1]
+    have nz : limbs[0].toNat ≠ 0 := by
+      have := trimCount_top limbs n 0 hc
+      simpa [Runtime.Big.digit, Array.getD, size1] using this
+    rw [v1] at lo hi bound ⊢
+    by_cases z : negative = 0
+    · subst z
+      have w : withSign 0 limbs[0].toNat = (limbs[0].toNat : Int) := rfl
+      rw [w] at hi ⊢
+      have h1 : limbs[0].toUInt64 < 2147483648 := by
+        rw [UInt64.lt_iff_toNat_lt]; simp; omega
+      have fin : boxed limbs[0].toUInt64 = intWord (limbs[0].toNat : Int) := by
+        rw [intWord_nat _ (by omega)]
+        congr 1
+        apply UInt64.toNat_inj.mp
+        simp
+      simp [Program.call, find_intResult, find_trimmed, intResult, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+        hl1, box, Expr.eq, Expr.or, Expr.shl]
+      simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, Expr.run, Op.run, limbAt,
+        unbox, Expr.shr, Expr.and, Expr.lt, top, r0, unbox_boxed, h1]
+      simpa [boxed] using fin
+    · have w : withSign negative limbs[0].toNat = -(limbs[0].toNat : Int) := by simp [withSign, z]
+      rw [w] at lo hi ⊢
+      have h1 : limbs[0].toUInt64 ≤ 2147483648 := by
+        rw [UInt64.le_iff_toNat_le]; simp; omega
+      have fin : boxed (-limbs[0].toUInt64 &&& 4294967295) = intWord (-(limbs[0].toNat : Int)) := by
+        have := intWord_neg limbs[0].toUInt64 (by simp; omega) (by simp; omega)
+        simpa using this.symm
+      simp [Program.call, find_intResult, find_trimmed, intResult, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+        hl1, box, Expr.eq, Expr.or, Expr.shl]
+      simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, Expr.run, Op.run, limbAt,
+        unbox, Expr.shr, Expr.and, Expr.lt, Expr.le, Expr.ne, top, low32, r0, unbox_boxed, h1, z]
+      simpa [boxed] using fin
+  · exfalso
+    have topd := trimCount_top limbs n (c + 1) hc
+    have big : 4294967296 ^ 1 ≤ 4294967296 ^ (c + 1) := Nat.pow_le_pow_right (by omega) (by omega)
+    have one : 4294967296 ^ (c + 1) * 1 ≤ 4294967296 ^ (c + 1) * Runtime.Big.digit limbs (c + 1) :=
+      Nat.mul_le_mul_left _ (by omega)
+    have lower : Runtime.Big.lower limbs (c + 1 + 1)
+        = Runtime.Big.lower limbs (c + 1) + 4294967296 ^ (c + 1) * Runtime.Big.digit limbs (c + 1) := rfl
+    have hv' : Runtime.Big.lower limbs n = Runtime.Big.lower limbs (c + 1 + 1) := hv
+    rw [Nat.mul_one] at one
+    rw [Nat.pow_one] at big
+    generalize 4294967296 ^ (c + 1) = P at *
+    omega
+
+theorem lower_congr (a b : Runtime.Big.Limbs) (n : Nat)
+    (h : ∀ i, i < n → Runtime.Big.digit a i = Runtime.Big.digit b i) :
+    Runtime.Big.lower a n = Runtime.Big.lower b n := by
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+    show Runtime.Big.lower a n + 4294967296 ^ n * Runtime.Big.digit a n
+      = Runtime.Big.lower b n + 4294967296 ^ n * Runtime.Big.digit b n
+    rw [ih (fun i hi => h i (by omega)), h n (by omega)]
+
+/-- An array without its last element is the number in the limbs below that one. -/
+theorem value_pop_lower (a : Runtime.Big.Limbs) :
+    Runtime.Big.value a.pop = Runtime.Big.lower a (a.size - 1) := by
+  rw [← Runtime.Big.lower_size a.pop, Array.size_pop]
+  exact lower_congr _ _ _ (fun i hi => by
+    simp [Runtime.Big.digit, Array.getD, hi, show i < a.size by omega])
+
+/-- `int_from`, which every operation on integers ends with: from the array the arithmetic returned, limbs
+and then a sign, it gives back the tagged word for the integer in it (`signedValue`, which is what
+`Runtime/BigProofs.lean` proves the arithmetic's answers about), where that is in the range a tagged word
+holds, and gives the array up. What giving up does is the allocator's; nothing else changes. -/
+theorem intFrom_word (outside : Outside) (array : UInt64) (limbs : Runtime.Big.Limbs) (s after : State)
+    (n extra : Nat) (unused : UInt64)
+    (small : limbs.size < 2305843009213693952)
+    (holds : ArrayOf s.memory array limbs) (size : limbs.size = n + 1)
+    (lo : -2147483648 ≤ Runtime.Big.signedValue limbs) (hi : Runtime.Big.signedValue limbs < 2147483648)
+    (dec : outside "lean_dec" [array] s = .ok (unused, after)) :
+    program.call outside (n + extra + 14) "int_from" [array] s
+      = .ok (.gave (intWord (Runtime.Big.signedValue limbs)), after) := by
+  have hsize := holds.2.1
+  rw [size] at hsize
+  have read := holds.2.2 n (by omega)
+  rw [← below_count] at read
+  have pop : Runtime.Big.value limbs.pop = Runtime.Big.lower limbs n := by
+    rw [value_pop_lower, size, Nat.add_sub_cancel]
+  generalize hc : UInt64.ofNat (n + 1) = c at hsize read
+  have cpos : c ≠ 0 := by
+    intro z
+    have := congrArg UInt64.toNat (hc.trans z)
+    simp only [UInt64.toNat_ofNat', show (0 : UInt64).toNat = 0 from rfl] at this
+    omega
+  have cless : UInt64.ofNat n = c - 1 := by
+    rw [← hc]
+    apply UInt64.toNat_inj.mp
+    simp only [UInt64.toNat_sub, UInt64.toNat_ofNat', show (1 : UInt64).toNat = 1 from rfl]
+    omega
+  by_cases top : limbs[n]'(by omega) = 0
+  · have sv : Runtime.Big.signedValue limbs = withSign 0 (Runtime.Big.lower limbs n) := by
+      simp [Runtime.Big.signedValue, Runtime.Big.intOf, size, Array.getD, top, pop, withSign]
+    rw [sv] at lo hi ⊢
+    obtain ⟨l, hl⟩ := runAll_of_call program outside _ "int_result" intResult _ s _ _ find_intResult
+      (intResult_word outside array 0 limbs s n extra small holds.2.2 (by omega) lo hi)
+    rw [cless] at hl
+    have hz : (limbs[n]'(by omega)).toUInt64 = 0 := by rw [top]; rfl
+    simp [Program.call, find_intFrom, find_intResult, intFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+      sizeOf, drop, limbAt, unbox, Expr.eq, Expr.ne, Expr.shr, hsize]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, cpos, read, hz, hl, dec,
+      show boxed 0 >>> 1 = 0 from by decide]
+  · have nz : (limbs[n]'(by omega)).toUInt64 ≠ 0 := fun h => top (UInt32.toNat_inj.mp (by
+      have := congrArg UInt64.toNat h
+      simpa using this))
+    have sv : Runtime.Big.signedValue limbs = withSign 1 (Runtime.Big.lower limbs n) := by
+      simp [Runtime.Big.signedValue, Runtime.Big.intOf, size, Array.getD, top, pop, withSign]
+    rw [sv] at lo hi ⊢
+    obtain ⟨l, hl⟩ := runAll_of_call program outside _ "int_result" intResult _ s _ _ find_intResult
+      (intResult_word outside array 1 limbs s n extra small holds.2.2 (by omega) lo hi)
+    rw [cless] at hl
+    simp [Program.call, find_intFrom, find_intResult, intFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+      sizeOf, drop, limbAt, unbox, Expr.eq, Expr.ne, Expr.shr, hsize]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, cpos, read, hl, dec,
+      unbox_boxed, nz]
 
 end Mini.Number

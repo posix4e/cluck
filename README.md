@@ -1,16 +1,24 @@
-# silo-os
+# cluck
 
-A Lean unikernel for AWS Nitro Enclaves: Lean all the way down, booting with no Linux, no C library and no
-AWS-supplied boot files, answering its parent over vsock and returning an attestation that verifies on
-another machine. A service on it is a function from bytes to bytes; `Demo/` is the one that comes with it.
+A Lean unikernel for confidential machines, with everything built on it in one repository: Lean all the way
+down, with no Linux and no C library in the guest. A service on it is a function from bytes to bytes;
+`Demo/` is the one that comes with it. There are three things here.
 
-The Intel TDX target boots through x86-64 UEFI and serves the demo over a virtio Ethernet link.
-The guest runs the Ethernet and IP protocols in Lean on the minimal runtime. See
-[building and running the TDX guest](TDX.md).
+- **The OS, for AWS Nitro Enclaves.** It boots with no AWS-supplied boot files, answers its parent over
+  vsock, and returns an attestation that verifies on another machine. This is where the OS started, and most
+  of this file and of the other documents is about it.
+- **The same OS, for Intel TDX.** It boots through x86-64 UEFI and serves the demo over a virtio Ethernet
+  link, with Ethernet, IPv4, IPv6, TCP, UDP and a DNS resolver in Lean on the same minimal runtime, and
+  returns a TDX report for a relying party to have quoted. See
+  [building and running the TDX guest](TDX.md).
+- **[`evm/`](evm/README.md), an experiment in a package of its own.** An Ethereum block importer, built from
+  someone else's executable specification of the EVM in Lean, running as a service on this OS in a TDX trust
+  domain. The OS does not depend on it.
 
-[`evm/`](evm/README.md) is an experiment in a package of its own: an Ethereum block importer, built from
-someone else's executable specification of the EVM in Lean, running as a service on this OS in a TDX trust
-domain. The OS does not depend on it.
+The OS itself is called silo-os, and keeps that name wherever a name is part of how it works: the Lake
+package is `«silo-os»`, the machine's own lines on its console begin `silo:`, and the scripts' settings begin
+`SILO_`. The two targets share the runtime, its proofs and the demo service; they differ in how the machine
+is entered, in what carries bytes to the service, and in what the attestation is.
 
 What is done and what is left is in [TODO.md](TODO.md). What it defends against, and what it does not, is in
 [THREAT_MODEL.md](THREAT_MODEL.md). How to work on it is in [CONTRIBUTING.md](CONTRIBUTING.md). To build a
@@ -23,13 +31,17 @@ Licensed under the GNU Affero General Public License, version 3 ([LICENSE](LICEN
 | Layer | Language | Contents |
 |---|---|---|
 | Demo service | Lean | `ping`, `attest(nonce)`, `random(n)`, `selftest` |
-| Drivers and kernel logic | Lean | virtio-mmio, vsock, attestation device, serial, heartbeat, server loop |
+| Drivers and kernel logic, Nitro | Lean | virtio-mmio, vsock, attestation device, serial, heartbeat, server loop |
+| Network, TDX | Lean | Ethernet, ARP and neighbor discovery, IPv4, IPv6, fragments, routes, TCP, UDP, a DNS resolver (`Kernel/Net/`) |
 | Minimal runtime, in Lean | Lean | big-number arithmetic and the rules of UTF-8 (`Runtime/`) |
 | Minimal runtime, in a small language | programs written as data in Lean, printed as C when built | allocator, reference counting and freeing, arrays, big numbers in memory, small-number cases, hashing, strings (`Mini/`) |
 | Minimal runtime, by hand | C, single-threaded | closures, making constants permanent, start-up, stopping, a few raw hardware primitives (`rt/`) |
-| Boot stub | assembly and a little C | the Linux boot protocol's header and entries, page tables, fatal-exception handlers |
+| Boot stub, Nitro | assembly and a little C | the Linux boot protocol's header and entries, page tables, fatal-exception handlers |
+| EFI entry, TDX | C | the network device, a clock and the heap as firmware provides them, and the TDX report call (`boot/efi/`) |
 
-In the Nitro target, every byte from the parent is parsed in Lean. The C and assembly underneath never interpret host data.
+In the Nitro target, every byte from the parent is parsed in Lean. The C and assembly underneath never
+interpret host data. In the TDX target, firmware's network driver, which is C, moves each Ethernet frame
+before Lean reads it; [THREAT_MODEL.md](THREAT_MODEL.md) says what that leaves trusted.
 
 The runtime is the part still moving out of C. About 1,470 lines of C are written by hand, 480 of them the
 boot code; the rest of what compiled Lean stands on is Lean, or a program in `Mini/`. What is proved about
@@ -55,10 +67,19 @@ each, and what is only tested, is in [TODO.md](TODO.md).
   big-number test, printed.
 - `DemoTest.lean`: pure tests. `SimTest.lean`: drives a running service over its pipes.
 - `Kernel/Server.lean`: bringing a machine up and serving a service.
+- `Kernel/Efi.lean`: what the TDX target asks of the machine: whole Ethernet frames in and out, the device's
+  address, a clock, and a TDX report. `Kernel/Net/`: the network above that. `Internet.lean` (Ethernet, ARP,
+  neighbor discovery, IPv4, IPv6, ICMP echo, UDP and the framing of TCP), `Fragment.lean` (reassembly, and
+  UDP too long for one frame), `Route.lean` (the next hop for a connection made from here), `Tcp.lean`,
+  `Dns.lean` (a resolver), `Address.lean`. `NetInternetTest.lean`, `NetTcpTest.lean`, `NetRouteTest.lean`,
+  `NetDnsTest.lean`: their tests, which run as processes.
+- `TdxMain.lean`: the demo service as a whole machine on the TDX target. `DnsProbe.lean`: a machine that
+  makes one DNS lookup, for trying the outbound path.
 - `Ask.lean`: the parent's client, one request at a time. `Relay.lean`: reaching a service through a
   command's pipes, shared by the two.
 - `verify/`: the program that decides, off the host, whether an attestation document is to be believed, the
-  AWS root certificate it trusts, its test, and two documents from a real enclave.
+  AWS root certificate it trusts, its test, and two documents from a real enclave. `verify-tdx-quote` is the
+  same decision for a TDX quote.
 - `Runtime/`: the parts of the minimal runtime that are Lean: big-number arithmetic (`Big.lean`) and the
   rules of UTF-8 (`Utf8.lean`). `Runtime/BigProofs.lean` and `Runtime/Utf8Proofs.lean`: what is proved about each.
 - `Secret.lean`: `Secret.equal` and `Secret.select`, for a service that holds a secret: comparing byte
@@ -78,14 +99,19 @@ each, and what is only tested, is in [TODO.md](TODO.md).
 - `Proofs.lean`: everything proved, built with the rest so that a proof that stops checking stops the build.
 - `rt/`: the minimal runtime's hand-written C; `rt/bare/`: its platform with no operating system;
   `rt/hosted/`: what only the builds that run as a process use.
+- `boot/efi/`: the TDX target's way in. `platform.c` is the EFI entry and what `Kernel/Efi.lean` calls,
+  `mkefi.py` turns the linked image into an EFI application, and the two patches put a network driver in
+  the firmware (TDVF) and make it check what the device hands back. [TDX.md](TDX.md) has the build.
 - `boot/`: from the boot loader's hand-over to `main`. `linux.S` and `setup.S` are the Linux boot protocol's
   side of it; `entry.S` and `early.c` are common to every way in. `boot/tests/` holds two images that are C
   alone. `boot/README.md` is what a real enclave
   looked like from inside, and how to run one.
 - `MkImage.lean`: turns a linked image into the kernel image a Linux boot protocol loader is given.
 - `scripts/`: building against the runtime, measuring what it must contain, building and booting images,
-  and saying what an image is made of (`image-contents`).
+  and saying what an image is made of (`image-contents`). For the TDX target: `build-efi`, `run-efi`,
+  `test-efi`, `test-efi-ipv6` and `tdx-quote`.
 - `third_party/eif_build/`: the versions AWS's image builder is built from in CI.
+- `evm/`: the block importer, with a `lakefile.lean`, scripts and a README of its own.
 
 ## Build and test
 
@@ -106,7 +132,16 @@ scripts/build-min demo-sim                                   # the same compiled
 
 `rt/README.md` has the full comparison between runtimes.
 
-On bare metal, under QEMU:
+The TDX target's network, as processes, and its guest under an emulated processor (needs QEMU and OVMF);
+[TDX.md](TDX.md) has the rest, and the run on Intel hardware:
+
+```
+.lake/build/bin/net-internet-test && .lake/build/bin/net-tcp-test
+.lake/build/bin/net-route-test && .lake/build/bin/net-dns-test
+scripts/build-efi dev && scripts/test-efi && scripts/test-efi-ipv6
+```
+
+The Nitro target on bare metal, under QEMU:
 
 ```
 scripts/build-bare hello && scripts/run-qemu .lake/build/bare/hello.bzImage       # the boot stub alone
@@ -162,8 +197,10 @@ A project with a service of its own takes this one as a Lake dependency, pinned 
 pinned is part of what its image measures:
 
 ```
-require «silo-os» from git "https://github.com/posix4e/silo-os" @ "<commit>"
+require «silo-os» from git "https://github.com/posix4e/cluck" @ "<commit>"
 ```
+
+(`evm/` is in this repository and takes it by path instead: `require «silo-os» from ".."`.)
 
 It imports `Kernel` and hands `Kernel.serve` a `Kernel.Service`; `OsMain.lean` is the whole of it for the
 demo. The scripts find the OS's own files beside themselves, so they are run from the project's directory:
@@ -188,3 +225,7 @@ bit set, or `0xFF` followed by a refusal code (`01` unknown command, `02` malfor
 | attest | `02` | nonce, up to 64 bytes | attestation document |
 | random | `03` | count, 2 bytes big-endian, 1 to 256 | that many random bytes |
 | selftest | `04` | none | digest of the runtime self-test |
+| report | `05` | REPORTDATA, exactly 64 bytes | the 1024-byte TDX report |
+
+`attest` is the Nitro target's and is refused as unavailable on the TDX target; `report` is the TDX target's
+alone, and the development build of that target, which runs outside a trust domain, refuses it the same way.

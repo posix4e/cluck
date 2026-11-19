@@ -127,16 +127,22 @@ checked by compiled code, so those theorems also trust the compiler that ran the
 - [x] One more decimal digit is times ten plus the digit.
 - [x] Signed multiplication.
 - [x] Signed addition and comparison, on numbers with no zero limb on top. Comparison also assumes that a
-      number passed as below zero is not zero: `intCompare` would call "minus zero" less than zero, and
-      nothing here shows `Mini/Number.lean` never passes one.
+      number passed as below zero is not zero: `intCompare` would call "minus zero" less than zero.
+      `Mini/Number.lean` is shown never to pass one for an integer that arrives as a tagged word (the sign
+      it passes is 1 only for a number below zero), nor for one that arrives as an object of the kind this
+      program makes, whose top limb is not zero. That `checked` stops on any other object is not proved.
 - [x] Shifts left and right by any count a machine word holds (times and divided by that power of two,
       rounding down), `and`, `or`, and powers for any exponent a machine word holds.
-- [x] Division by a single limb, and of a number with fewer limbs than its divisor: the quotient rounded
-      down and the remainder.
-- [ ] Division by two limbs or more. Knuth's algorithm D; the long one. Until it is done nothing is proved
-      about `natDiv`, `natMod`, `intEdiv` and `intEmod` as wholes, which go through it. `divide` says its
-      quotient has no zero limb on top, and division by one limb can leave one; that is harmless only
-      because `Mini/Number.lean` takes the zero limbs off every result.
+- [x] Division: the quotient rounded down and the remainder, for any dividend and any divisor that is not
+      zero and has no zero limb on top. By a single limb, and by two limbs or more, which is Knuth's
+      algorithm D. Proved of that one: the shift sets the divisor's top bit; each guess at a quotient limb
+      is never too small and at most one too large, and `refine` gets there in at most twice round, so its
+      count of four is never used up; taking the guess off says rightly whether it went below zero; and
+      putting the divisor back once then leaves the right remainder, the carry out of the top cancelling
+      the borrow. On top of it `natDiv` (by zero gives zero), `natMod`, `intEdiv` and `intEmod` are what
+      Lean's `Nat` and `Int` define. A quotient or remainder can come back with zero limbs on top, and a
+      zero quotient with a minus sign; `Mini/Number.lean` takes the limbs off and makes any zero plain
+      zero, which is proved (the item after the next).
 - [x] `Runtime/Utf8.lean` against the standard's table (RFC 3629), stated in plain arithmetic
       (`Runtime/Utf8Proofs.lean`). `write` gives the table's bytes for every character up to U+10FFFF.
       `strict` says one, two, three or four exactly when that many bytes are there and they are the encoding
@@ -144,8 +150,80 @@ checked by compiled code, so those theorems also trust the compiler that ran the
       Where `strict` finds a character, `read` returns the one those bytes encode and `claims` steps over
       exactly its bytes. Not stated: what `read` and `claims` answer on bytes that are not well formed, where
       they follow Lean's own runtime, which is C and has no definition here to be held against.
-- [ ] That `Mini/Number.lean` hands the arithmetic the right limbs and reads its answer rightly: tested, not
-      proved.
+- [ ] That `Mini/Number.lean` hands the arithmetic the right limbs and reads its answer rightly. Proved at
+      both ends of a call to the arithmetic, for numbers of every size, and for nine operations on natural
+      numbers as wholes (`Mini/NumberProofs.lean`, on Lean's three standard axioms), about the program as
+      its language defines it. Not proved: what the wholes assume, and the other operations as wholes (the
+      last paragraphs here).
+
+      A number that fits in a tagged word:
+      - Going in, a natural number: `limbs_of_word`, and `nat_limbs` for one that arrives as a tagged
+        word, leave in memory an array holding the limbs of that number, with no zero limb on top. They do
+        nothing C leaves open and change nothing outside the room the allocator gave. All that is assumed
+        of the allocator is that it returns an address.
+      - Going in, an integer from -2^31 to 2^31 - 1, which arrives as a tagged word holding its 32 bits:
+        `int_sign` gives 1 if it is below zero and 0 if not, and `int_limbs` leaves an array holding the
+        limbs of the integer without its sign, -2^31 included, on the same terms as above.
+      - `trimmed`, for any array of limbs: its loop reads only those limbs, changes nothing, and gives the
+        count without the zero limbs on top.
+      - Coming out, a natural number: `nat_result` and `nat_from`, where the number in the array is below
+        2^63, give back the tagged word for it (twice the number, and one), whatever zero limbs the
+        arithmetic left on top.
+      - Coming out, an integer: `int_result`, and `int_from` on an array as the arithmetic returns one
+        (limbs, then a sign), where the integer is from -2^31 to 2^31 - 1, give back the tagged word
+        holding its 32 bits, whatever zero limbs were left on top. A zero with a minus sign comes back as
+        plain zero. The integer `int_from` is proved to read is `signedValue`, the one
+        `Runtime/BigProofs.lean` proves the arithmetic's answers about.
+
+      A number that is an object (a header, a sign, a count and that many limbs of four bytes):
+      - Going in: `checked` passes an object whose top limb is not zero and whose sign is 0 or 1, gives its
+        count and changes nothing. `limbs_of_object` leaves an array holding the object's limbs. On those,
+        `nat_limbs` does so for a natural number of 2^63 or more, `int_limbs` for an integer outside
+        -2^31 to 2^31 - 1, and `int_sign` gives the sign the object holds.
+      - Coming out: `big_new` leaves an object holding a sign and the first limbs of an array. On it,
+        `nat_result` and `nat_from` for a number of 2^63 or more, and `int_result` and `int_from` for an
+        integer outside -2^31 to 2^31 - 1, give back an object holding the array's limbs without the zero
+        ones on top, so the same number, with a top limb that is not zero. What goes out is therefore what
+        the theorems about going in assume of what comes in.
+      - What these assume of the allocator, as hypotheses in each statement: the room it hands out shares
+        no byte with the object or array being read, and handing it out left that object or array as it
+        was. Nothing is assumed of what the room held. Also assumed: that an object's address has its
+        lowest bit clear, which is how the program tells it from a tagged word, and that an array has
+        fewer than 2^32 limbs. Where an array is given up at the end (`nat_from`,
+        `int_from`), the object is shown right in the state `lean_dec` is handed, and is what the function
+        gives back if `lean_dec` returns; what `lean_dec` then does to memory is the allocator's and is
+        not stated here.
+      - Not proved of `checked`: that it stops on an object that is not well formed. The theorems say what
+        happens for an object that is.
+
+      An operation as a whole, from the words compiled Lean hands in to the word it gets back:
+      - `lean_nat_big_add`, `_sub`, `_mul`, `_div`, `_land` and `_lor`. Handed two natural numbers as
+        compiled Lean holds them (a tagged word below 2^63, an object of its own from there up), if the
+        operation returns, it returns the sum (the difference stopping at zero, the product, the quotient
+        with division by zero giving zero, the and, the or) as compiled Lean holds it, and every object
+        that was there before is there and as it was.
+      - `lean_nat_big_eq`, `_le` and `_lt`, on the same terms, return 1 where the numbers are equal (the
+        first at most the second, the first below the second) and otherwise 0.
+      - They hold for any amount of fuel: a run that finished finishes the same with more.
+      - They are statements of an operation that returns. Where `lean_alloc_object` does not return, each
+        function on the way is shown not to return either, so none carries on with an address it was not
+        given.
+      - What they assume, each a hypothesis in the statement. Of the allocator (`Allocator`): room it
+        hands out is at an even address, was no object's, and is the new object's; handing it out, and
+        giving up an array of limbs, leave every other object there and as it was; and writing inside
+        objects that were handed out does not disturb it. Of the compiled arithmetic (`Computes`,
+        `Compares`): handed two different arrays of limbs, each an object of its own, it returns an array,
+        an object of its own, holding what the function in `Runtime/Big.lean` gives for those limbs (for a
+        comparison, that function's answer), and leaves every object but the two there and as it was. And
+        that the arithmetic's answer has fewer than 2^32 limbs.
+
+      Not proved:
+      - The assumptions. Nothing shows that `Mini/Alloc.lean`, with the reference counting above it,
+        meets `Allocator`; no allocator is shown to. `Computes` and `Compares` are what the Lean compiler
+        and Lean's own array code are trusted for.
+      - The other operations as wholes: `lean_nat_big_mod`, the shifts, the power and the logarithm, the
+        conversions to and from machine words, `lean_cstr_to_nat`, and every operation on integers.
+      - An answer of 2^32 limbs or more, where `big_new` reports that memory has run out.
 
 ### The code under Lean, written in Lean
 

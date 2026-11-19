@@ -530,7 +530,7 @@ theorem shift_split (K M N d0 d1 T : Nat) (hK : 0 < K) (hN : K * M = N) (h0 : d0
   rw [Nat.mul_comm M (K * M), Nat.mul_assoc]
 
 theorem shiftRightLoop_value (a : Limbs) (bits : UInt64) (n i : Nat) (r : Limbs)
-    (hb : bits.toNat < 32) (hn : a.size ≤ n) :
+    (hb : bits.toNat < 32) (hn : value a < B ^ n) :
     value (shiftRightLoop a bits n i r) = value r + B ^ r.size * (tail a i / 2 ^ bits.toNat) := by
   fun_induction shiftRightLoop a bits n i r with
   | case1 i r h t ih =>
@@ -551,11 +551,16 @@ theorem shiftRightLoop_value (a : Limbs) (bits : UInt64) (n i : Nat) (r : Limbs)
       rw [ht, tail_step a i, tail_step a (i + 1)]
       exact shift_split _ _ _ _ _ _ (Nat.two_pow_pos _) hKM l0
     rw [ih, value_push, Array.size_push, Nat.pow_succ, hlow, key, Nat.add_assoc, Nat.mul_assoc, ← Nat.mul_add]
-  | case2 i r h => simp [tail_of_le a i (by omega)]
+  | case2 i r h =>
+    have z : tail a i = 0 := by
+      rw [tail_eq_div]
+      exact Nat.div_eq_of_lt (Nat.lt_of_lt_of_le hn (Nat.pow_le_pow_right (by omega) (by omega)))
+    simp [z]
 
-/-- `shiftRight` over the whole of a number divides by two for every bit and 2^32 for every whole limb,
-rounding down. -/
-theorem shiftRight_value (a : Limbs) (whole n : Nat) (bits : UInt64) (hb : bits.toNat < 32) (hn : a.size ≤ n) :
+/-- `shiftRight` over limbs that hold the whole of a number divides by two for every bit and 2^32 for every
+whole limb, rounding down. -/
+theorem shiftRight_value (a : Limbs) (whole n : Nat) (bits : UInt64) (hb : bits.toNat < 32)
+    (hn : value a < B ^ n) :
     value (shiftRight a whole n bits) = value a / 2 ^ (32 * whole + bits.toNat) := by
   have hB : B ^ whole = 2 ^ (32 * whole) := by rw [Nat.pow_mul]
   rw [shiftRight, shiftRightLoop_value _ _ _ _ _ hb hn, tail_eq_div, Nat.div_div_eq_div_mul, Nat.pow_add, ← hB]
@@ -567,13 +572,13 @@ theorem shiftRightBy_value (a : Limbs) (shift : USize) :
   have h32 : (32 : USize).toNat = 32 := USize.toNat_ofNat_of_lt_32 (by decide)
   have whole : (shift / 32).toNat = shift.toNat / 32 := by rw [USize.toNat_div, h32]
   have bits : (shift % 32).toUInt64.toNat = shift.toNat % 32 := by rw [USize.toNat_toUInt64, USize.toNat_mod, h32]
-  rw [shiftRightBy, shiftRight_value _ _ _ _ (by rw [bits]; omega) (Nat.le_refl _), whole, bits]
+  rw [shiftRightBy, shiftRight_value _ _ _ _ (by rw [bits]; omega) (value_lt_pow a), whole, bits]
   congr 2
   omega
 
 /-! ## Division, where the divisor is one limb or the dividend is shorter
 
-Long division by two limbs or more (`divideLong`, Knuth's algorithm D) is not proved here. -/
+Long division by two limbs or more (`divideLong`) comes after these. -/
 
 theorem lower_size (a : Limbs) : lower a a.size = value a := by
   have := value_split a a.size
@@ -677,6 +682,791 @@ theorem divide_value_shorter (a b : Limbs) (h : a.size < b.size) (tb : Trimmed b
   simp only [divide, h, ↓reduceIte]
   rw [Nat.div_eq_of_lt lt, Nat.mod_eq_of_lt lt]
   exact ⟨rfl, rfl⟩
+
+/-! ## Long division
+
+Knuth's algorithm D (The Art of Computer Programming, volume 2, section 4.3.1), a step at a time: taking a
+multiple of the divisor off (D4), putting the divisor back once (D6), the guess at a quotient limb (D3), and
+then the loop over the quotient's limbs. -/
+
+theorem tail_of_value_lt (a : Limbs) (k : Nat) (h : value a < B ^ k) : tail a k = 0 := by
+  rw [tail_eq_div, Nat.div_eq_of_lt h]
+
+theorem value_lt_of_tail (a : Limbs) (k : Nat) (h : tail a k = 0) : value a < B ^ k := by
+  have s := value_split a k
+  have l := lower_lt a k
+  rw [h] at s
+  omega
+
+/-- Writing a limb leaves the limbs above it as they were. -/
+theorem tail_set_above (r : Limbs) (k m : Nat) (x : UInt32) (h : k < m) :
+    tail (r.setIfInBounds k x) m = tail r m := by
+  simp [tail, Array.toList_setIfInBounds, List.drop_set_of_lt h]
+
+/-! ### D4: taking a multiple of the divisor off -/
+
+theorem takeLoop_size (v : Limbs) (g : UInt64) (j i : Nat) (carry borrow : UInt64) (u : Limbs) :
+    (takeLoop v g j i carry borrow u).1.size = u.size := by
+  fun_induction takeLoop v g j i carry borrow u with
+  | case1 i carry borrow u h product difference ih => simp [ih]
+  | case2 i carry borrow u h difference => simp
+
+theorem takeLoop_tail (v : Limbs) (g : UInt64) (j i : Nat) (carry borrow : UInt64) (u : Limbs) (m : Nat)
+    (hm : j + v.size < m) : tail (takeLoop v g j i carry borrow u).1 m = tail u m := by
+  fun_induction takeLoop v g j i carry borrow u with
+  | case1 i carry borrow u h product difference ih => rw [ih, tail_set_above _ _ _ _ (by omega)]
+  | case2 i carry borrow u h difference => exact tail_set_above _ _ _ _ (by omega)
+
+/-- `takeLoop` takes `g` times what is left of `v`, with the carry and the borrow, off `u` at its place. If
+that goes below zero it says so, and what it leaves is too large by one in the limb above the last it
+wrote. -/
+theorem takeLoop_value (v : Limbs) (g : UInt64) (j i : Nat) (carry borrow : UInt64) (u : Limbs)
+    (hg : g.toNat < B) (hc : carry.toNat < B) (hb : borrow.toNat ≤ 1) (hi : i ≤ v.size)
+    (hu : j + v.size < u.size) :
+    value (takeLoop v g j i carry borrow u).1
+          + B ^ (i + j) * (carry.toNat + borrow.toNat + g.toNat * tail v i)
+        = value u + B ^ (j + v.size + 1) * (takeLoop v g j i carry borrow u).2.toNat
+      ∧ (takeLoop v g j i carry borrow u).2.toNat ≤ 1 := by
+  fun_induction takeLoop v g j i carry borrow u with
+  | case1 i carry borrow u h product difference ih =>
+    have lv := digit_lt v i; have lu := digit_lt u (i + j)
+    have bound : g.toNat * digit v i ≤ 4294967295 * 4294967295 := Nat.mul_le_mul (by omega) (by omega)
+    have hproduct : product.toNat = g.toNat * digit v i + carry.toNat := by
+      simp only [product, UInt64.toNat_add, UInt64.toNat_mul, limb_toNat]; omega
+    have mask : (0xFFFFFFFF : UInt64).toNat = 2 ^ 32 - 1 := rfl
+    have hplow : (product &&& 0xFFFFFFFF).toNat = product.toNat % B := by
+      rw [UInt64.toNat_and, mask, Nat.and_two_pow_sub_one_eq_mod]
+    have hdiff : difference.toNat =
+        (digit u (i + j) + 18446744073709551616 - product.toNat % B - borrow.toNat) % 18446744073709551616 := by
+      simp only [difference, UInt64.toNat_sub, limb_toNat, hplow]; omega
+    have hhigh : (difference >>> 63).toNat = difference.toNat / 9223372036854775808 := by
+      simp [UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow]
+    have hlow : difference.toUInt32.toNat = difference.toNat % B := by simp
+    have hcarry : (product >>> 32).toNat = product.toNat / B := by
+      simp [UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow]
+    have written := value_set u (i + j) difference.toUInt32 (by omega)
+    have step := ih (by rw [hcarry]; omega) (by rw [hhigh]; omega) (by omega) (by simpa using hu)
+    refine ⟨?_, step.2⟩
+    have e := step.1
+    rw [hcarry, hhigh, show i + 1 + j = i + j + 1 by omega,
+      show B ^ (i + j + 1) = B ^ (i + j) * B from Nat.pow_succ ..] at e
+    rw [hlow] at written
+    rw [tail_step v i, Nat.mul_add g.toNat, Nat.mul_left_comm g.toNat]
+    have inner : carry.toNat + borrow.toNat + (g.toNat * digit v i + B * (g.toNat * tail v (i + 1)))
+          + difference.toNat % B
+        = digit u (i + j)
+          + B * (product.toNat / B + difference.toNat / 9223372036854775808 + g.toNat * tail v (i + 1)) := by
+      generalize g.toNat * tail v (i + 1) = X
+      omega
+    have scaled := congrArg (B ^ (i + j) * ·) inner
+    generalize value (takeLoop v g j (i + 1) (product >>> 32) (difference >>> 63)
+      (u.setIfInBounds (i + j) difference.toUInt32)).1 = after at *
+    generalize B ^ (j + v.size + 1) * (takeLoop v g j (i + 1) (product >>> 32) (difference >>> 63)
+      (u.setIfInBounds (i + j) difference.toUInt32)).2.toNat = over at *
+    generalize value (u.setIfInBounds (i + j) difference.toUInt32) = between at *
+    generalize g.toNat * tail v (i + 1) = X at *
+    generalize g.toNat * digit v i = gd at *
+    generalize B ^ (i + j) = P at *
+    simp only [Nat.mul_add, Nat.mul_assoc] at scaled written e ⊢
+    omega
+  | case2 i carry borrow u h difference =>
+    have lu := digit_lt u (j + v.size)
+    have hdiff : difference.toNat =
+        (digit u (j + v.size) + 18446744073709551616 - carry.toNat - borrow.toNat) % 18446744073709551616 := by
+      simp only [difference, UInt64.toNat_sub, limb_toNat]; omega
+    have hhigh : (difference >>> 63).toNat = difference.toNat / 9223372036854775808 := by
+      simp [UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow]
+    have hlow : difference.toUInt32.toNat = difference.toNat % B := by simp
+    have written := value_set u (j + v.size) difference.toUInt32 hu
+    have hiv : i = v.size := by omega
+    subst hiv
+    rw [hlow] at written
+    dsimp only
+    rw [tail_of_le v _ (Nat.le_refl _), hhigh, Nat.add_comm v.size j, Nat.pow_succ]
+    refine ⟨?_, by omega⟩
+    have inner : difference.toNat % B + carry.toNat + borrow.toNat
+        = digit u (j + v.size) + B * (difference.toNat / 9223372036854775808) := by omega
+    have scaled := congrArg (B ^ (j + v.size) * ·) inner
+    generalize value (u.setIfInBounds (j + v.size) difference.toUInt32) = after at *
+    generalize B ^ (j + v.size) = P at *
+    simp only [Nat.mul_add, Nat.mul_assoc, Nat.mul_zero, Nat.add_zero] at scaled written ⊢
+    omega
+
+/-! ### D6: putting the divisor back -/
+
+theorem putBackLoop_size (v : Limbs) (j i : Nat) (carry : UInt64) (u : Limbs) :
+    (putBackLoop v j i carry u).size = u.size := by
+  fun_induction putBackLoop v j i carry u with
+  | case1 i carry u h sum ih => simp [ih]
+  | case2 i carry u h => simp
+
+theorem putBackLoop_tail (v : Limbs) (j i : Nat) (carry : UInt64) (u : Limbs) (m : Nat)
+    (hm : j + v.size < m) : tail (putBackLoop v j i carry u) m = tail u m := by
+  fun_induction putBackLoop v j i carry u with
+  | case1 i carry u h sum ih => rw [ih, tail_set_above _ _ _ _ (by omega)]
+  | case2 i carry u h => exact tail_set_above _ _ _ _ (by omega)
+
+/-- `putBackLoop` adds what is left of `v`, and the carry, to `u` at its place, and drops whatever is carried
+out of the limb above the last of `v`: `c`, which is 0 or 1. -/
+theorem putBackLoop_value (v : Limbs) (j i : Nat) (carry : UInt64) (u : Limbs)
+    (hc : carry.toNat ≤ 1) (hi : i ≤ v.size) (hu : j + v.size < u.size) :
+    ∃ c, c ≤ 1 ∧ value (putBackLoop v j i carry u) + B ^ (j + v.size + 1) * c
+      = value u + B ^ (i + j) * (carry.toNat + tail v i) := by
+  fun_induction putBackLoop v j i carry u with
+  | case1 i carry u h sum ih =>
+    have lv := digit_lt v i; have lu := digit_lt u (i + j)
+    have hsum : sum.toNat = digit u (i + j) + digit v i + carry.toNat := by
+      simp only [sum, UInt64.toNat_add, limb_toNat]; omega
+    have hhigh : (sum >>> 32).toNat = sum.toNat / B := by
+      simp [UInt64.toNat_shiftRight, Nat.shiftRight_eq_div_pow]
+    have hlow : sum.toUInt32.toNat = sum.toNat % B := by simp
+    have written := value_set u (i + j) sum.toUInt32 (by omega)
+    obtain ⟨c, hc', e⟩ := ih (by rw [hhigh]; omega) (by omega) (by simpa using hu)
+    refine ⟨c, hc', ?_⟩
+    rw [hhigh, show i + 1 + j = i + j + 1 by omega,
+      show B ^ (i + j + 1) = B ^ (i + j) * B from Nat.pow_succ ..] at e
+    rw [hlow] at written
+    rw [tail_step v i]
+    have inner : sum.toNat % B + B * (sum.toNat / B) = digit u (i + j) + digit v i + carry.toNat := by omega
+    have scaled := congrArg (B ^ (i + j) * ·) inner
+    generalize value (putBackLoop v j (i + 1) (sum >>> 32) (u.setIfInBounds (i + j) sum.toUInt32)) = after at *
+    generalize B ^ (j + v.size + 1) * c = over at *
+    generalize value (u.setIfInBounds (i + j) sum.toUInt32) = between at *
+    generalize B ^ (i + j) = P at *
+    simp only [Nat.mul_add, Nat.mul_assoc] at scaled written e ⊢
+    omega
+  | case2 i carry u h =>
+    have lu := digit_lt u (j + v.size)
+    have hiv : i = v.size := by omega
+    subst hiv
+    have hlow : (limb u (j + v.size) + carry).toUInt32.toNat = (digit u (j + v.size) + carry.toNat) % B := by
+      simp only [UInt64.toNat_toUInt32, UInt64.toNat_add, limb_toNat]; omega
+    have written := value_set u (j + v.size) (limb u (j + v.size) + carry).toUInt32 hu
+    rw [hlow] at written
+    refine ⟨(digit u (j + v.size) + carry.toNat) / B, by omega, ?_⟩
+    rw [tail_of_le v _ (Nat.le_refl _), Nat.add_comm v.size j, Nat.pow_succ]
+    have inner : (digit u (j + v.size) + carry.toNat) % B + B * ((digit u (j + v.size) + carry.toNat) / B)
+        = digit u (j + v.size) + carry.toNat := by omega
+    have scaled := congrArg (B ^ (j + v.size) * ·) inner
+    generalize value (u.setIfInBounds (j + v.size) (limb u (j + v.size) + carry).toUInt32) = after at *
+    generalize B ^ (j + v.size) = P at *
+    simp only [Nat.mul_add, Nat.mul_assoc, Nat.add_zero] at scaled written ⊢
+    omega
+
+/-- Two limbs in a word: the first moved up 32 bits, over the second. -/
+theorem two_limbs_word (hi lo : UInt64) (hhi : hi.toNat < B) (hlo : lo.toNat < B) :
+    ((hi <<< 32) ||| lo).toNat = hi.toNat * B + lo.toNat := by
+  have e : hi.toNat <<< 32 % 2 ^ 64 = hi.toNat <<< 32 := Nat.mod_eq_of_lt (by rw [Nat.shiftLeft_eq]; omega)
+  rw [UInt64.toNat_or, UInt64.toNat_shiftLeft, show (32 : UInt64).toNat % 64 = 32 from rfl, e,
+    ← Nat.shiftLeft_add_eq_or_of_lt (show lo.toNat < 2 ^ 32 by omega), Nat.shiftLeft_eq]
+
+theorem toNat_pred (g : UInt64) (h : 0 < g.toNat) : (g - 1).toNat = g.toNat - 1 := by
+  have := g.toNat_lt
+  rw [UInt64.toNat_sub, show (1 : UInt64).toNat = 1 from rfl]; omega
+
+/-! ### D3: the guess at a quotient limb
+
+`V` is the divisor and `U` what it is being divided into at this step, each cut below its top limbs:
+`V = (v1 B + v2) P + Vl` and `U = (top B + u2) P + Ul`, where `top` is the top two limbs of `U`. -/
+
+/-- If `q` times a number is no more than another, the same holds of their tops. -/
+theorem mul_top_le (q x y z w M : Nat) (hw : w < M) (h : q * (x * M + y) ≤ z * M + w) : q * x ≤ z := by
+  have h1 : q * x * M ≤ q * (x * M + y) := by
+    rw [Nat.mul_assoc]; exact Nat.mul_le_mul_left _ (Nat.le_add_right _ _)
+  have h2 : q * x * M < (z + 1) * M := by
+    rw [Nat.add_mul, Nat.one_mul]; omega
+  exact Nat.le_of_lt_succ (Nat.lt_of_mul_lt_mul_right h2)
+
+/-- A guess that fails the test on the second limb is too large. -/
+theorem guess_too_large (g v1 v2 rhat top u2 P Vl Ul : Nat)
+    (hinv : g * v1 + rhat = top) (htest : rhat * B + u2 < g * v2) (hUl : Ul < P) :
+    (top * B + u2) * P + Ul < g * ((v1 * B + v2) * P + Vl) := by
+  have h1 : top * B + u2 + 1 ≤ g * (v1 * B + v2) := by
+    rw [← hinv, Nat.mul_add, Nat.add_mul, Nat.mul_assoc]; omega
+  have h2 : (top * B + u2 + 1) * P ≤ g * (v1 * B + v2) * P := Nat.mul_le_mul_right _ h1
+  have h3 : g * ((v1 * B + v2) * P + Vl) = g * (v1 * B + v2) * P + g * Vl := by
+    rw [Nat.mul_add, Nat.mul_assoc]
+  have h4 : (top * B + u2 + 1) * P = (top * B + u2) * P + P := by rw [Nat.add_mul, Nat.one_mul]
+  rw [h4] at h2
+  rw [h3]
+  omega
+
+/-- A guess that passes the test on the second limb is at most one too large. -/
+theorem guess_close (g v1 v2 rhat top u2 P Vl Ul : Nat)
+    (hinv : g * v1 + rhat = top) (htest : g * v2 ≤ rhat * B + u2) (hg : g < B) (hv1 : 0 < v1) (hVl : Vl < P) :
+    g * ((v1 * B + v2) * P + Vl) < ((top * B + u2) * P + Ul) + ((v1 * B + v2) * P + Vl) := by
+  have h1 : g * (v1 * B + v2) ≤ top * B + u2 := by
+    rw [← hinv, Nat.mul_add, Nat.add_mul, Nat.mul_assoc]; omega
+  have h2 : g * (v1 * B + v2) * P ≤ (top * B + u2) * P := Nat.mul_le_mul_right _ h1
+  have h3 : g * ((v1 * B + v2) * P + Vl) = g * (v1 * B + v2) * P + g * Vl := by
+    rw [Nat.mul_add, Nat.mul_assoc]
+  have h4 : g * Vl ≤ g * P := Nat.mul_le_mul_left _ (by omega)
+  have h5 : (g + 1) * P ≤ B * P := Nat.mul_le_mul_right _ (by omega)
+  have h6 : B * P ≤ (v1 * B + v2) * P := Nat.mul_le_mul_right _ (by omega)
+  rw [Nat.add_mul, Nat.one_mul] at h5
+  rw [h3]
+  omega
+
+/-- What a guess at a quotient limb has to be for the step to come out: a limb, never too small, and at
+most one too large. -/
+def GoodGuess (r U V : Nat) : Prop := r < B ∧ (∀ q, q * V ≤ U → q ≤ r) ∧ r * V < U + V
+
+/-- `refine` leaves a good guess, given one that is not too small and a divisor whose top bit is set. Each
+time round, `rest` grows by the divisor's top limb, which is at least half a limb's range, so twice round
+is the most there is. -/
+theorem refine_spec (g rest v1 v2 u2 : UInt64) (fuel : Nat) (top P Vl Ul U V : Nat)
+    (hV : V = (v1.toNat * B + v2.toNat) * P + Vl) (hU : U = (top * B + u2.toNat) * P + Ul)
+    (hv1 : 2147483648 ≤ v1.toNat) (hv1' : v1.toNat < B) (hv2 : v2.toNat < B) (hu2 : u2.toNat < B)
+    (hVl : Vl < P) (hUl : Ul < P) (htop : top < (v1.toNat + 1) * B) (hUV : U < V * B)
+    (hrest : rest.toNat < B) (hfuel : B ≤ rest.toNat + fuel * 2147483648)
+    (hinv : g.toNat * v1.toNat + rest.toNat = top)
+    (hlow : ∀ q, q * V ≤ U → q ≤ g.toNat) :
+    GoodGuess (refine g rest v1 v2 u2 fuel).toNat U V := by
+  induction fuel generalizing g rest with
+  | zero => omega
+  | succ fuel ih =>
+    have m : (0xFFFFFFFF : UInt64).toNat = 4294967295 := rfl
+    have hsum : (rest + v1).toNat = rest.toNat + v1.toNat := by
+      rw [UInt64.toNat_add]; exact Nat.mod_eq_of_lt (by omega)
+    have small : ∀ q, q * V ≤ U → q < B := fun q hq =>
+      Nat.lt_of_mul_lt_mul_right (a := V) (by rw [Nat.mul_comm B V]; omega)
+    -- One step down, whichever test asked for it.
+    have down : 0 < g.toNat → (∀ q, q * V ≤ U → q < g.toNat) →
+        GoodGuess (if rest + v1 > 0xFFFFFFFF then g - 1 else refine (g - 1) (rest + v1) v1 v2 u2 fuel).toNat
+          U V := by
+      intro gpos strict
+      have hg1 : (g - 1).toNat = g.toNat - 1 := by
+        have := g.toNat_lt
+        rw [UInt64.toNat_sub, show (1 : UInt64).toNat = 1 from rfl]; omega
+      have hinv' : (g - 1).toNat * v1.toNat + (rest + v1).toNat = top := by
+        obtain ⟨k, hk⟩ : ∃ k, g.toNat = k + 1 := ⟨g.toNat - 1, by omega⟩
+        rw [hg1, hsum]
+        rw [hk, Nat.add_mul, Nat.one_mul] at hinv
+        rw [hk, Nat.add_sub_cancel]
+        omega
+      have hlow' : ∀ q, q * V ≤ U → q ≤ (g - 1).toNat := fun q hq => by
+        have := strict q hq; omega
+      by_cases over : rest + v1 > 0xFFFFFFFF
+      · simp only [over, ↓reduceIte]
+        have ov : B ≤ rest.toNat + v1.toNat := by
+          have := UInt64.lt_iff_toNat_lt.mp over
+          rw [m, hsum] at this; omega
+        have kv : (g - 1).toNat * v1.toNat < B * v1.toNat := by
+          rw [Nat.add_mul, Nat.one_mul] at htop
+          rw [hsum] at hinv'
+          rw [Nat.mul_comm B]
+          omega
+        have kB : (g - 1).toNat < B := Nat.lt_of_mul_lt_mul_right kv
+        have prod : (g - 1).toNat * v2.toNat ≤ 4294967295 * 4294967295 := Nat.mul_le_mul (by omega) (by omega)
+        refine ⟨kB, hlow', ?_⟩
+        subst hV hU
+        exact guess_close _ _ _ _ _ _ _ _ _ hinv' (by rw [hsum]; omega) kB (by omega) hVl
+      · simp only [over, ↓reduceIte]
+        have nov : rest.toNat + v1.toNat < B := by
+          have := mt UInt64.lt_iff_toNat_lt.mpr over
+          rw [m, hsum] at this; omega
+        exact ih (g - 1) (rest + v1) (by rw [hsum]; exact nov) (by rw [hsum]; omega) hinv' hlow'
+    simp only [refine]
+    by_cases big : 4294967295 < g.toNat
+    · have hc : (decide (g > 0xFFFFFFFF) || decide (g * v2 > ((rest <<< 32) ||| u2))) = true := by
+        simp only [Bool.or_eq_true, decide_eq_true_eq]
+        exact Or.inl (UInt64.lt_iff_toNat_lt.mpr (by rw [m]; exact big))
+      simp only [hc, ↓reduceIte]
+      exact down (by omega) (fun q hq => by have := small q hq; omega)
+    · have e1 : (g * v2).toNat = g.toNat * v2.toNat := by
+        have : g.toNat * v2.toNat ≤ 4294967295 * 4294967295 := Nat.mul_le_mul (by omega) (by omega)
+        rw [UInt64.toNat_mul]; exact Nat.mod_eq_of_lt (by omega)
+      have e2 : ((rest <<< 32) ||| u2).toNat = rest.toNat * B + u2.toNat := by
+        have e : rest.toNat <<< 32 % 2 ^ 64 = rest.toNat <<< 32 :=
+          Nat.mod_eq_of_lt (by rw [Nat.shiftLeft_eq]; omega)
+        rw [UInt64.toNat_or, UInt64.toNat_shiftLeft, show (32 : UInt64).toNat % 64 = 32 from rfl, e,
+          ← Nat.shiftLeft_add_eq_or_of_lt (show u2.toNat < 2 ^ 32 by omega), Nat.shiftLeft_eq]
+      by_cases test : rest.toNat * B + u2.toNat < g.toNat * v2.toNat
+      · have hc : (decide (g > 0xFFFFFFFF) || decide (g * v2 > ((rest <<< 32) ||| u2))) = true := by
+          simp only [Bool.or_eq_true, decide_eq_true_eq]
+          exact Or.inr (UInt64.lt_iff_toNat_lt.mpr (by rw [e1, e2]; exact test))
+        simp only [hc, ↓reduceIte]
+        have gpos : 0 < g.toNat := Nat.pos_of_ne_zero (fun z => by rw [z, Nat.zero_mul] at test; omega)
+        refine down gpos (fun q hq => ?_)
+        have tl : U < g.toNat * V := by
+          subst hV hU; exact guess_too_large _ _ _ _ _ _ _ _ _ hinv test hUl
+        exact Nat.lt_of_mul_lt_mul_right (a := V) (by omega)
+      · have hc : (decide (g > 0xFFFFFFFF) || decide (g * v2 > ((rest <<< 32) ||| u2))) = false := by
+          simp only [Bool.or_eq_false_iff, decide_eq_false_iff_not]
+          exact ⟨fun h => big (by have := UInt64.lt_iff_toNat_lt.mp h; rwa [m] at this),
+            fun h => test (by have := UInt64.lt_iff_toNat_lt.mp h; rwa [e1, e2] at this)⟩
+        simp only [hc, Bool.false_eq_true, ↓reduceIte]
+        refine ⟨by omega, hlow, ?_⟩
+        subst hV hU
+        exact guess_close _ _ _ _ _ _ _ _ _ hinv (by omega) (by omega) (by omega) hVl
+
+/-! ### D1: the shift that sets the divisor's top bit -/
+
+theorem and_top_bit (x : Nat) (hx : x < B) : x &&& 2147483648 = 0 ↔ x < 2147483648 := by
+  constructor
+  · intro h
+    apply Classical.byContradiction
+    intro hge
+    have t : x.testBit 31 = true := Nat.testBit_of_two_pow_le_and_two_pow_add_one_gt (by omega) (by omega)
+    have both : (x &&& 2147483648).testBit 31 = true := by
+      rw [Nat.testBit_and, t, show (2147483648 : Nat) = 2 ^ 31 from rfl, Nat.testBit_two_pow_self]; rfl
+    rw [h] at both
+    simp at both
+  · intro h
+    apply Nat.eq_of_testBit_eq
+    intro i
+    rw [Nat.testBit_and, show (2147483648 : Nat) = 2 ^ 31 from rfl, Nat.testBit_two_pow, Nat.zero_testBit]
+    by_cases e : 31 = i
+    · subst e; rw [Nat.testBit_lt_two_pow (by omega)]; rfl
+    · simp [e]
+
+/-- `topShift` finds the shift, below 32, that puts a limb's top bit at the top of the limb. -/
+theorem topShift_spec (top s : UInt64) (fuel : Nat) (hpos : 0 < top.toNat)
+    (hs : s.toNat ≤ 32) (hlt : top.toNat * 2 ^ s.toNat < B) (hfuel : 32 ≤ s.toNat + fuel) :
+    (topShift top s fuel).toNat < 32
+      ∧ 2147483648 ≤ top.toNat * 2 ^ (topShift top s fuel).toNat
+      ∧ top.toNat * 2 ^ (topShift top s fuel).toNat < B := by
+  induction fuel generalizing s with
+  | zero =>
+    have e : s.toNat = 32 := by omega
+    rw [e] at hlt; omega
+  | succ fuel ih =>
+    have hshift : (top <<< s).toNat = top.toNat * 2 ^ s.toNat := by
+      rw [UInt64.toNat_shiftLeft, Nat.mod_eq_of_lt (show s.toNat < 64 by omega), Nat.shiftLeft_eq,
+        Nat.mod_eq_of_lt (by omega)]
+    have hbit : ((top <<< s) &&& 0x80000000 == 0) = true ↔ top.toNat * 2 ^ s.toNat < 2147483648 := by
+      rw [beq_iff_eq, ← UInt64.toNat_inj, UInt64.toNat_and, hshift,
+        show (0x80000000 : UInt64).toNat = 2147483648 from rfl, show (0 : UInt64).toNat = 0 from rfl]
+      exact and_top_bit _ hlt
+    simp only [topShift]
+    by_cases clear : top.toNat * 2 ^ s.toNat < 2147483648
+    · simp only [hbit.mpr clear, ↓reduceIte]
+      have s31 : s.toNat < 31 := by
+        apply Classical.byContradiction
+        intro h
+        have h1 : 2 ^ 31 ≤ 2 ^ s.toNat := Nat.pow_le_pow_right (by decide) (by omega)
+        have h2 : 1 * 2 ^ s.toNat ≤ top.toNat * 2 ^ s.toNat := Nat.mul_le_mul_right _ hpos
+        omega
+      have hs1 : (s + 1).toNat = s.toNat + 1 := by
+        rw [UInt64.toNat_add, show (1 : UInt64).toNat = 1 from rfl]; exact Nat.mod_eq_of_lt (by omega)
+      exact ih (s + 1) (by rw [hs1]; omega) (by rw [hs1, Nat.pow_succ, ← Nat.mul_assoc]; omega)
+        (by rw [hs1]; omega)
+    · have nb : ((top <<< s) &&& 0x80000000 == 0) = false := by
+        cases hb : ((top <<< s) &&& 0x80000000 == 0)
+        · rfl
+        · exact absurd (hbit.mp hb) clear
+      simp only [nb, Bool.false_eq_true, ↓reduceIte]
+      have s32 : s.toNat < 32 := by
+        apply Classical.byContradiction
+        intro h
+        have e : s.toNat = 32 := by omega
+        rw [e] at hlt; omega
+      exact ⟨s32, by omega, hlt⟩
+
+/-! ### D2 to D7: one quotient limb at a time -/
+
+/-- The limbs from `i` up are `k` limbs and then the limbs from `i + k` up. -/
+theorem tail_split (a : Limbs) (i k : Nat) : ∃ low, low < B ^ k ∧ tail a i = low + B ^ k * tail a (i + k) := by
+  induction k with
+  | zero => exact ⟨0, by simp, by simp⟩
+  | succ k ih =>
+    obtain ⟨low, hl, e⟩ := ih
+    have d := digit_lt a (i + k)
+    refine ⟨low + B ^ k * digit a (i + k), ?_, ?_⟩
+    · have : B ^ k * digit a (i + k) ≤ B ^ k * 4294967295 := Nat.mul_le_mul_left _ (by omega)
+      rw [Nat.pow_succ]
+      generalize B ^ k = P at *
+      omega
+    · rw [e, tail_step a (i + k), Nat.pow_succ, show i + (k + 1) = i + k + 1 from rfl]
+      generalize B ^ k = P
+      simp only [Nat.mul_add, Nat.mul_assoc]
+      omega
+
+theorem two_limbs (P Vl v2 v1 : Nat) : Vl + P * (v2 + B * (v1 + B * 0)) = (v1 * B + v2) * P + Vl := by
+  have e : v1 * B + v2 = v2 + B * (v1 + B * 0) := by omega
+  rw [e, Nat.mul_comm _ P]; omega
+
+theorem three_limbs (P Ul u2 u1 u0 : Nat) :
+    Ul + P * (u2 + B * (u1 + B * (u0 + B * 0))) = ((u0 * B + u1) * B + u2) * P + Ul := by
+  have e : (u0 * B + u1) * B + u2 = u2 + B * (u1 + B * (u0 + B * 0)) := by omega
+  rw [e, Nat.mul_comm _ P]; omega
+
+/-- What is being divided into is less than the divisor times a limb's range, so its top two limbs are
+bounded by the divisor's top limb. -/
+theorem top_bound (top u2 Ul v1 v2 Vl P : Nat) (hv2 : v2 < B) (hVl : Vl < P)
+    (h : (top * B + u2) * P + Ul < ((v1 * B + v2) * P + Vl) * B) : top < (v1 + 1) * B := by
+  have a : top * (B * P) ≤ (top * B + u2) * P + Ul := by
+    have := Nat.mul_le_mul_right P (Nat.le_add_right (top * B) u2)
+    rw [← Nat.mul_assoc]; omega
+  have b : (v1 * B + v2) * P + Vl < (v1 + 1) * B * P := by
+    have t := Nat.mul_le_mul_right P (show v1 * B + v2 + 1 ≤ (v1 + 1) * B by omega)
+    have e : (v1 * B + v2 + 1) * P = (v1 * B + v2) * P + P := by rw [Nat.add_mul, Nat.one_mul]
+    rw [e] at t
+    exact Nat.lt_of_lt_of_le (Nat.add_lt_add_left hVl _) t
+  have c : ((v1 * B + v2) * P + Vl) * B < (v1 + 1) * B * P * B := (Nat.mul_lt_mul_right (by omega)).mpr b
+  have d : (v1 + 1) * B * P * B = (v1 + 1) * B * (B * P) := by rw [Nat.mul_assoc, Nat.mul_comm P B]
+  rw [d] at c
+  exact Nat.lt_of_mul_lt_mul_right (a := B * P) (Nat.lt_of_le_of_lt a (Nat.lt_trans h c))
+
+theorem step_remainder (Pj L U V : Nat) (hL : L < Pj) (hV : 0 < V) : L + Pj * (U % V) < V * Pj := by
+  have h : U % V + 1 ≤ V := Nat.mod_lt _ hV
+  have := Nat.mul_le_mul_left Pj h
+  rw [Nat.mul_add, Nat.mul_one, Nat.mul_comm Pj V] at this
+  omega
+
+theorem step_invariant (qv V Pj L U : Nat) :
+    (qv + Pj * (U / V)) * V + (L + Pj * (U % V)) = qv * V + (L + Pj * U) := by
+  have dm := Nat.div_add_mod U V
+  have e : Pj * (U / V) * V + Pj * (U % V) = Pj * U := by
+    rw [Nat.mul_assoc, ← Nat.mul_add, Nat.mul_comm (U / V) V, dm]
+  rw [Nat.add_mul]; omega
+
+/-- A good guess that could be taken off without going below zero was the quotient limb. -/
+theorem step_exact (Pj L U V g u1 : Nat) (hL : L < Pj) (hV : 0 < V)
+    (h : u1 + Pj * (g * V) = L + Pj * U) (hge : ∀ q, q * V ≤ U → q ≤ g) :
+    g = U / V ∧ u1 = L + Pj * (U % V) := by
+  have h1 : Pj * (g * V) < Pj * (U + 1) := by rw [Nat.mul_add, Nat.mul_one]; omega
+  have h2 : g * V ≤ U := Nat.le_of_lt_succ (Nat.lt_of_mul_lt_mul_left h1)
+  have h3 : g ≤ U / V := (Nat.le_div_iff_mul_le hV).mpr h2
+  have h4 : U / V ≤ g := hge _ (Nat.div_mul_le_self U V)
+  have hg : g = U / V := by omega
+  refine ⟨hg, ?_⟩
+  have dm := Nat.div_add_mod U V
+  have e : Pj * U = Pj * (g * V) + Pj * (U % V) := by
+    rw [← Nat.mul_add, hg, Nat.mul_comm (U / V) V, dm]
+  omega
+
+/-- A good guess that went below zero was one too large, and putting the divisor back once leaves what the
+quotient limb would have: the carry out of the top cancels the borrow. -/
+theorem step_borrow (Pj L U V g u1 u2 Z c : Nat) (hL : L < Pj) (hV : 0 < V)
+    (h1 : u1 + Pj * (g * V) = L + Pj * U + Z) (hu1 : u1 < Z)
+    (hge : ∀ q, q * V ≤ U → q ≤ g) (hclose : g * V < U + V)
+    (h2 : u2 + Z * c = u1 + Pj * V) (hc : c ≤ 1) (hu2 : u2 < Z) (hVZ : V * Pj ≤ Z) :
+    g = U / V + 1 ∧ u2 = L + Pj * (U % V) := by
+  have h3 : Pj * U < Pj * (g * V) := by omega
+  have h4 : U < g * V := Nat.lt_of_mul_lt_mul_left h3
+  have h5 : U / V ≤ g := hge _ (Nat.div_mul_le_self U V)
+  have h6 : g ≠ U / V := fun e => by
+    have := Nat.div_mul_le_self U V
+    rw [← e] at this; omega
+  have a : U < V * (U / V + 1) := Nat.lt_mul_div_succ U hV
+  have b : (U / V + 2) * V = V * (U / V + 1) + V := by
+    rw [Nat.mul_comm V, Nat.add_mul, Nat.add_mul]; omega
+  have h7 : g * V < (U / V + 2) * V := by rw [b]; omega
+  have h8 : g < U / V + 2 := Nat.lt_of_mul_lt_mul_right h7
+  have hg : g = U / V + 1 := by omega
+  refine ⟨hg, ?_⟩
+  have dm := Nat.div_add_mod U V
+  have e1 : Pj * (g * V) = Pj * (V * (U / V)) + Pj * V := by
+    rw [hg, Nat.add_mul, Nat.one_mul, Nat.mul_add, Nat.mul_comm (U / V) V]
+  have e2 : Pj * U = Pj * (V * (U / V)) + Pj * (U % V) := by rw [← Nat.mul_add, dm]
+  have rem := step_remainder Pj L U V hL hV
+  have hc' : c = 0 ∨ c = 1 := by omega
+  have fits := hVZ
+  rcases hc' with rfl | rfl
+  · rw [Nat.mul_zero] at h2; omega
+  · rw [Nat.mul_one] at h2; omega
+
+/-- The loop of long division. Going in, what is left of the dividend is less than the divisor moved up by
+the quotient limbs still to come, and the quotient so far times the divisor, plus what is left, is the
+dividend. Coming out, the same holds with nothing still to come: a quotient and a remainder. The divisor
+has two limbs or more and its top bit set. -/
+theorem divideLongLoop_value (v u q : Limbs) (j : Nat) (A : Nat)
+    (hn : 2 ≤ v.size) (hnorm : 2147483648 ≤ digit v (v.size - 1))
+    (hus : j + v.size ≤ u.size) (hqs : j ≤ q.size) (hqz : ∀ m, m < j → digit q m = 0)
+    (hrem : value u < value v * B ^ j) (hinv : value q * value v + value u = A) :
+    value (divideLongLoop v u q j).1 * value v + value (divideLongLoop v u q j).2 = A
+      ∧ value (divideLongLoop v u q j).2 < value v := by
+  induction j generalizing u q with
+  | zero =>
+    simp only [divideLongLoop]
+    exact ⟨hinv, by simpa using hrem⟩
+  | succ j ih =>
+    obtain ⟨k, hk⟩ : ∃ k, v.size = k + 2 := ⟨v.size - 2, by omega⟩
+    have i1 : v.size - 1 = k + 1 := by omega
+    have i2 : v.size - 2 = k := by omega
+    have i3 : j + v.size - 1 = j + k + 1 := by omega
+    have i4 : j + v.size - 2 = j + k := by omega
+    have i5 : j + v.size = j + k + 1 + 1 := by omega
+    rw [i1] at hnorm
+    have v1lt := digit_lt v (k + 1); have v2lt := digit_lt v k
+    have u2lt := digit_lt u (j + k); have u1lt := digit_lt u (j + k + 1)
+    have u0lt := digit_lt u (j + k + 1 + 1)
+    have v1pos : 0 < digit v (k + 1) := by omega
+    have Vpos : 0 < value v := by
+      apply Nat.pos_of_ne_zero
+      intro z
+      rw [z, Nat.zero_mul] at hrem; omega
+    -- The divisor, cut below its top two limbs.
+    have hVs : value v = (digit v (k + 1) * B + digit v k) * B ^ k + lower v k := by
+      have s := value_split v k
+      rw [tail_step v k, tail_step v (k + 1), tail_of_le v (k + 1 + 1) (by omega)] at s
+      rw [s]; exact two_limbs _ _ _ _
+    have hVlt : value v < B ^ (k + 1 + 1) := by
+      have := value_lt_pow v
+      rwa [hk] at this
+    -- What is being divided into: the limbs of `u` from `j` up, cut below their top three.
+    have hsplit := value_split u j
+    have hL := lower_lt u j
+    have hUlt : tail u j < value v * B := by
+      have h' := hrem
+      rw [hsplit, Nat.pow_succ, ← Nat.mul_assoc, Nat.mul_comm (value v), Nat.mul_assoc] at h'
+      exact Nat.lt_of_mul_lt_mul_left (a := B ^ j) (by omega)
+    have hZ : value u < B ^ (j + k + 1 + 1 + 1) := by
+      have a : value v * B ^ (j + 1) < B ^ (k + 1 + 1) * B ^ (j + 1) :=
+        (Nat.mul_lt_mul_right (Nat.pow_pos (by decide))).mpr hVlt
+      rw [← Nat.pow_add, show k + 1 + 1 + (j + 1) = j + k + 1 + 1 + 1 by omega] at a
+      omega
+    have tz : tail u (j + k + 1 + 1 + 1) = 0 := tail_of_value_lt u _ hZ
+    obtain ⟨Ul, hUl, eU⟩ := tail_split u j k
+    have hUs : tail u j
+        = ((digit u (j + k + 1 + 1) * B + digit u (j + k + 1)) * B + digit u (j + k)) * B ^ k + Ul := by
+      rw [eU, tail_step u (j + k), tail_step u (j + k + 1), tail_step u (j + k + 1 + 1), tz]
+      exact three_limbs _ _ _ _ _
+    have htopb : digit u (j + k + 1 + 1) * B + digit u (j + k + 1) < (digit v (k + 1) + 1) * B := by
+      have h' := hUlt
+      rw [hUs, hVs] at h'
+      exact top_bound _ _ _ _ _ _ _ v2lt (lower_lt v k) h'
+    -- The step itself.
+    simp only [divideLongLoop]
+    rw [i1, i2, i3, i4, i5]
+    generalize htop : (limb u (j + k + 1 + 1) <<< 32) ||| limb u (j + k + 1) = top64
+    have htopN : top64.toNat = digit u (j + k + 1 + 1) * B + digit u (j + k + 1) := by
+      subst htop
+      rw [two_limbs_word _ _ (by rw [limb_toNat]; exact u0lt) (by rw [limb_toNat]; exact u1lt), limb_toNat,
+        limb_toNat]
+    generalize hg : refine (top64 / limb v (k + 1)) (top64 % limb v (k + 1)) (limb v (k + 1)) (limb v k)
+      (limb u (j + k)) 4 = g
+    have good : GoodGuess g.toNat (tail u j) (value v) := by
+      rw [← hg]
+      refine refine_spec _ _ _ _ _ 4 (digit u (j + k + 1 + 1) * B + digit u (j + k + 1)) (B ^ k) (lower v k) Ul
+        (tail u j) (value v) ?_ ?_ ?_ ?_ ?_ ?_ (lower_lt v k) hUl ?_ hUlt ?_ ?_ ?_ ?_
+      · rw [limb_toNat, limb_toNat]; exact hVs
+      · rw [limb_toNat]; exact hUs
+      · rw [limb_toNat]; exact hnorm
+      · rw [limb_toNat]; exact v1lt
+      · rw [limb_toNat]; exact v2lt
+      · rw [limb_toNat]; exact u2lt
+      · rw [limb_toNat]; exact htopb
+      · rw [UInt64.toNat_mod, limb_toNat, htopN]
+        have := Nat.mod_lt (digit u (j + k + 1 + 1) * B + digit u (j + k + 1)) v1pos
+        omega
+      · omega
+      · rw [UInt64.toNat_div, UInt64.toNat_mod, limb_toNat, htopN]
+        exact Nat.div_add_mod' _ _
+      · intro q hq
+        rw [UInt64.toNat_div, limb_toNat, htopN]
+        rw [hVs, hUs] at hq
+        have a := mul_top_le q _ _ _ _ _ hUl hq
+        have b := mul_top_le q _ _ _ _ _ u2lt a
+        exact (Nat.le_div_iff_mul_le v1pos).mpr b
+    obtain ⟨gB, glow, gclose⟩ := good
+    have hVZ : value v * B ^ j ≤ B ^ (j + v.size + 1) := by
+      have a : value v * B ^ j ≤ B ^ (k + 1 + 1) * B ^ j := Nat.mul_le_mul_right _ (Nat.le_of_lt hVlt)
+      rw [← Nat.pow_add] at a
+      exact Nat.le_trans a (Nat.pow_le_pow_right (by decide) (by omega))
+    have hRZ : value u < B ^ (j + v.size + 1) := by
+      rw [show j + v.size + 1 = j + k + 1 + 1 + 1 by omega]; exact hZ
+    have tzu : tail u (j + v.size + 1) = 0 := tail_of_value_lt u _ hRZ
+    -- Whichever way the step goes, it leaves the quotient limb written and the remainder in `u`.
+    have finish : ∀ (u' : Limbs) (d : UInt32), u'.size = u.size →
+        value u' = lower u j + B ^ j * (tail u j % value v) → d.toNat = tail u j / value v →
+        value (divideLongLoop v u' (q.setIfInBounds j d) j).1 * value v
+            + value (divideLongLoop v u' (q.setIfInBounds j d) j).2 = A
+          ∧ value (divideLongLoop v u' (q.setIfInBounds j d) j).2 < value v := by
+      intro u' d hsize hval hd
+      have written := value_set q j d (by omega)
+      rw [hqz j (Nat.lt_succ_self j), hd] at written
+      refine ih u' (q.setIfInBounds j d) (by omega) (by simp; omega)
+        (fun m hm => by rw [digit_set_ne _ _ _ _ (by omega)]; exact hqz m (by omega)) ?_ ?_
+      · rw [hval]; exact step_remainder _ _ _ _ hL Vpos
+      · have e : value (q.setIfInBounds j d) = value q + B ^ j * (tail u j / value v) := by
+          simpa using written
+        rw [e, hval, step_invariant, ← hsplit]; exact hinv
+    have tv := takeLoop_value v g j 0 0 0 u gB (by decide) (by decide) (Nat.zero_le _) (by omega)
+    have tt := takeLoop_tail v g j 0 0 0 u (j + v.size + 1) (by omega)
+    have ts := takeLoop_size v g j 0 0 0 u
+    generalize ht : takeLoop v g j 0 0 0 u = res at tv tt ts ⊢
+    obtain ⟨u1, below⟩ := res
+    dsimp only at tv tt ts ⊢
+    simp only [Nat.zero_add, tail_zero, show (0 : UInt64).toNat = 0 from rfl] at tv
+    by_cases hb : below = 0
+    · subst hb
+      simp only [bne_self_eq_false, Bool.false_eq_true, ↓reduceIte]
+      have e := tv.1
+      rw [show (0 : UInt64).toNat = 0 from rfl, Nat.mul_zero, Nat.add_zero, hsplit] at e
+      obtain ⟨eg, eu⟩ := step_exact _ _ _ _ _ _ hL Vpos e glow
+      exact finish u1 g.toUInt32 ts eu (by rw [UInt64.toNat_toUInt32, Nat.mod_eq_of_lt gB]; exact eg)
+    · have b1 : below.toNat = 1 := by
+        have nz : below.toNat ≠ 0 := fun z => hb (UInt64.toNat_inj.mp (by rw [z]; rfl))
+        have := tv.2
+        omega
+      simp only [bne_iff_ne, ne_eq, hb, not_false_eq_true, ↓reduceIte]
+      have e := tv.1
+      rw [b1, Nat.mul_one, hsplit] at e
+      have u1Z : value u1 < B ^ (j + v.size + 1) := value_lt_of_tail u1 _ (by rw [tt]; exact tzu)
+      obtain ⟨c, hc, pb⟩ := putBackLoop_value v j 0 0 u1 (by decide) (Nat.zero_le _) (by omega)
+      simp only [Nat.zero_add, tail_zero, show (0 : UInt64).toNat = 0 from rfl] at pb
+      have pt := putBackLoop_tail v j 0 0 u1 (j + v.size + 1) (by omega)
+      have u2Z : value (putBackLoop v j 0 0 u1) < B ^ (j + v.size + 1) :=
+        value_lt_of_tail _ _ (by rw [pt, tt]; exact tzu)
+      obtain ⟨eg, eu⟩ := step_borrow _ _ _ _ _ _ _ _ _ hL Vpos e u1Z glow gclose pb hc u2Z hVZ
+      have g1 : (g - 1).toUInt32.toNat = tail u j / value v := by
+        have gpos : 0 < g.toNat := by rw [eg]; exact Nat.succ_pos _
+        have small : tail u j / value v < B := by
+          have h := gB
+          rw [eg] at h
+          exact Nat.lt_of_succ_lt h
+        rw [UInt64.toNat_toUInt32, toNat_pred g gpos, eg, Nat.add_sub_cancel]
+        exact Nat.mod_eq_of_lt small
+      exact finish _ _ (by rw [putBackLoop_size]; exact ts) eu g1
+
+/-! ### D1 and D8: the shifts around the loop, and the whole of long division -/
+
+theorem shiftLeftLoop_size (a : Limbs) (bits : UInt64) (i : Nat) (carry : UInt64) (r : Limbs) :
+    (shiftLeftLoop a bits i carry r).size = r.size + (a.size - i) + 1 := by
+  fun_induction shiftLeftLoop a bits i carry r with
+  | case1 i carry r h t ih => rw [ih, Array.size_push]; omega
+  | case2 i carry r h => rw [Array.size_push]; omega
+
+theorem shiftLeft_size (a : Limbs) (whole : Nat) (bits : UInt64) :
+    (shiftLeft a whole bits).size = whole + a.size + 1 := by
+  rw [shiftLeft, shiftLeftLoop_size]; simp [zeros]
+
+/-- Long division by two limbs or more: the quotient rounded down and the remainder. The divisor has no zero
+limb on top and the dividend has at least as many limbs. -/
+theorem divideLong_value (a b : Limbs) (hn : 2 ≤ b.size) (hab : b.size ≤ a.size) (tb : Trimmed b) :
+    value (divideLong a b).1 = value a / value b ∧ value (divideLong a b).2 = value a % value b := by
+  obtain ⟨k, hk⟩ : ∃ k, b.size = k + 1 := ⟨b.size - 1, by omega⟩
+  have i1 : b.size - 1 = k := by omega
+  have btop : digit b k ≠ 0 := by
+    rcases tb with z | nz
+    · omega
+    · rwa [i1] at nz
+  have blt := digit_lt b k
+  have z : (0 : UInt64).toNat = 0 := rfl
+  have hs := topShift_spec (limb b k) 0 32 (by rw [limb_toNat]; omega) (by simp)
+    (by rw [z, limb_toNat, Nat.pow_zero, Nat.mul_one]; exact blt) (by simp)
+  rw [limb_toNat] at hs
+  simp only [divideLong]
+  rw [i1]
+  generalize topShift (limb b k) 0 32 = s at hs ⊢
+  obtain ⟨s32, slo, shi⟩ := hs
+  have Epos : 0 < 2 ^ s.toNat := Nat.two_pow_pos _
+  have EF : 2 ^ (32 - s.toNat) * 2 ^ s.toNat = B := by
+    rw [← Nat.pow_add, show 32 - s.toNat + s.toNat = 32 by omega]
+  have hbs : value b = lower b k + B ^ k * digit b k := by
+    have sp := value_split b k
+    rw [tail_step b k, tail_of_le b (k + 1) (by omega)] at sp
+    simpa using sp
+  have hbl := lower_lt b k
+  -- The divisor moved up: its top bit is set, and it still fits its limbs.
+  have hVhi : value b * 2 ^ s.toNat < B ^ (k + 1) := by
+    have d1 : digit b k < 2 ^ (32 - s.toNat) :=
+      Nat.lt_of_mul_lt_mul_right (a := 2 ^ s.toNat) (by rw [EF]; exact shi)
+    have d2 : (digit b k + 1) * 2 ^ s.toNat ≤ B := by rw [← EF]; exact Nat.mul_le_mul_right _ d1
+    have d3 : value b + 1 ≤ B ^ k * (digit b k + 1) := by rw [hbs, Nat.mul_add, Nat.mul_one]; omega
+    have d4 : (value b + 1) * 2 ^ s.toNat ≤ B ^ k * B :=
+      calc (value b + 1) * 2 ^ s.toNat ≤ B ^ k * (digit b k + 1) * 2 ^ s.toNat := Nat.mul_le_mul_right _ d3
+        _ = B ^ k * ((digit b k + 1) * 2 ^ s.toNat) := Nat.mul_assoc _ _ _
+        _ ≤ B ^ k * B := Nat.mul_le_mul_left _ d2
+    rw [Nat.pow_succ]
+    rw [Nat.add_mul, Nat.one_mul] at d4
+    omega
+  have hVlo : 2147483648 * B ^ k ≤ value b * 2 ^ s.toNat :=
+    calc 2147483648 * B ^ k ≤ digit b k * 2 ^ s.toNat * B ^ k := Nat.mul_le_mul_right _ slo
+      _ = B ^ k * digit b k * 2 ^ s.toNat := by
+        rw [Nat.mul_comm (digit b k * 2 ^ s.toNat), Nat.mul_assoc]
+      _ ≤ value b * 2 ^ s.toNat := Nat.mul_le_mul_right _ (by rw [hbs]; omega)
+  have hsb : value (shiftLeft b 0 s) = value b * 2 ^ s.toNat := by rw [shiftLeft_value _ _ _ s32]; simp
+  have hsbsize : (shiftLeft b 0 s).size = k + 1 + 1 := by rw [shiftLeft_size, hk]; omega
+  have hsbtop : (shiftLeft b 0 s).getD ((shiftLeft b 0 s).size - 1) 0 = 0 := by
+    have t0 : tail (shiftLeft b 0 s) (k + 1) = 0 := tail_of_value_lt _ _ (by rw [hsb]; exact hVhi)
+    have st := tail_step (shiftLeft b 0 s) (k + 1)
+    rw [t0] at st
+    have dz : digit (shiftLeft b 0 s) (k + 1) = 0 := by omega
+    rw [hsbsize, Nat.add_sub_cancel]
+    exact UInt32.toNat_inj.mp (show ((shiftLeft b 0 s).getD (k + 1) 0).toNat = (0 : UInt32).toNat from dz)
+  generalize hvdef : (shiftLeft b 0 s).pop = v
+  have hv : value v = value b * 2 ^ s.toNat := by
+    rw [← hvdef, value_pop _ (by rw [hsbsize]; omega) hsbtop, hsb]
+  have hvsize : v.size = k + 1 := by rw [← hvdef, Array.size_pop, hsbsize, Nat.add_sub_cancel]
+  have hvtop : 2147483648 ≤ digit v (v.size - 1) := by
+    rw [hvsize, Nat.add_sub_cancel]
+    have st := tail_step v k
+    rw [tail_of_le v (k + 1) (by omega), tail_eq_div] at st
+    have big : 2147483648 ≤ value v / B ^ k :=
+      (Nat.le_div_iff_mul_le (Nat.pow_pos (by omega))).mpr (by rw [hv]; exact hVlo)
+    omega
+  -- The dividend moved up by as much, and one limb longer.
+  have hsa : value (shiftLeft a 0 s) = value a * 2 ^ s.toNat := by rw [shiftLeft_value _ _ _ s32]; simp
+  have hsasize : (shiftLeft a 0 s).size = a.size + 1 := by rw [shiftLeft_size]; omega
+  have hrem : value (shiftLeft a 0 s) < value v * B ^ (a.size - b.size + 1) := by
+    have e1 : 2 ^ s.toNat ≤ 2147483648 := Nat.pow_le_pow_right (by omega) (show s.toNat ≤ 31 by omega)
+    have e2 : value a * 2 ^ s.toNat < B ^ a.size * 2 ^ s.toNat :=
+      (Nat.mul_lt_mul_right Epos).mpr (value_lt_pow a)
+    have e3 : B ^ a.size * 2 ^ s.toNat ≤ B ^ a.size * 2147483648 := Nat.mul_le_mul_left _ e1
+    have e4 : B ^ a.size * 2147483648 = 2147483648 * B ^ k * B ^ (a.size - b.size + 1) := by
+      rw [Nat.mul_assoc, ← Nat.pow_add, show k + (a.size - b.size + 1) = a.size by omega, Nat.mul_comm]
+    have e5 : 2147483648 * B ^ k * B ^ (a.size - b.size + 1) ≤ value v * B ^ (a.size - b.size + 1) :=
+      Nat.mul_le_mul_right _ (by rw [hv]; exact hVlo)
+    rw [hsa]
+    exact Nat.lt_of_lt_of_le e2 (Nat.le_trans e3 (by rw [e4]; exact e5))
+  have loop := divideLongLoop_value v (shiftLeft a 0 s) (zeros (a.size - b.size + 1)) (a.size - b.size + 1)
+    (value a * 2 ^ s.toNat) (by omega) hvtop (by rw [hvsize, hsasize]; omega) (by simp [zeros])
+    (fun m _ => digit_zeros _ m) hrem (by rw [value_zeros, Nat.zero_mul, Nat.zero_add, hsa])
+  generalize divideLongLoop v (shiftLeft a 0 s) (zeros (a.size - b.size + 1)) (a.size - b.size + 1) = res
+    at loop ⊢
+  obtain ⟨qq, uu⟩ := res
+  dsimp only at loop ⊢
+  obtain ⟨linv, lrem⟩ := loop
+  rw [hv] at linv lrem
+  have whole : value uu + value b * 2 ^ s.toNat * value qq = value a * 2 ^ s.toNat := by
+    rw [Nat.add_comm, Nat.mul_comm (value b * 2 ^ s.toNat) (value qq)]; exact linv
+  have both := (Nat.div_mod_unique (Nat.lt_of_le_of_lt (Nat.zero_le _) lrem)).mpr ⟨whole, lrem⟩
+  rw [Nat.mul_div_mul_right _ _ Epos, Nat.mul_mod_mul_right] at both
+  refine ⟨both.1.symm, ?_⟩
+  have ulim : value uu < B ^ b.size := by rw [hk]; exact Nat.lt_trans lrem hVhi
+  rw [shiftRight_value _ _ _ _ s32 ulim, ← both.2]
+  simp only [Nat.mul_zero, Nat.zero_add]
+  exact Nat.mul_div_cancel _ Epos
+
+/-- `divide` gives the quotient rounded down and the remainder, for any dividend and any divisor that is not
+zero and has no zero limb on top. -/
+theorem divide_value (a b : Limbs) (tb : Trimmed b) (hz : value b ≠ 0) :
+    value (divide a b).1 = value a / value b ∧ value (divide a b).2 = value a % value b := by
+  by_cases short : a.size < b.size
+  · exact divide_value_shorter a b short tb
+  · by_cases one : b.size = 1
+    · exact divide_value_single a b one hz
+    · have some : b.size ≠ 0 := fun e => hz (by
+        have := value_lt_pow b
+        rw [e] at this
+        simpa using this)
+      have e : divide a b = divideLong a b := by simp [divide, short, one]
+      rw [e]
+      exact divideLong_value a b (by omega) (by omega) tb
+
+/-- Division of natural numbers, rounding down; by zero it gives zero, as Lean's does. -/
+theorem natDiv_value (a b : Limbs) (tb : Trimmed b) : value (natDiv a b) = value a / value b := by
+  by_cases e : b.size = 0
+  · have zero : value b = 0 := by
+      have := value_lt_pow b
+      rw [e] at this
+      simpa using this
+    have e' : natDiv a b = Array.mkEmpty 0 := by simp [natDiv, e]
+    rw [e', zero, Nat.div_zero]
+    rfl
+  · have pos := pow_le_value b e tb
+    have one : 0 < B ^ (b.size - 1) := Nat.pow_pos (by omega)
+    have e' : natDiv a b = (divide a b).1 := by simp [natDiv, e]
+    rw [e']
+    exact (divide_value a b tb (by omega)).1
+
+/-- The remainder of natural numbers, for a divisor that is not zero. -/
+theorem natMod_value (a b : Limbs) (tb : Trimmed b) (hz : value b ≠ 0) :
+    value (natMod a b) = value a % value b :=
+  (divide_value a b tb hz).2
 
 /-! ## Powers -/
 
@@ -836,5 +1626,139 @@ theorem intCompare_order (an : UInt8) (a : Limbs) (bn : UInt8) (b : Limbs) (ha :
       · have h3 : -(value a : Int) < -(value b : Int) := by omega
         simp only [h1, h2, ↓reduceIte, h3]
         rfl
+
+/-! ### Signed division
+
+`Int`'s own division: the remainder is never negative, and dividing by zero gives zero. -/
+
+/-- `trim` leaves no zero limb on top. -/
+theorem trim_trimmed (a : Limbs) : Trimmed (trim a) := by
+  fun_induction trim a with
+  | case1 a h => exact Or.inl h
+  | case2 a h top ih => exact ih
+  | case3 a h top =>
+    exact Or.inr (fun z => top (beq_iff_eq.mpr
+      (UInt32.toNat_inj.mp (show (a.getD (a.size - 1) 0).toNat = (0 : UInt32).toNat from z))))
+
+/-- What `trim` leaves has no limbs exactly when the number is zero. -/
+theorem trim_size_eq_zero (a : Limbs) : (trim a).size = 0 ↔ value a = 0 := by
+  constructor
+  · intro h
+    have := value_lt_pow (trim a)
+    rw [h, trim_value] at this
+    simpa using this
+  · intro h
+    apply Classical.byContradiction
+    intro ne
+    have := pow_le_value (trim a) ne (trim_trimmed a)
+    have pos : 0 < B ^ ((trim a).size - 1) := Nat.pow_pos (by omega)
+    rw [trim_value, h] at this
+    omega
+
+/-- Dividing a number below zero by one above it, from the quotient and remainder of the two without their
+signs: if anything is left over the quotient is one further from zero, and the remainder is what is missing
+from the divisor. -/
+theorem neg_ediv_emod (n D : Nat) (hD : 0 < D) :
+    (-(n : Int)) / (D : Int) = -((n / D + (if n % D = 0 then 0 else 1) : Nat) : Int) ∧
+    (-(n : Int)) % (D : Int) = ((if n % D = 0 then 0 else D - n % D : Nat) : Int) := by
+  have dm : (D : Int) * ((n / D : Nat) : Int) + ((n % D : Nat) : Int) = (n : Int) := by
+    exact_mod_cast Nat.div_add_mod n D
+  have lt : n % D < D := Nat.mod_lt _ hD
+  apply (Int.ediv_emod_unique (Int.natCast_pos.mpr hD)).mpr
+  by_cases h : n % D = 0
+  · simp only [h, ↓reduceIte, Nat.add_zero]
+    rw [h] at dm
+    refine ⟨?_, by omega, by omega⟩
+    rw [Int.mul_neg]; omega
+  · simp only [h, ↓reduceIte]
+    refine ⟨?_, by omega, by omega⟩
+    rw [Int.natCast_sub (Nat.le_of_lt lt), Int.natCast_add, Int.mul_neg, Int.mul_add]
+    simp only [Int.natCast_one, Int.mul_one]
+    omega
+
+/-- Signed division, as Lean's `Int` divides: the remainder is never negative, and dividing by zero gives
+zero. The divisor has no zero limb on top. -/
+theorem intEdiv_value (an : UInt8) (a : Limbs) (bn : UInt8) (b : Limbs) (ha : IsSign an) (hb : IsSign bn)
+    (tb : Trimmed b) : signedValue (intEdiv an a bn b) = intOf (an != 0) a / intOf (bn != 0) b := by
+  by_cases e : b.size = 0
+  · have zero : value b = 0 := by
+      have := value_lt_pow b
+      rw [e] at this
+      simpa using this
+    have r : intEdiv an a bn b = signed false (Array.mkEmpty 0) := by simp [intEdiv, e]
+    have d0 : intOf (bn != 0) b = 0 := by simp [intOf, zero]
+    rw [r, signedValue_signed, d0, Int.ediv_zero]
+    rfl
+  · have pos : 0 < value b := by
+      have := pow_le_value b e tb
+      have one : 0 < B ^ (b.size - 1) := Nat.pow_pos (by omega)
+      omega
+    obtain ⟨hq, hr⟩ := divide_value a b tb (by omega)
+    have nonneg := Int.natCast_ediv (value a) (value b)
+    have neg := (neg_ediv_emod (value a) (value b) pos).1
+    generalize hd : divide a b = d at hq hr
+    obtain ⟨q, r⟩ := d
+    dsimp only at hq hr
+    have body : ∃ q', intEdiv an a bn b = signed (an != bn) q' ∧
+        value q' = value a / value b + (if an = 1 ∧ value a % value b ≠ 0 then 1 else 0) := by
+      refine ⟨if an != 0 && (trim r).size != 0 then add q (one ()) else q, ?_, ?_⟩
+      · simp only [intEdiv, hd]; simp [e]
+      · rcases ha with rfl | rfl
+        · simp [hq]
+        · by_cases rem0 : value a % value b = 0
+          · have t0 : (trim r).size = 0 := (trim_size_eq_zero r).mpr (by rw [hr]; exact rem0)
+            simp [t0, rem0, hq]
+          · have t1 : (trim r).size ≠ 0 := fun h => rem0 (by rw [← hr]; exact (trim_size_eq_zero r).mp h)
+            simp [t1, rem0, hq, add_value, value_one]
+    obtain ⟨q', hbody, vq'⟩ := body
+    rw [hbody, signedValue_signed]
+    rcases ha with rfl | rfl <;> rcases hb with rfl | rfl
+    · have v : value q' = value a / value b := by simpa using vq'
+      show (value q' : Int) = (value a : Int) / (value b : Int)
+      rw [v]; exact nonneg
+    · have v : value q' = value a / value b := by simpa using vq'
+      show -(value q' : Int) = (value a : Int) / -(value b : Int)
+      rw [v, Int.ediv_neg, nonneg]
+    · have v : value q' = value a / value b + (if value a % value b = 0 then 0 else 1) := by
+        rw [vq']; by_cases r0 : value a % value b = 0 <;> simp [r0]
+      show -(value q' : Int) = -(value a : Int) / (value b : Int)
+      rw [v]; exact neg.symm
+    · have v : value q' = value a / value b + (if value a % value b = 0 then 0 else 1) := by
+        rw [vq']; by_cases r0 : value a % value b = 0 <;> simp [r0]
+      show (value q' : Int) = -(value a : Int) / -(value b : Int)
+      rw [v, Int.ediv_neg, neg, Int.neg_neg]
+
+/-- The remainder of signed division, which is never negative and does not depend on the divisor's sign.
+The divisor is not zero and has no zero limb on top. -/
+theorem intEmod_value (an : UInt8) (a b : Limbs) (bneg : Bool) (ha : IsSign an) (tb : Trimmed b)
+    (hz : value b ≠ 0) : signedValue (intEmod an a b) = intOf (an != 0) a % intOf bneg b := by
+  have pos : 0 < value b := by omega
+  have hr := (divide_value a b tb hz).2
+  have vr : value (trim (divide a b).2) = value a % value b := by rw [trim_value, hr]
+  have lt : value a % value b < value b := Nat.mod_lt _ pos
+  have dsign : ∀ x : Int, x % intOf bneg b = x % (value b : Int) := by
+    intro x
+    cases bneg
+    · rfl
+    · exact Int.emod_neg _ _
+  rw [dsign]
+  simp only [intEmod]
+  rw [signedValue_signed]
+  rcases ha with rfl | rfl
+  · simp only [show ((0 : UInt8) != 0) = false from rfl, Bool.false_and, Bool.false_eq_true, ↓reduceIte]
+    show (value (trim (divide a b).2) : Int) = (value a : Int) % (value b : Int)
+    rw [vr]; exact Int.natCast_emod _ _
+  · have neg := (neg_ediv_emod (value a) (value b) pos).2
+    simp only [show ((1 : UInt8) != 0) = true from rfl, Bool.true_and]
+    by_cases r0 : value a % value b = 0
+    · have t0 : (trim (divide a b).2).size = 0 := (trim_size_eq_zero _).mpr (by rw [hr]; exact r0)
+      simp only [t0, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte]
+      show (value (trim (divide a b).2) : Int) = -(value a : Int) % (value b : Int)
+      rw [vr, neg]; simp [r0]
+    · have t1 : (trim (divide a b).2).size ≠ 0 := fun h =>
+        r0 (by rw [← hr]; exact (trim_size_eq_zero _).mp h)
+      simp only [bne_iff_ne, ne_eq, t1, not_false_eq_true, ↓reduceIte]
+      show (value (sub b (trim (divide a b).2)) : Int) = -(value a : Int) % (value b : Int)
+      rw [sub_value _ _ (by rw [vr]; omega), vr, neg]; simp [r0]
 
 end Runtime.Big

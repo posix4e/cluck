@@ -35,6 +35,46 @@ launcher does not establish a verifier policy or bind a session key to the demo 
 A file hash of the EFI application alone is insufficient to establish the trust domain's
 identity. The development EFI image supplies no TDX evidence.
 
+## The EVM service (`evm/`)
+
+`evm/` builds an image of its own: the TDX Ethernet target above with the demo replaced by an Ethereum block
+importer. It is an experiment, and it breaks rules the OS holds itself to. Everything said of the TDX
+target applies to it; this is what it adds.
+
+**Someone else's code is in the image.** The service is Jaune, an executable specification of the EVM that
+this project did not write and has not reviewed: the interpreter, the block and transaction rules, RLP, the
+state trie, and Keccak, SHA-256, RIPEMD-160, BLAKE2, secp256k1, P-256, bn254, BLS12-381 and KZG, all in Lean.
+With it come a handful of compiled functions from Lean's library and from mathlib's dependencies, which the
+linker takes because Jaune's compiled code calls them. Jaune is not what a node beside the guest would run,
+so "one flaw is not enough" is not obviously lost, but nothing here has been checked against that section.
+
+**Start-up routines that do nothing.** `evm/rt/start.c` stands in for seven of mathlib's. If any code the
+service reaches reads a constant one of them would have built, it reads memory nothing has written. This is
+the rule "nothing that is not there may pass for something that is" broken on purpose, and the fixtures
+agreeing is all that stands behind it.
+
+**A stack with no guard.** `evm/boot/stack.c` moves `main` to 64 MiB of the image's own memory. Recursion
+past the end of it writes into the image. How deep Jaune recurses depends on the request, and no bound on
+that depth has been worked out.
+
+**The input.** Anyone who can reach TCP port 5005 can send a request of up to 8 MiB. `Evm/Service.lean`
+reads it in Lean, with every length checked against what is left of the request; Jaune's own decoder then
+reads the blocks. The C added here never looks at a byte of it: `evm/rt/names.c` passes numbers through to
+Lean, and the other two files hold no data at all.
+
+**Time and memory.** A block's cost is not bounded by its gas: one fixture takes 39 seconds for 4.5M gas.
+The machine reads no packet while an import runs, so one request holds off every other client for as long
+as it takes, and a sender who wants that can have it. Jaune holds byte strings as lists, many bytes of heap
+for each byte of input, on a heap of 256 MiB; a request that needs more stops the machine, which says so.
+
+**The answer proves nothing yet.** It comes back over cleartext TCP from a machine that has shown no
+evidence of what it is. The guest can produce a TDREPORT, but this service does not carry that command, and
+nothing binds a report to a request and its response. Until something does, a response is worth what the
+network between is worth.
+
+**No secret is held.** The service has no key. Its arithmetic is on `Nat` throughout and takes time that
+depends on the values, which is the reason a service with a key could not be built on Jaune as it is.
+
 ## What is being protected
 
 | Asset | When | Why it matters |

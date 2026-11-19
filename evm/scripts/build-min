@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Links a built executable of this package against the OS's minimal runtime instead of Lean's own.
+#
+#   scripts/build-min <executable>          (from evm/, after: lake build <executable>)
+#
+# The OS's scripts/build-min, with what Jaune makes necessary. Compiled Lean from this package, from the OS
+# and from Jaune goes on the link line as there. The other packages Jaune brings (mathlib and what mathlib
+# brings) and Lean's own library are only offered, as archives: the linker takes the few functions Jaune's
+# code really calls in them and nothing else, because their start-up routines are replaced by rt/start.c.
+# rt/names.c supplies three names. A function the runtime lacks is a link error here.
+#
+# The result is .lake/build/bin/<executable>-min: an ordinary process on the hosted platform.
+set -euo pipefail
+here="$(cd "$(dirname "$0")/.." && pwd)"
+os="$(cd "$here/.." && pwd)"
+exe="${1:?usage: scripts/build-min <executable>}"
+cd "$here"
+rsp=".lake/build/bin/$exe.rsp"
+[ -f "$rsp" ] || { echo "build-min: no $rsp (run: lake build $exe)" >&2; exit 2; }
+toolchain="$(lean --print-prefix)"
+cc="$toolchain/bin/clang"
+out=".lake/build/rt-min"
+mkdir -p "$out"
+
+# The minimal runtime, as the OS builds it, and this package's two files beside it.
+(cd "$os" && lake build mini-print >/dev/null)
+"$os/scripts/print-runtime" "$out/printed"
+objects=()
+for source in "$os"/rt/*.c "$out"/printed/*.c "$here"/rt/*.c; do
+  object="$out/$(basename "${source%.c}").o"
+  "$cc" -c -O2 -Wall -Wextra -Werror -ffreestanding -nostdinc -isystem "$toolchain/include/clang" \
+    -I "$toolchain/include" -I "$os/rt" -fdata-sections -ffunction-sections -o "$object" "$source"
+  objects+=("$object")
+done
+
+own=(); offered=()
+while IFS= read -r line; do
+  arg="${line#\"}"; arg="${arg%\"}"
+  case "$arg" in
+    "$here"/.lake/packages/jaune/*.c.o.export | "$here"/.lake/build/*.c.o.export | "$os"/.lake/build/*.c.o.export)
+      own+=("$arg") ;;
+    *.c.o.export) offered+=("$arg") ;;
+    # The platform as a process, and nothing else that Lake compiled from C.
+    */rt/platform_hosted.o | */rt/efi_hosted.o | */rt/clock_hosted.o) own+=("$arg") ;;
+  esac
+done < "$rsp"
+rm -f "$out/offered.a"
+"$toolchain/bin/llvm-ar" rcs "$out/offered.a" "${offered[@]}"
+
+"$cc" -o ".lake/build/bin/$exe-min" --sysroot "$toolchain" \
+  -L "$toolchain/lib/lean" -L "$toolchain/lib" -L "$toolchain/lib/glibc" -fuse-ld=lld \
+  "${own[@]}" "${objects[@]}" "$out/offered.a" -lLean -lStd -lInit \
+  -lc -lc_nonshared -Wl,--as-needed -l:ld.so -Wl,--no-as-needed -lpthread_nonshared -Wl,--gc-sections
+echo ".lake/build/bin/$exe-min"

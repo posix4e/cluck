@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Builds the service as an EFI application: the OS's minimal runtime, its EFI platform, and compiled Lean.
+#
+#   scripts/build-efi dev|tdx [executable]   (from evm/; the executable defaults to evm-os)
+#
+# The OS's scripts/build-efi, with what Jaune makes necessary: the other packages and Lean's own library are
+# offered as archives and their start-up routines replaced (rt/start.c, and scripts/build-min says why),
+# three names are supplied (rt/names.c), and `main` runs on a larger stack (boot/stack.c).
+#
+# The image is .lake/build/efi/<profile>/<executable>/BOOTX64.EFI. `dev` runs anywhere UEFI does; `tdx`
+# refuses to start outside an Intel TDX trust domain.
+set -euo pipefail
+profile="${1:-tdx}"
+case "$profile" in
+  tdx) require_tdx=1 ;;
+  dev) require_tdx=0 ;;
+  *) echo "usage: scripts/build-efi dev|tdx [executable]" >&2; exit 2 ;;
+esac
+name="${2:-evm-os}"
+here="$(cd "$(dirname "$0")/.." && pwd)"
+os="$(cd "$here/.." && pwd)"
+cd "$here"
+[[ "$(uname -s)-$(uname -m)" == Linux-x86_64 ]] || {
+  echo "build-efi: this package's image is built on x86-64 Linux only" >&2; exit 2; }
+prefix="$(lean --print-prefix)"
+libs="$prefix/lib/lean"
+lake build "$name"
+(cd "$os" && lake build mini-print >/dev/null)
+out=".lake/build/efi/$profile/$name"
+objects="$out/obj"
+rm -rf "$objects"
+mkdir -p "$objects"
+flags=(--target=x86_64-unknown-none-elf -ffreestanding -nostdinc -isystem "$prefix/include/clang"
+       -I "$prefix/include" -I "$os/rt" -O2 -fno-stack-protector -mno-red-zone -fPIE
+       -ffile-prefix-map="$here/"=evm/ -ffile-prefix-map="$os/"= -ffile-prefix-map="$prefix/"=lean-toolchain/
+       -fdata-sections -ffunction-sections)
+inputs=()
+compile() {
+  local from="$1"; shift
+  local obj="$objects/${#inputs[@]}.o"
+  "$prefix/bin/clang" -c "${flags[@]}" "$@" "$from" -o "$obj"
+  inputs+=("$obj")
+}
+"$os/scripts/print-runtime" "$objects/printed"
+for src in "$os"/rt/*.c "$objects"/printed/*.c "$here"/rt/*.c "$here"/boot/*.c; do
+  compile "$src" -Wall -Wextra -Werror
+done
+compile "$os/rt/bare/libc.c" -fno-builtin -Wall -Wextra -Werror
+compile "$os/rt/bare/platform.c" -Wall -Wextra -Werror
+# The OS's EFI entry, calling boot/stack.c where it would call `main`.
+compile "$os/boot/efi/platform.c" -DREQUIRE_TDX="$require_tdx" -Dmain=evm_main_on_its_own_stack \
+  -Wall -Wextra -Werror
+offered=()
+while IFS= read -r arg; do
+  arg="${arg#\"}"; arg="${arg%\"}"
+  case "$arg" in
+    "$here"/.lake/packages/jaune/*.c.o.export | "$here"/.lake/build/*.c.o.export | "$os"/.lake/build/*.c.o.export)
+      compile "${arg%.o.export}" -DNDEBUG -w ;;
+    *.c.o.export) offered+=("$arg") ;;
+  esac
+done < ".lake/build/bin/$name.rsp"
+"$prefix/bin/llvm-ar" rcs "$objects/offered.a" "${offered[@]}"
+"$prefix/bin/ld.lld" -pie --no-dynamic-linker -z text -z defs --gc-sections -T "$os/boot/efi/link.ld" \
+  -Map="$objects/image.map" -o "$objects/image.elf" "${inputs[@]}" \
+  --start-group "$objects/offered.a" "$libs/libLean.a" "$libs/libInit.a" "$libs/libStd.a" --end-group
+python3 "$os/boot/efi/mkefi.py" "$objects/image.elf" "$out/BOOTX64.EFI"
+echo "$out/BOOTX64.EFI"

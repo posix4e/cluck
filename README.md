@@ -8,6 +8,10 @@ The Intel TDX target boots through x86-64 UEFI and serves the demo over a virtio
 The guest runs the Ethernet and IP protocols in Lean on the minimal runtime. See
 [building and running the TDX guest](TDX.md).
 
+[`evm/`](evm/README.md) is an experiment in a package of its own: an Ethereum block importer, built from
+someone else's executable specification of the EVM in Lean, running as a service on this OS in a TDX trust
+domain. The OS does not depend on it.
+
 What is done and what is left is in [TODO.md](TODO.md). What it defends against, and what it does not, is in
 [THREAT_MODEL.md](THREAT_MODEL.md). How to work on it is in [CONTRIBUTING.md](CONTRIBUTING.md). To build a
 service of your own on it, see "Building on it" below.

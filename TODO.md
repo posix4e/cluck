@@ -35,6 +35,73 @@ same SHA-256 on the build machine. The network uses static addresses. DHCP, SLAA
 TLS and a POSIX sockets interface are outside this implementation. Build and run
 instructions are in [TDX.md](TDX.md).
 
+## Ethereum block import, as a service (`evm/`)
+
+An experiment: whether someone else's Lean, written for proofs and for Lean's own runtime, can be the service
+on this OS. The Lean is Jaune at `ba15f39`, an executable specification of the EVM and of block validation
+with no foreign code. The service takes a starting state, a genesis block and some blocks, and answers with
+the tip hash and state root after importing them (`evm/README.md`).
+
+On 2026-11-19 it ran three ways on one Intel machine under Linux 7.0.0-14-generic and QEMU 10.2.1: as a
+process on Lean's runtime, as a process on the minimal runtime, and as an EFI guest in an Intel TDX trust
+domain with the two TDVF patches in `boot/efi/`. The same guest built for development ran under QEMU's
+emulated processor. No attestation was asked of it.
+
+The requests are the Prague cases of five blockchain tests from `ethereum/tests` at `3129f16`. Each answer
+was compared, byte for byte, with the fixture's own `lastblockhash` and the root of its `postState`. All
+five agreed in all three places. Time is for the import alone:
+
+| Fixture | Blocks | Gas used | Process, Lean's runtime | Process, minimal runtime | TDX guest |
+|---|---:|---:|---:|---:|---:|
+| highGasUsage | 11 | 0.23M | 47 ms | 146 ms | 112 ms |
+| wallet2outOf3txsRevokeAndConfirmAgain | 8 | 1.7M | 43 ms | 115 ms | 89 ms |
+| DelegateCallSpam | 1 | 8M | 451 ms | 575 ms | 439 ms |
+| walletReorganizeOwners | 259 | 38M | 2.6 s | 4.7 s | 4.6 s |
+| ShanghaiLove | 1 | 4.5M | 38.4 s | 38.9 s | 39.0 s |
+
+The process columns were measured before the merge that brought the arithmetic proofs, the TDX column
+after it. Under the emulated processor four of the five were run and agreed (56 s for the 259 blocks);
+`ShanghaiLove` was not run there.
+
+- A request with one byte changed inside its last block is answered with status 3 after seven of eight
+  blocks, one with a byte changed in an account's balance with status 2, and one cut short with status 5,
+  on both runtimes as processes. These three were not sent to a guest.
+- The TDX image is 3 MB and came out byte for byte the same from two builds on that machine. The guest is up
+  about four seconds after QEMU starts. The patched firmware built there has the SHA-256 recorded in the
+  section above.
+- `ShanghaiLove` is a replay of the 2016 attack that made cheap operations expensive for clients. It takes
+  Jaune 39 seconds for 4.5M gas on either runtime, so the time a block takes is not bounded by its gas.
+- The benchmark (`evm/Bench.lean`), minimal runtime against Lean's, over four runs of each whose times
+  spread widely on a machine doing other work: 2.3 to 3.3 million simple opcodes a second against 3.4 to
+  4.6; 256-bit `mulmod` 3.1 to 4.3 µs against 2.2 to 3.1; one bn254 pairing 2.1 to 2.9 s against 0.6 to 0.8;
+  twenty `ecrecover` attempts 83 to 117 ms against 15 to 21; a 2048-bit `modexp` 79 to 112 ms against 2 to
+  4. The big-number work is slower because the minimal runtime's arithmetic is Lean on 32-bit limbs where
+  Lean's own runtime calls GMP. Both runtimes computed the same results every time.
+
+What it stands on that is not sound yet:
+
+- [ ] **Seven of mathlib's start-up routines are replaced by routines that do nothing** (`evm/rt/start.c`).
+      Jaune's modules import mathlib for proofs, which is what this repository's own rule forbids in code
+      that runs. Nothing proves that no constant those routines would have built is read; the fixtures
+      agreeing is the evidence. The repair is in Jaune: proofs out of the modules that run.
+- [ ] **`main` runs on a 64 MiB stack with nothing under it** (`evm/boot/stack.c`). Firmware's stack is too
+      small for Jaune's recursion, and how deep a hostile block can make it recurse has not been measured.
+- [ ] **The three runtime functions it adds are in `evm/rt/`, not in `rt/`**, and are held to Lean's runtime
+      only by `evm-test` (212 cases of `powMod`) and by the fixtures. If the service stays, they go through
+      what every other runtime function went through.
+- [ ] **Nothing in `evm/` is built or run by CI.**
+
+Not done:
+
+- [ ] A block of the real chain. The whole state is in the request, and there is no reading of an account
+      against a state root other than hashing every account, so mainnet's state cannot be sent. That needs a
+      witness format and a checker for it, which Jaune does not have.
+- [ ] An attestation bound to an answer. The guest can produce a TDREPORT (command `05` of the demo, which
+      this service does not carry), but nothing ties a report to a request and its response.
+- [ ] Any fork but Prague has been run. Cancun and Osaka are accepted and untried.
+- [ ] More than one request at a time, or anything else while one runs: the machine reads no packet until
+      the import returns.
+
 ## The OS
 
 Lean all the way down, booting in a Nitro Enclave with no Linux, no libc and no AWS-supplied boot files,

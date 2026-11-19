@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Boots the service as an EFI guest, puts fixture requests to it over TCP, and checks each answer.
+
+    scripts/run-fixtures dev|tdx [name...]        (from evm/, after: scripts/build-efi dev|tdx)
+
+`dev` is an emulated processor and OVMF, and runs anywhere QEMU does. `tdx` is an Intel TDX trust domain,
+and needs what the OS's TDX.md says a host needs, with SILO_TDVF naming the firmware built there. With no
+names, every request in fixtures/ is sent. The guest is started by the OS's scripts/run-efi and is ended
+when this is done. Exit status 0 only if every answer is byte for byte the fixture's.
+
+SILO_HOST_PORT is the loopback port the guest's port 5005 is forwarded to (default 5015).
+"""
+import glob, os, shutil, signal, socket, struct, subprocess, sys, time
+
+if len(sys.argv) < 2 or sys.argv[1] not in ("dev", "tdx"):
+    sys.exit(__doc__)
+mode, names = sys.argv[1], sys.argv[2:]
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+system = os.path.dirname(here)
+fixtures = os.path.join(here, "fixtures")
+if not names:
+    names = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(fixtures, "*.req")))
+image = os.path.join(here, ".lake/build/efi", mode, "evm-os/BOOTX64.EFI")
+if not os.path.exists(image):
+    sys.exit(f"run-fixtures: no {image} (run: scripts/build-efi {mode})")
+# The OS's launcher looks for an image under its own build directory, by name.
+slot = os.path.join(system, ".lake/build/efi", mode, "evm-os")
+os.makedirs(slot, exist_ok=True)
+shutil.copyfile(image, os.path.join(slot, "BOOTX64.EFI"))
+port = int(os.environ.get("SILO_HOST_PORT", "5015"))
+log = os.path.join(here, ".lake/build/efi", mode, "evm-os/serial.log")
+guest = subprocess.Popen([os.path.join(system, "scripts/run-efi"), mode, "evm-os"], cwd=system,
+                         env=dict(os.environ, SILO_HOST_PORT=str(port)),
+                         stdout=open(log, "wb"), stderr=subprocess.STDOUT, start_new_session=True)
+
+def serial():
+    with open(log, "rb") as f:
+        return f.read().decode("utf-8", "replace")
+
+def exchange(request, patience):
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
+        s.settimeout(patience)
+        s.sendall(struct.pack(">I", len(request)) + request)
+        got = b""
+        while len(got) < 4 + 69:
+            piece = s.recv(4 + 69 - len(got))
+            if not piece:
+                break
+            got += piece
+        return got
+
+failed = 0
+try:
+    started = time.time()
+    while "serving TCP 5005" not in serial():
+        if guest.poll() is not None or time.time() - started > 300:
+            print("the guest did not come up; its serial output:\n" + serial()[-2000:])
+            sys.exit(2)
+        time.sleep(0.25)
+    print(f"guest up after {time.time() - started:.1f} s")
+    for name in names:
+        with open(os.path.join(fixtures, name + ".req"), "rb") as f:
+            request = f.read()
+        with open(os.path.join(fixtures, name + ".expected"), "rb") as f:
+            expected = f.read()
+        sent = time.time()
+        try:
+            got = exchange(request, 3600)
+        except OSError as error:
+            got = b""
+            print(f"{name}: {error}")
+        ok = got == struct.pack(">I", 69) + expected
+        failed += not ok
+        print(f"{name}: {'the fixture answer' if ok else 'WRONG ' + got.hex()}, {time.time() - sent:.1f} s")
+finally:
+    try:
+        os.killpg(guest.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    guest.wait(timeout=20)
+    print("serial:")
+    for line in serial().splitlines():
+        if line.startswith(("silo:", "evm:")):
+            print("  " + line)
+sys.exit(1 if failed else 0)

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Rebuilds fixtures/ from its source and checks that nothing changed.
+#
+#   scripts/fetch-fixtures        (from evm/, after: lake build mkrequest; downloads about 11 MB)
+#
+# The requests and expected responses in fixtures/ were made by `mkrequest` from five files of the
+# ethereum/tests repository at one commit. This downloads those files into a new directory, checks each
+# against the SHA-256 recorded in fixtures/SOURCES, makes the requests again, and compares them with the ones
+# in the repository. Nothing in fixtures/ is written.
+set -euo pipefail
+here="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$here"
+commit=3129f16519013b265fa309208f49406b2ef57b13
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+status=0
+while read -r sum path; do
+  name="$(basename "$path" .json)"
+  curl -fsSL -o "$work/$name.json" "https://raw.githubusercontent.com/ethereum/tests/$commit/$path"
+  echo "$sum  $work/$name.json" | sha256sum -c --quiet -
+  .lake/build/bin/mkrequest "$work/$name.json" Prague "$work/$name.req" "$work/$name.expected" >/dev/null
+  if cmp -s "$work/$name.req" "fixtures/$name.req" && cmp -s "$work/$name.expected" "fixtures/$name.expected"; then
+    echo "$name: as in the repository"
+  else
+    echo "$name: DIFFERS from the repository"; status=1
+  fi
+done < <(grep -v '^#' fixtures/SOURCES)
+exit $status

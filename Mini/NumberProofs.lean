@@ -12,13 +12,20 @@ this is about the two ends of a call: that the limbs handed to it are those of t
 that what goes back to compiled Lean is the number in the limbs it returned. Nothing here runs; no image
 imports it.
 
-What the program calls outside itself is an assumption in each statement: that `lean_alloc_object` returns
-some address, and that `lean_dec` returns. For a number that fits in a tagged word nothing more is assumed.
-For one that is an object, two things are assumed of the room `lean_alloc_object` hands out, since the
-program reads an object or an array while it writes into that room: the room shares no byte with what is
-being read, and making the room left what is being read as it was. Nothing is assumed of what the room held.
+What the program calls outside itself is an assumption in each statement. For one function at a time it is
+that `lean_alloc_object` returned some address, and for `nat_from` and `int_from` that `lean_dec` returned.
+For a number that fits in a tagged word nothing more is assumed. For one that is an object, two things are
+assumed of the room `lean_alloc_object` hands out, since the program reads an object or an array while it
+writes into that room: the room shares no byte with what is being read, and making the room left what is
+being read as it was. Nothing is assumed of what the room held.
 
-First numbers that fit in a tagged word, natural numbers and then integers; then numbers that are objects. -/
+For an operation as a whole the assumptions are gathered into three definitions, each a hypothesis of the
+statement that uses it: `Allocator`, what `lean_alloc_object` and `lean_dec` do; `Computes` and `Compares`,
+what a call into the compiled arithmetic does. Those statements are of an operation that returns. Where the
+allocator does not return, the operation is shown not to return either; nothing else is said of it then.
+
+First numbers that fit in a tagged word, natural numbers and then integers; then numbers that are objects;
+then operations as wholes. -/
 
 namespace Mini.Number
 
@@ -931,6 +938,43 @@ theorem call_of_runAll (p : Program) (outside : Outside) (fuel : Nat) (function 
   rw [run]
   rfl
 
+/-- A statement that fails is where the run of statements fails. -/
+theorem runAll_fails (p : Program) (outside : Outside) (fuel : Nat) (st : Stmt) (rest : List Stmt)
+    (s : State) (locals : Locals) (why : String)
+    (h : Stmt.run p outside fuel st s locals = .error why) :
+    runAll p outside (fuel + 1) (st :: rest) s locals = .error why := by
+  rw [runAll, h]
+  rfl
+
+/-- What a failing body says about calling the function by name, and back. -/
+theorem call_fails (p : Program) (outside : Outside) (fuel : Nat) (function : String) (f : Function)
+    (arguments : List UInt64) (s : State) (why : String)
+    (found : p.functions.find? (fun f => f.name == function) = some f)
+    (run : runAll p outside fuel f.body s (bind (fun _ => none) f.parameters arguments) = .error why) :
+    p.call outside fuel function arguments s = .error why := by
+  unfold Program.call
+  rw [found]
+  dsimp only
+  rw [run]
+  rfl
+
+theorem runAll_of_fails (p : Program) (outside : Outside) (fuel : Nat) (function : String) (f : Function)
+    (arguments : List UInt64) (s : State) (why : String)
+    (found : p.functions.find? (fun f => f.name == function) = some f)
+    (call : p.call outside fuel function arguments s = .error why) :
+    runAll p outside fuel f.body s (bind (fun _ => none) f.parameters arguments) = .error why := by
+  unfold Program.call at call
+  rw [found] at call
+  dsimp only at call
+  cases run : runAll p outside fuel f.body s (bind (fun _ => none) f.parameters arguments) with
+  | error e =>
+    rw [run] at call
+    injection call with same
+    rw [← same]
+  | ok r =>
+    rw [run] at call
+    cases call
+
 /-! ## Rooms that share no byte -/
 
 /-- A read sees only the bytes it reads. -/
@@ -1229,22 +1273,18 @@ theorem object_kept (memory memory' : UInt64 → Option UInt8) (o negative : UIn
   · exact (readBytes_congr _ _ _ _ (fun k hk => by
       rw [offset_add]; exact kept _ (by omega))).trans (hlimbs i h)
 
-/-- A natural number of 2^63 or more arrives as an object. `nat_limbs` hands the arithmetic its limbs: given
-room for an array that shares no byte with the object, where making the room left the object alone, it
-leaves there an array holding the object's limbs and changes nothing outside that room. -/
-theorem natLimbs_object (outside : Outside) (extra : Nat) (o array : UInt64) (limbs : Runtime.Big.Limbs)
-    (s s' : State) (pointer : o &&& 1 = 0) (holds : ObjectOf s.memory o 0 limbs)
+/-- `nat_limbs` passes an object that is a natural number of 2^63 or more on to `limbs_of_object`: what that
+gives it gives, and where that does not return neither does it. -/
+theorem natLimbs_object_pass (outside : Outside) (extra : Nat) (o : UInt64) (limbs : Runtime.Big.Limbs)
+    (s : State) (pointer : o &&& 1 = 0) (holds : ObjectOf s.memory o 0 limbs)
     (small : limbs.size < 4294967296) (nozero : Runtime.Big.Trimmed limbs)
-    (big : 9223372036854775808 ≤ Runtime.Big.value limbs)
-    (alloc : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * limbs.size)] s = .ok (array, s'))
-    (kept : ∀ j, j < 16 + 4 * limbs.size → s'.memory (o + UInt64.ofNat j) = s.memory (o + UInt64.ofNat j))
-    (apart : ∀ k, k < 24 + 8 * limbs.size → ∀ j, j < 16 + 4 * limbs.size →
-      array + UInt64.ofNat k ≠ o + UInt64.ofNat j) :
-    ∃ memory,
-      program.call outside (limbs.size + extra + 20) "nat_limbs" [o] s
-        = .ok (.gave array, { s' with memory := memory })
-      ∧ ArrayOf memory array limbs
-      ∧ ∀ q, (∀ k, k < 24 + 8 * limbs.size → array + UInt64.ofNat k ≠ q) → memory q = s'.memory q := by
+    (big : 9223372036854775808 ≤ Runtime.Big.value limbs) :
+    (∀ why, program.call outside (limbs.size + extra + 14) "limbs_of_object" [o, UInt64.ofNat limbs.size] s
+        = .error why →
+      program.call outside (limbs.size + extra + 20) "nat_limbs" [o] s = .error why) ∧
+    ∀ array after, program.call outside (limbs.size + extra + 14) "limbs_of_object" [o, UInt64.ofNat limbs.size] s
+        = .ok (.gave array, after) →
+      program.call outside (limbs.size + extra + 20) "nat_limbs" [o] s = .ok (.gave array, after) := by
   have vlt := Runtime.Big.value_lt_pow limbs
   have size2 : 2 ≤ limbs.size := by
     have : limbs.size = 0 ∨ limbs.size = 1 ∨ 2 ≤ limbs.size := by omega
@@ -1253,14 +1293,8 @@ theorem natLimbs_object (outside : Outside) (extra : Nat) (o array : UInt64) (li
     · rw [e, Nat.pow_one] at vlt; omega
     · exact e
   have topd : Runtime.Big.digit limbs (limbs.size - 1) ≠ 0 := nozero.resolve_left (by omega)
-  have after := object_kept s.memory s'.memory o 0 limbs holds kept
-  obtain ⟨memory, run, array_, frame⟩ := limbsOfObject_array outside extra o array limbs s s' small alloc
-    after.2.2.2 apart
-  refine ⟨memory, ?_, array_, frame⟩
   obtain ⟨lc, hlc⟩ := runAll_of_call program outside _ "checked" checked _ s _ _ find_checked
     (checked_runs outside (limbs.size + extra + 11) o 0 limbs s holds small topd (by decide))
-  obtain ⟨lo, hlo⟩ := runAll_of_call program outside _ "limbs_of_object" limbsOfObject _ s _ _
-    find_limbsOfObject run
   have hneg := holds.2.1
   have r1 : readBytes s.memory (o + 16 + 4) 4 = .ok (limbs[1]'(by omega)).toUInt64 := by
     rw [UInt64.add_assoc]; exact holds.2.2.2 1 (by omega)
@@ -1289,10 +1323,41 @@ theorem natLimbs_object (outside : Outside) (extra : Nat) (o array : UInt64) (li
         omega
       simp [h1]
     · simp [c2]
-  generalize UInt64.ofNat limbs.size = cw at hlc hlo ge2 third
-  simp [Program.call, find_natLimbs, find_checked, find_limbsOfObject, natLimbs, runAll, Stmt.run, Expr.run, Op.run,
-    bind, put, isWord, negativeOf, objectLimb, Number.top, Expr.ne, Expr.and, Expr.or, Expr.eq, Expr.lt, pointer, hlc]
-  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hneg, r1, ge2, third, hlo]
+  refine ⟨fun why run => ?_, fun array after run => ?_⟩
+  · have hlo := runAll_of_fails program outside _ "limbs_of_object" limbsOfObject _ s why find_limbsOfObject run
+    generalize UInt64.ofNat limbs.size = cw at hlc hlo ge2 third
+    simp [Program.call, find_natLimbs, find_checked, find_limbsOfObject, natLimbs, runAll, Stmt.run, Expr.run,
+      Op.run, bind, put, isWord, negativeOf, objectLimb, Number.top, Expr.ne, Expr.and, Expr.or, Expr.eq, Expr.lt,
+      pointer, hlc]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hneg, r1, ge2, third, hlo]
+  · obtain ⟨lo, hlo⟩ := runAll_of_call program outside _ "limbs_of_object" limbsOfObject _ s _ _
+      find_limbsOfObject run
+    generalize UInt64.ofNat limbs.size = cw at hlc hlo ge2 third
+    simp [Program.call, find_natLimbs, find_checked, find_limbsOfObject, natLimbs, runAll, Stmt.run, Expr.run,
+      Op.run, bind, put, isWord, negativeOf, objectLimb, Number.top, Expr.ne, Expr.and, Expr.or, Expr.eq, Expr.lt,
+      pointer, hlc]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hneg, r1, ge2, third, hlo]
+
+/-- A natural number of 2^63 or more arrives as an object. `nat_limbs` hands the arithmetic its limbs: given
+room for an array that shares no byte with the object, where making the room left the object alone, it
+leaves there an array holding the object's limbs and changes nothing outside that room. -/
+theorem natLimbs_object (outside : Outside) (extra : Nat) (o array : UInt64) (limbs : Runtime.Big.Limbs)
+    (s s' : State) (pointer : o &&& 1 = 0) (holds : ObjectOf s.memory o 0 limbs)
+    (small : limbs.size < 4294967296) (nozero : Runtime.Big.Trimmed limbs)
+    (big : 9223372036854775808 ≤ Runtime.Big.value limbs)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * limbs.size)] s = .ok (array, s'))
+    (kept : ∀ j, j < 16 + 4 * limbs.size → s'.memory (o + UInt64.ofNat j) = s.memory (o + UInt64.ofNat j))
+    (apart : ∀ k, k < 24 + 8 * limbs.size → ∀ j, j < 16 + 4 * limbs.size →
+      array + UInt64.ofNat k ≠ o + UInt64.ofNat j) :
+    ∃ memory,
+      program.call outside (limbs.size + extra + 20) "nat_limbs" [o] s
+        = .ok (.gave array, { s' with memory := memory })
+      ∧ ArrayOf memory array limbs
+      ∧ ∀ q, (∀ k, k < 24 + 8 * limbs.size → array + UInt64.ofNat k ≠ q) → memory q = s'.memory q := by
+  obtain ⟨memory, run, array_, frame⟩ := limbsOfObject_array outside extra o array limbs s s' small alloc
+    (object_kept s.memory s'.memory o 0 limbs holds kept).2.2.2 apart
+  exact ⟨memory, (natLimbs_object_pass outside extra o limbs s pointer holds small nozero big).2 array _ run,
+    array_, frame⟩
 
 /-- `int_sign` of an object is the sign it holds. -/
 theorem intSign_object (outside : Outside) (fuel : Nat) (o negative : UInt64) (limbs : Runtime.Big.Limbs)
@@ -1646,31 +1711,27 @@ theorem word_ne (c k : Nat) (hc : c < 4294967296) (hk : k < 4294967296) (h : c �
   simp only [UInt64.toNat_ofNat'] at this
   omega
 
-/-- `nat_result` reads an answer rightly where the answer is 2^63 or more: from an array of limbs in memory,
-given room that shares no byte with the array, where making the room left the array alone, it makes there an
-object holding the array's limbs without the zero ones on top (`keptLimbs`, whose number is the array's and
-whose top limb is not zero), and changes nothing outside that room. -/
-theorem natResult_object (outside : Outside) (array o : UInt64) (limbs : Runtime.Big.Limbs) (s s' : State)
+/-- `nat_result` passes an answer of 2^63 or more on to `big_new`, with the count `trimmed` gave: what that
+gives it gives, and where that does not return neither does it. -/
+theorem natResult_pass (outside : Outside) (array : UInt64) (limbs : Runtime.Big.Limbs) (s : State)
     (extra : Nat) (small : limbs.size < 4294967296)
     (elements : ∀ j, (h : j < limbs.size) →
       readBytes s.memory (array + UInt64.ofNat (24 + 8 * j)) 8 = .ok (boxed limbs[j].toUInt64))
-    (big : 9223372036854775808 ≤ Runtime.Big.value limbs)
-    (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * trimCount limbs limbs.size)] s = .ok (o, s'))
-    (kept : ∀ j, j < 24 + 8 * limbs.size → s'.memory (array + UInt64.ofNat j) = s.memory (array + UInt64.ofNat j))
-    (apart : ∀ k, k < 16 + 4 * trimCount limbs limbs.size → ∀ j, j < 24 + 8 * limbs.size →
-      o + UInt64.ofNat k ≠ array + UInt64.ofNat j) :
-    ∃ memory,
+    (big : 9223372036854775808 ≤ Runtime.Big.value limbs) :
+    (∀ why, program.call outside (limbs.size + extra + 16) "big_new"
+        [0, array, UInt64.ofNat (trimCount limbs limbs.size)] s = .error why →
       program.call outside (limbs.size + extra + 22) "nat_result" [array, UInt64.ofNat limbs.size] s
-        = .ok (.gave o, { s' with memory := memory })
-      ∧ ObjectOf memory o 0 (keptLimbs limbs limbs.size)
-      ∧ ∀ q, (∀ k, k < 16 + 4 * trimCount limbs limbs.size → o + UInt64.ofNat k ≠ q) →
-          memory q = s'.memory q := by
+        = .error why) ∧
+    ∀ o after, program.call outside (limbs.size + extra + 16) "big_new"
+        [0, array, UInt64.ofNat (trimCount limbs limbs.size)] s = .ok (.gave o, after) →
+      program.call outside (limbs.size + extra + 22) "nat_result" [array, UInt64.ofNat limbs.size] s
+        = .ok (.gave o, after) := by
   have run := trimmed_runs outside array limbs s (by omega) elements limbs.size (extra + 12) (Nat.le_refl _)
   rw [show limbs.size + (extra + 12) + 8 = limbs.size + extra + 20 from by omega] at run
   obtain ⟨l, hl⟩ := runAll_of_call program outside _ "trimmed" trimmed _ s _ _ find_trimmed run
   have hv := value_trimCount limbs limbs.size (Runtime.Big.tail_of_le limbs _ (Nat.le_refl _))
   have hle := trimCount_le limbs limbs.size
-  generalize hc : trimCount limbs limbs.size = c at hl hv hle alloc apart
+  generalize trimCount limbs limbs.size = c at hl hv hle ⊢
   have lowlt := Runtime.Big.lower_lt limbs c
   have c2 : 2 ≤ c := by
     have : c = 0 ∨ c = 1 ∨ 2 ≤ c := by omega
@@ -1678,11 +1739,6 @@ theorem natResult_object (outside : Outside) (array o : UInt64) (limbs : Runtime
     · subst e; rw [Nat.pow_zero] at lowlt; omega
     · subst e; rw [Nat.pow_one] at lowlt; omega
     · exact e
-  obtain ⟨memory, made, object, frame⟩ := bigNew_object outside (limbs.size - c + extra) 0 array o limbs c s s'
-    hle small (by decide) alloc (elements_kept _ _ _ _ elements kept) apart
-  rw [show c + (limbs.size - c + extra) + 16 = limbs.size + extra + 16 from by omega] at made
-  obtain ⟨l2, hl2⟩ := runAll_of_call program outside _ "big_new" bigNew _ s _ _ find_bigNew made
-  refine ⟨memory, ?_, by rw [keptLimbs, hc]; exact object, frame⟩
   have r1 : readBytes s.memory (array + 24 + 8) 8 = .ok (boxed (limbs[1]'(by omega)).toUInt64) := by
     rw [UInt64.add_assoc]; exact elements 1 (by omega)
   have n0 : UInt64.ofNat c ≠ 0 := word_ne c 0 (by omega) (by omega) (by omega)
@@ -1707,11 +1763,45 @@ theorem natResult_object (outside : Outside) (array o : UInt64) (limbs : Runtime
         omega
       simp [h1]
     · simp [e2]
-  generalize UInt64.ofNat c = cw at hl hl2 n0 n1 third
-  simp [Program.call, find_natResult, find_trimmed, find_bigNew, natResult, runAll, Stmt.run, Expr.run, Op.run, bind,
-    put, hl, box, Expr.eq, Expr.or, Expr.shl]
-  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, Expr.run, Op.run, limbAt,
-    unbox, Expr.shr, Expr.and, Expr.lt, Number.top, r1, unbox_boxed, n0, n1, third, hl2]
+  refine ⟨fun why made => ?_, fun o after made => ?_⟩
+  · have hl2 := runAll_of_fails program outside _ "big_new" bigNew _ s why find_bigNew made
+    generalize UInt64.ofNat c = cw at hl hl2 n0 n1 third
+    simp [Program.call, find_natResult, find_trimmed, find_bigNew, natResult, runAll, Stmt.run, Expr.run, Op.run,
+      bind, put, hl, box, Expr.eq, Expr.or, Expr.shl]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, Expr.run, Op.run, limbAt,
+      unbox, Expr.shr, Expr.and, Expr.lt, Number.top, r1, unbox_boxed, n0, n1, third, hl2]
+  · obtain ⟨l2, hl2⟩ := runAll_of_call program outside _ "big_new" bigNew _ s _ _ find_bigNew made
+    generalize UInt64.ofNat c = cw at hl hl2 n0 n1 third
+    simp [Program.call, find_natResult, find_trimmed, find_bigNew, natResult, runAll, Stmt.run, Expr.run, Op.run,
+      bind, put, hl, box, Expr.eq, Expr.or, Expr.shl]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, Expr.run, Op.run, limbAt,
+      unbox, Expr.shr, Expr.and, Expr.lt, Number.top, r1, unbox_boxed, n0, n1, third, hl2]
+
+/-- `nat_result` reads an answer rightly where the answer is 2^63 or more: from an array of limbs in memory,
+given room that shares no byte with the array, where making the room left the array alone, it makes there an
+object holding the array's limbs without the zero ones on top (`keptLimbs`, whose number is the array's and
+whose top limb is not zero), and changes nothing outside that room. -/
+theorem natResult_object (outside : Outside) (array o : UInt64) (limbs : Runtime.Big.Limbs) (s s' : State)
+    (extra : Nat) (small : limbs.size < 4294967296)
+    (elements : ∀ j, (h : j < limbs.size) →
+      readBytes s.memory (array + UInt64.ofNat (24 + 8 * j)) 8 = .ok (boxed limbs[j].toUInt64))
+    (big : 9223372036854775808 ≤ Runtime.Big.value limbs)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * trimCount limbs limbs.size)] s = .ok (o, s'))
+    (kept : ∀ j, j < 24 + 8 * limbs.size → s'.memory (array + UInt64.ofNat j) = s.memory (array + UInt64.ofNat j))
+    (apart : ∀ k, k < 16 + 4 * trimCount limbs limbs.size → ∀ j, j < 24 + 8 * limbs.size →
+      o + UInt64.ofNat k ≠ array + UInt64.ofNat j) :
+    ∃ memory,
+      program.call outside (limbs.size + extra + 22) "nat_result" [array, UInt64.ofNat limbs.size] s
+        = .ok (.gave o, { s' with memory := memory })
+      ∧ ObjectOf memory o 0 (keptLimbs limbs limbs.size)
+      ∧ ∀ q, (∀ k, k < 16 + 4 * trimCount limbs limbs.size → o + UInt64.ofNat k ≠ q) →
+          memory q = s'.memory q := by
+  have hle := trimCount_le limbs limbs.size
+  obtain ⟨memory, made, object, frame⟩ := bigNew_object outside (limbs.size - trimCount limbs limbs.size + extra) 0
+    array o limbs _ s s' hle small (by decide) alloc (elements_kept _ _ _ _ elements kept) apart
+  rw [show trimCount limbs limbs.size + (limbs.size - trimCount limbs limbs.size + extra) + 16
+    = limbs.size + extra + 16 from by omega] at made
+  exact ⟨memory, (natResult_pass outside array limbs s extra small elements big).2 o _ made, object, frame⟩
 
 /-- `int_result` reads an answer rightly where the answer is outside the range a tagged word holds: from a
 sign and the first `n` limbs of an array, given room on the same terms as `nat_result`, it makes there an
@@ -1790,36 +1880,56 @@ theorem intResult_object (outside : Outside) (array negative o : UInt64) (limbs 
       bind, put, hl, box, Expr.eq, Expr.or, Expr.shl]
     simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, n0, n1, hl2]
 
-/-- `nat_from` where the answer is 2^63 or more: it gives back the object `nat_result` makes, then gives the
-array up. The state it ends in is the one `lean_dec` leaves from a state in which the object is right; what
-giving up does is the allocator's. -/
+/-- `nat_from` is `nat_result` and then giving the array up: where either does not return neither does it,
+and otherwise it gives what `nat_result` gave, in the state `lean_dec` leaves. -/
+theorem natFrom_pass (outside : Outside) (fuel : Nat) (array count : UInt64) (s : State)
+    (size : readBytes s.memory (array + 8) 8 = .ok count) :
+    (∀ why, program.call outside (fuel + 2) "nat_result" [array, count] s = .error why →
+      program.call outside (fuel + 4) "nat_from" [array] s = .error why) ∧
+    ∀ value s1, program.call outside (fuel + 2) "nat_result" [array, count] s = .ok (.gave value, s1) →
+      (∀ why, outside "lean_dec" [array] s1 = .error why →
+        program.call outside (fuel + 4) "nat_from" [array] s = .error why) ∧
+      ∀ unused after, outside "lean_dec" [array] s1 = .ok (unused, after) →
+        program.call outside (fuel + 4) "nat_from" [array] s = .ok (.gave value, after) := by
+  refine ⟨fun why run => ?_, fun value s1 run => ⟨fun why dec => ?_, fun unused after dec => ?_⟩⟩
+  · have hl := runAll_of_fails program outside _ "nat_result" natResult _ s why find_natResult run
+    simp [Program.call, find_natFrom, find_natResult, natFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+      sizeOf, drop, size]
+    simp [Bind.bind, Except.bind, hl]
+  · obtain ⟨l, hl⟩ := runAll_of_call program outside _ "nat_result" natResult _ s _ _ find_natResult run
+    simp [Program.call, find_natFrom, find_natResult, natFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+      sizeOf, drop, size]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hl, dec]
+  · obtain ⟨l, hl⟩ := runAll_of_call program outside _ "nat_result" natResult _ s _ _ find_natResult run
+    simp [Program.call, find_natFrom, find_natResult, natFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+      sizeOf, drop, size]
+    simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hl, dec]
+
+/-- `nat_from` where the answer is 2^63 or more: it makes the object `nat_result` makes and then gives the
+array up. If `lean_dec` returns, it gives back the object, in the state `lean_dec` leaves from one in which
+the object is right. -/
 theorem natFrom_object (outside : Outside) (array o : UInt64) (limbs : Runtime.Big.Limbs) (s s' : State)
     (extra : Nat) (small : limbs.size < 4294967296) (holds : ArrayOf s.memory array limbs)
     (big : 9223372036854775808 ≤ Runtime.Big.value limbs)
     (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * trimCount limbs limbs.size)] s = .ok (o, s'))
     (kept : ∀ j, j < 24 + 8 * limbs.size → s'.memory (array + UInt64.ofNat j) = s.memory (array + UInt64.ofNat j))
     (apart : ∀ k, k < 16 + 4 * trimCount limbs limbs.size → ∀ j, j < 24 + 8 * limbs.size →
-      o + UInt64.ofNat k ≠ array + UInt64.ofNat j)
-    (dec : ∀ t : State, ∃ r, outside "lean_dec" [array] t = .ok r) :
-    ∃ memory unused after,
-      program.call outside (limbs.size + extra + 24) "nat_from" [array] s = .ok (.gave o, after)
-      ∧ outside "lean_dec" [array] { s' with memory := memory } = .ok (unused, after)
-      ∧ ObjectOf memory o 0 (keptLimbs limbs limbs.size)
-      ∧ ∀ q, (∀ k, k < 16 + 4 * trimCount limbs limbs.size → o + UInt64.ofNat k ≠ q) →
-          memory q = s'.memory q := by
+      o + UInt64.ofNat k ≠ array + UInt64.ofNat j) :
+    ∃ memory,
+      ObjectOf memory o 0 (keptLimbs limbs limbs.size)
+      ∧ (∀ q, (∀ k, k < 16 + 4 * trimCount limbs limbs.size → o + UInt64.ofNat k ≠ q) →
+          memory q = s'.memory q)
+      ∧ ∀ unused after, outside "lean_dec" [array] { s' with memory := memory } = .ok (unused, after) →
+          program.call outside (limbs.size + extra + 24) "nat_from" [array] s = .ok (.gave o, after) := by
   obtain ⟨memory, run, object, frame⟩ := natResult_object outside array o limbs s s' extra small holds.2.2 big
     alloc kept apart
-  obtain ⟨⟨unused, after⟩, hdec⟩ := dec { s' with memory := memory }
-  obtain ⟨l, hl⟩ := runAll_of_call program outside _ "nat_result" natResult _ s _ _ find_natResult run
-  have size := holds.2.1
-  refine ⟨memory, unused, after, ?_, hdec, object, frame⟩
-  simp [Program.call, find_natFrom, find_natResult, natFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
-    sizeOf, drop, size]
-  simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, hl, hdec]
+  exact ⟨memory, object, frame,
+    ((natFrom_pass outside (limbs.size + extra + 20) array _ s holds.2.1).2 o _ run).2⟩
 
-/-- `int_from` where the answer is outside the range a tagged word holds: it gives back the object
-`int_result` makes, holding the sign and the limbs of the integer in the array (`signedValue`), then gives
-the array up. -/
+/-- `int_from` where the answer is outside the range a tagged word holds: it makes the object `int_result`
+makes, holding the sign and the limbs of the integer in the array (`signedValue`), and then gives the array
+up. If `lean_dec` returns, it gives back the object, in the state `lean_dec` leaves from one in which the
+object is right. -/
 theorem intFrom_object (outside : Outside) (array o : UInt64) (limbs : Runtime.Big.Limbs) (s s' : State)
     (n extra : Nat) (small : limbs.size < 4294967296) (holds : ArrayOf s.memory array limbs)
     (size : limbs.size = n + 1)
@@ -1827,14 +1937,13 @@ theorem intFrom_object (outside : Outside) (array o : UInt64) (limbs : Runtime.B
     (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * trimCount limbs n)] s = .ok (o, s'))
     (kept : ∀ j, j < 24 + 8 * limbs.size → s'.memory (array + UInt64.ofNat j) = s.memory (array + UInt64.ofNat j))
     (apart : ∀ k, k < 16 + 4 * trimCount limbs n → ∀ j, j < 24 + 8 * limbs.size →
-      o + UInt64.ofNat k ≠ array + UInt64.ofNat j)
-    (dec : ∀ t : State, ∃ r, outside "lean_dec" [array] t = .ok r) :
-    ∃ memory unused after negative,
-      program.call outside (n + extra + 25) "int_from" [array] s = .ok (.gave o, after)
-      ∧ outside "lean_dec" [array] { s' with memory := memory } = .ok (unused, after)
-      ∧ ObjectOf memory o negative (keptLimbs limbs n)
+      o + UInt64.ofNat k ≠ array + UInt64.ofNat j) :
+    ∃ memory negative,
+      ObjectOf memory o negative (keptLimbs limbs n)
       ∧ withSign negative (Runtime.Big.value (keptLimbs limbs n)) = Runtime.Big.signedValue limbs
-      ∧ ∀ q, (∀ k, k < 16 + 4 * trimCount limbs n → o + UInt64.ofNat k ≠ q) → memory q = s'.memory q := by
+      ∧ (∀ q, (∀ k, k < 16 + 4 * trimCount limbs n → o + UInt64.ofNat k ≠ q) → memory q = s'.memory q)
+      ∧ ∀ unused after, outside "lean_dec" [array] { s' with memory := memory } = .ok (unused, after) →
+          program.call outside (n + extra + 25) "int_from" [array] s = .ok (.gave o, after) := by
   have hsize := holds.2.1
   rw [size] at hsize
   have read := holds.2.2 n (by omega)
@@ -1859,11 +1968,10 @@ theorem intFrom_object (outside : Outside) (array o : UInt64) (limbs : Runtime.B
     rw [sv] at range ⊢
     obtain ⟨memory, run, object, frame⟩ := intResult_object outside array 0 o limbs s s' n extra small holds.2.2
       (by omega) (by decide) range alloc kept apart
-    obtain ⟨⟨unused, after⟩, hdec⟩ := dec { s' with memory := memory }
     obtain ⟨l, hl⟩ := runAll_of_call program outside _ "int_result" intResult _ s _ _ find_intResult run
     rw [cless] at hl
     have hz : (limbs[n]'(by omega)).toUInt64 = 0 := by rw [top]; rfl
-    refine ⟨memory, unused, after, 0, ?_, hdec, object, by rw [keptv], frame⟩
+    refine ⟨memory, 0, object, by rw [keptv], frame, fun unused after hdec => ?_⟩
     simp [Program.call, find_intFrom, find_intResult, intFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
       sizeOf, drop, limbAt, unbox, Expr.eq, Expr.ne, Expr.shr, hsize]
     simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, cpos, read, hz, hl, hdec,
@@ -1874,13 +1982,839 @@ theorem intFrom_object (outside : Outside) (array o : UInt64) (limbs : Runtime.B
     rw [sv] at range ⊢
     obtain ⟨memory, run, object, frame⟩ := intResult_object outside array 1 o limbs s s' n extra small holds.2.2
       (by omega) (by decide) range alloc kept apart
-    obtain ⟨⟨unused, after⟩, hdec⟩ := dec { s' with memory := memory }
     obtain ⟨l, hl⟩ := runAll_of_call program outside _ "int_result" intResult _ s _ _ find_intResult run
     rw [cless] at hl
-    refine ⟨memory, unused, after, 1, ?_, hdec, object, by rw [keptv], frame⟩
+    refine ⟨memory, 1, object, by rw [keptv], frame, fun unused after hdec => ?_⟩
     simp [Program.call, find_intFrom, find_intResult, intFrom, runAll, Stmt.run, Expr.run, Op.run, bind, put,
       sizeOf, drop, limbAt, unbox, Expr.eq, Expr.ne, Expr.shr, hsize]
     simp [Bind.bind, Except.bind, Pure.pure, Except.pure, Functor.map, Except.map, put, cpos, read, hl, hdec,
       unbox_boxed, nz]
+
+/-! ## More fuel
+
+A run that finished finishes the same with more fuel. So a statement about a call that returned need not say
+how much fuel it was given. -/
+
+/-- One more unit of fuel changes nothing that finished, for a statement and for a run of them. -/
+theorem more_fuel (p : Program) (outside : Outside) : ∀ fuel : Nat,
+    (∀ st s locals r, Stmt.run p outside fuel st s locals = .ok r →
+      Stmt.run p outside (fuel + 1) st s locals = .ok r) ∧
+    (∀ sts s locals r, runAll p outside fuel sts s locals = .ok r →
+      runAll p outside (fuel + 1) sts s locals = .ok r) := by
+  intro fuel
+  induction fuel with
+  | zero =>
+    refine ⟨fun st s locals r h => ?_, fun sts s locals r h => ?_⟩
+    · simp [Stmt.run] at h
+    · simp [runAll] at h
+  | succ fuel ih =>
+    obtain ⟨ihs, iha⟩ := ih
+    refine ⟨fun st s locals r h => ?_, fun sts s locals r h => ?_⟩
+    · cases st with
+      | branch condition yes no =>
+        rw [Stmt.run] at h ⊢
+        cases c : condition.run s locals with
+        | error e => rw [c] at h; simp [Bind.bind, Except.bind] at h
+        | ok v =>
+          rw [c] at h
+          simp only [Bind.bind, Except.bind] at h ⊢
+          by_cases z : (v != 0) = true
+          · simp only [z] at h ⊢; exact iha _ _ _ _ h
+          · simp only [z] at h ⊢; exact iha _ _ _ _ h
+      | loop condition body =>
+        rw [Stmt.run] at h ⊢
+        cases c : condition.run s locals with
+        | error e => rw [c] at h; simp [Bind.bind, Except.bind] at h
+        | ok v =>
+          rw [c] at h
+          simp only [Bind.bind, Except.bind] at h ⊢
+          by_cases z : (v == 0) = true
+          · simp only [z] at h ⊢; exact h
+          · simp only [z] at h ⊢
+            cases b : runAll p outside fuel body s locals with
+            | error e => rw [b] at h; first | cases h | simp [Bind.bind, Except.bind] at h
+            | ok r1 =>
+              rw [b] at h
+              rw [iha _ _ _ _ b]
+              obtain ⟨e1, s1, l1⟩ := r1
+              cases e1 with
+              | on => exact ihs _ _ _ _ h
+              | gave value => exact h
+              | stopped why => exact h
+      | call result function arguments =>
+        simp only [Stmt.run] at h ⊢
+        cases a : arguments.mapM (fun x => x.run s locals) with
+        | error e => rw [a] at h; simp [Bind.bind, Except.bind] at h
+        | ok values =>
+          rw [a] at h
+          simp only [Bind.bind, Except.bind] at h ⊢
+          cases f : p.functions.find? (fun x => x.name == function) with
+          | none => rw [f] at h; simp at h
+          | some fn =>
+            rw [f] at h
+            simp only at h ⊢
+            cases b : runAll p outside fuel fn.body s (bind (fun _ => none) fn.parameters values) with
+            | error e => rw [b] at h; first | cases h | simp [Bind.bind, Except.bind] at h
+            | ok r1 =>
+              rw [b] at h
+              rw [iha _ _ _ _ b]
+              exact h
+      | _ => rw [Stmt.run] at h ⊢; exact h
+    · cases sts with
+      | nil => simp only [runAll] at h ⊢; exact h
+      | cons st rest =>
+        rw [runAll] at h ⊢
+        cases b : Stmt.run p outside fuel st s locals with
+        | error e => rw [b] at h; first | cases h | simp [Bind.bind, Except.bind] at h
+        | ok r1 =>
+          rw [b] at h
+          rw [ihs _ _ _ _ b]
+          obtain ⟨e1, s1, l1⟩ := r1
+          cases e1 with
+          | on => exact iha _ _ _ _ h
+          | gave value => exact h
+          | stopped why => exact h
+
+/-- Nor does any amount more. -/
+theorem runAll_more (p : Program) (outside : Outside) (fuel more : Nat) (sts : List Stmt) (s : State)
+    (locals : Locals) (r : Ending × State × Locals) (h : runAll p outside fuel sts s locals = .ok r) :
+    runAll p outside (fuel + more) sts s locals = .ok r := by
+  induction more with
+  | zero => exact h
+  | succ n ih => exact (more_fuel p outside _).2 _ _ _ _ ih
+
+/-- A call that returned returns the same with more fuel. -/
+theorem call_more (p : Program) (outside : Outside) (fuel more : Nat) (function : String)
+    (arguments : List UInt64) (s : State) (r : Ending × State)
+    (h : p.call outside fuel function arguments s = .ok r) :
+    p.call outside (fuel + more) function arguments s = .ok r := by
+  unfold Program.call at h ⊢
+  cases f : p.functions.find? (fun x => x.name == function) with
+  | none => rw [f] at h; cases h
+  | some fn =>
+    rw [f] at h
+    dsimp only at h ⊢
+    cases b : runAll p outside fuel fn.body s (bind (fun _ => none) fn.parameters arguments) with
+    | error e => rw [b] at h; cases h
+    | ok r1 =>
+      rw [b] at h
+      rw [runAll_more p outside fuel more _ _ _ _ b]
+      exact h
+
+/-! ## Where the allocator does not return
+
+`lean_alloc_object` does not return when there is no memory left. Then the function that asked does not
+return either, and so on up: none of them carries on with an address it was not given. -/
+
+theorem arrayNew_fails (outside : Outside) (fuel : Nat) (count : UInt64) (s : State) (why : String)
+    (alloc : outside "lean_alloc_object" [24 + count * 8] s = .error why) :
+    program.call outside (fuel + 10) "array_new" [count] s = .error why := by
+  simp [Program.call, find_arrayNew, arrayNew, runAll, Stmt.run, Expr.run, Op.run, bind, put, header, alloc]
+  rfl
+
+theorem limbsOfWord_fails (outside : Outside) (fuel : Nat) (value : UInt64) (s : State) (why : String)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * (wordLimbs value).size)] s = .error why) :
+    program.call outside (fuel + 20) "limbs_of_word" [value] s = .error why := by
+  by_cases hz : value = 0
+  · subst hz
+    have alloc' : outside "lean_alloc_object" [24] s = .error why := alloc
+    simp [Program.call, find_limbsOfWord, find_arrayNew, limbsOfWord, arrayNew, runAll, Stmt.run, Expr.run, Op.run,
+      bind, put, header, low32, box, Expr.ne, Expr.lt, Expr.and, Expr.or, Expr.shl, Expr.shr, alloc']
+    rfl
+  · by_cases hs : value ≤ 4294967295
+    · have w : wordLimbs value = #[value.toUInt32] := by simp [wordLimbs, hz, hs]
+      rw [w] at alloc
+      have alloc' : outside "lean_alloc_object" [32] s = .error why := alloc
+      simp [Program.call, find_limbsOfWord, find_arrayNew, limbsOfWord, arrayNew, runAll, Stmt.run, Expr.run,
+        Op.run, bind, put, header, low32, box, Expr.ne, Expr.lt, Expr.and, Expr.or, Expr.shl, Expr.shr, alloc', hz,
+        hs]
+      rfl
+    · have hl : (4294967295 : UInt64) < value := by simpa [UInt64.not_le] using hs
+      have w : wordLimbs value = #[value.toUInt32, (value >>> 32).toUInt32] := by simp [wordLimbs, hz, hs]
+      rw [w] at alloc
+      have alloc' : outside "lean_alloc_object" [40] s = .error why := alloc
+      simp [Program.call, find_limbsOfWord, find_arrayNew, limbsOfWord, arrayNew, runAll, Stmt.run, Expr.run,
+        Op.run, bind, put, header, low32, box, Expr.ne, Expr.lt, Expr.and, Expr.or, Expr.shl, Expr.shr, alloc', hz,
+        hs]
+      rfl
+
+theorem natLimbs_word_fails (outside : Outside) (fuel : Nat) (o : UInt64) (s : State) (why : String)
+    (tagged : o &&& 1 ≠ 0)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * (wordLimbs (o >>> 1)).size)] s = .error why) :
+    program.call outside (fuel + 24) "nat_limbs" [o] s = .error why := by
+  have hl := runAll_of_fails program outside (fuel + 20) "limbs_of_word" limbsOfWord [o >>> 1] s why
+    find_limbsOfWord (limbsOfWord_fails outside fuel (o >>> 1) s why alloc)
+  simp [Program.call, find_natLimbs, find_limbsOfWord, natLimbs, runAll, Stmt.run, Expr.run, Op.run, bind, put,
+    isWord, unbox, Expr.ne, Expr.and, Expr.shr, tagged, hl]
+  simp [Bind.bind, Except.bind]
+
+theorem limbsOfObject_fails (outside : Outside) (extra n : Nat) (o : UInt64) (s : State) (why : String)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * n)] s = .error why) :
+    program.call outside (n + extra + 14) "limbs_of_object" [o, UInt64.ofNat n] s = .error why := by
+  have room : (24 : UInt64) + UInt64.ofNat n * 8 = UInt64.ofNat (24 + 8 * n) := by
+    apply UInt64.toNat_inj.mp
+    simp only [UInt64.toNat_add, UInt64.toNat_mul, UInt64.toNat_ofNat', show (24 : UInt64).toNat = 24 from rfl,
+      show (8 : UInt64).toNat = 8 from rfl]
+    omega
+  rw [← room] at alloc
+  have hl0 : runAll program outside (n + extra + 12) arrayNew.body s
+      (bind (fun _ => none) arrayNew.parameters [UInt64.ofNat n]) = .error why :=
+    runAll_of_fails program outside _ "array_new" arrayNew _ s why find_arrayNew
+      (arrayNew_fails outside (n + extra + 2) (UInt64.ofNat n) s why alloc)
+  have st1 : Stmt.run program outside (n + extra + 13) (.call (some "array") "array_new" ["count"]) s
+      (bind (fun _ => none) ["o", "count"] [o, UInt64.ofNat n]) = .error why := by
+    simp [Stmt.run, find_arrayNew, Expr.run, bind, put, hl0]
+    rfl
+  exact call_fails program outside _ "limbs_of_object" limbsOfObject _ s why find_limbsOfObject
+    (runAll_fails _ _ _ _ _ _ _ _ st1)
+
+theorem bigNew_fails (outside : Outside) (extra count : Nat) (negative array : UInt64) (s : State) (why : String)
+    (small : count < 4294967296)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * count)] s = .error why) :
+    program.call outside (count + extra + 16) "big_new" [negative, array, UInt64.ofNat count] s = .error why := by
+  have room : (16 : UInt64) + UInt64.ofNat count * 4 = UInt64.ofNat (16 + 4 * count) := by
+    apply UInt64.toNat_inj.mp
+    simp only [UInt64.toNat_add, UInt64.toNat_mul, UInt64.toNat_ofNat', show (16 : UInt64).toNat = 16 from rfl,
+      show (4 : UInt64).toNat = 4 from rfl]
+    omega
+  rw [← room] at alloc
+  have fits : UInt64.ofNat count ≤ 4294967295 := by
+    rw [UInt64.le_iff_toNat_le]
+    simp only [UInt64.toNat_ofNat', show (4294967295 : UInt64).toNat = 4294967295 from rfl]
+    omega
+  generalize UInt64.ofNat count = cw at alloc fits
+  generalize hlocals : bind (fun _ => none) ["negative", "array", "count"] [negative, array, cw] = locals
+  have lcount : locals "count" = some cw := by rw [← hlocals]; simp [bind, put]
+  have st0 : Stmt.run program outside (count + extra + 15) (.branch (Expr.lt low32 "count") [outOfMemory] []) s
+      locals = .ok (.on, s, locals) := by
+    simp [Stmt.run, runAll, Expr.run, Op.run, Expr.lt, low32, lcount, fits]
+    rfl
+  have st1 : Stmt.run program outside (count + extra + 14)
+      (.callOther (some "o") "lean_alloc_object" [16 + "count" * 4]) s locals = .error why := by
+    simp [Stmt.run, Expr.run, Op.run, lcount, alloc]
+    rfl
+  refine call_fails program outside _ "big_new" bigNew _ s why find_bigNew ?_
+  show runAll program outside (count + extra + 15 + 1) [.branch (Expr.lt low32 "count") [outOfMemory] [],
+    .callOther (some "o") "lean_alloc_object" [16 + "count" * 4],
+    .store "o" (header numberKind),
+    .storePart 4 ("o" + 8) "negative",
+    .storePart 4 ("o" + 12) "count",
+    .set "i" 0,
+    .loop (Expr.lt "i" "count")
+      [.storePart 4 ("o" + 16 + "i" * 4) (limbAt "array" "i"), .set "i" ("i" + 1)],
+    .give "o"] s (bind (fun _ => none) ["negative", "array", "count"] [negative, array, cw]) = _
+  rw [hlocals]
+  exact (runAll_on _ _ _ _ _ _ _ _ _ st0).trans (runAll_fails _ _ (count + extra + 14) _ _ _ _ _ st1)
+
+theorem natResult_fails (outside : Outside) (array : UInt64) (limbs : Runtime.Big.Limbs) (s : State)
+    (extra : Nat) (why : String) (small : limbs.size < 4294967296)
+    (elements : ∀ j, (h : j < limbs.size) →
+      readBytes s.memory (array + UInt64.ofNat (24 + 8 * j)) 8 = .ok (boxed limbs[j].toUInt64))
+    (big : 9223372036854775808 ≤ Runtime.Big.value limbs)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * trimCount limbs limbs.size)] s = .error why) :
+    program.call outside (limbs.size + extra + 22) "nat_result" [array, UInt64.ofNat limbs.size] s
+      = .error why := by
+  have hle := trimCount_le limbs limbs.size
+  have fails := bigNew_fails outside (limbs.size - trimCount limbs limbs.size + extra) _ 0 array s why
+    (by omega) alloc
+  rw [show trimCount limbs limbs.size + (limbs.size - trimCount limbs limbs.size + extra) + 16
+    = limbs.size + extra + 16 from by omega] at fails
+  exact (natResult_pass outside array limbs s extra small elements big).1 why fails
+
+/-! ## An operation as a whole
+
+From the words compiled Lean hands in to the word it gets back. What the program calls outside itself is
+now assumed as a whole rather than call by call: `Allocator` says what `lean_alloc_object` and `lean_dec`
+do, `Computes` and `Compares` what a call into the compiled arithmetic does. Each statement then reads: if
+the operation returns, it returns the right number as compiled Lean holds it, and every object that was
+there before is there and as it was. Nothing is said of a call that does not return. -/
+
+/-- What is assumed of the allocator, for an operation as a whole. `good` says the allocator's own account
+of a state is in order. `owns t p q` says that in state `t` byte `q` is part of the object handed out at
+`p` and not given back. -/
+structure Allocator (outside : Outside) where
+  good : State → Prop
+  owns : State → UInt64 → UInt64 → Prop
+  /-- Writing inside objects that have been handed out does not disturb the allocator. -/
+  written : ∀ (t : State) (memory : UInt64 → Option UInt8), good t →
+    (∀ q, (∀ p, ¬ owns t p q) → memory q = t.memory q) →
+    good { t with memory := memory } ∧ owns { t with memory := memory } = owns t
+  /-- Room that is handed out is at an even address, was nobody's, and is the new object's; every object
+  there already is still there and as it was. -/
+  alloc : ∀ (size : UInt64) (t : State) (p : UInt64) (t' : State), good t →
+    outside "lean_alloc_object" [size] t = .ok (p, t') →
+    good t' ∧ p &&& 1 = 0 ∧
+    (∀ p0 q, owns t p0 q → p0 ≠ p ∧ owns t' p0 q ∧ t'.memory q = t.memory q) ∧
+    ∀ k, k < size.toNat → owns t' p (p + UInt64.ofNat k) ∧ ∀ p0, ¬ owns t p0 (p + UInt64.ofNat k)
+  /-- Giving up an array of limbs leaves every other object there and as it was. -/
+  dec : ∀ (array : UInt64) (limbs : Runtime.Big.Limbs) (t : State) (unused : UInt64) (t' : State), good t →
+    ArrayOf t.memory array limbs →
+    (∀ k, k < 24 + 8 * limbs.size → owns t array (array + UInt64.ofNat k)) →
+    outside "lean_dec" [array] t = .ok (unused, t') →
+    good t' ∧ ∀ p0 q, owns t p0 q → p0 ≠ array → owns t' p0 q ∧ t'.memory q = t.memory q
+
+/-- What is assumed of a call into the compiled arithmetic: that it does to arrays in memory what the Lean
+function does to its arguments. Handed two different arrays of limbs, each an object of its own, it returns
+an array holding the function's answer, which is an object of its own and none of those that were there
+besides the two; and it leaves every object but the two there and as it was. The two are the arithmetic's
+to use or to give up. -/
+def Computes {outside : Outside} (heap : Allocator outside) (name : String)
+    (f : Runtime.Big.Limbs → Runtime.Big.Limbs → Runtime.Big.Limbs) : Prop :=
+  ∀ (a b : UInt64) (la lb : Runtime.Big.Limbs) (t : State) (array : UInt64) (t' : State), heap.good t →
+    ArrayOf t.memory a la → ArrayOf t.memory b lb →
+    (∀ k, k < 24 + 8 * la.size → heap.owns t a (a + UInt64.ofNat k)) →
+    (∀ k, k < 24 + 8 * lb.size → heap.owns t b (b + UInt64.ofNat k)) → a ≠ b →
+    outside name [a, b] t = .ok (array, t') →
+    heap.good t' ∧ ArrayOf t'.memory array (f la lb) ∧
+    (∀ k, k < 24 + 8 * (f la lb).size → heap.owns t' array (array + UInt64.ofNat k)) ∧
+    ∀ p0 q, heap.owns t p0 q → p0 ≠ a → p0 ≠ b →
+      p0 ≠ array ∧ heap.owns t' p0 q ∧ t'.memory q = t.memory q
+
+/-- A natural number as compiled Lean holds it: below 2^63 a tagged word, twice the number and one; from
+there up an object of its own, whose limbs are the number's and whose top limb is not zero. -/
+def NatHeld {outside : Outside} (heap : Allocator outside) (t : State) (o : UInt64) (n : Nat) : Prop :=
+  (n < 9223372036854775808 ∧ o = UInt64.ofNat (2 * n + 1)) ∨
+  (9223372036854775808 ≤ n ∧ o &&& 1 = 0 ∧ ∃ limbs : Runtime.Big.Limbs,
+    ObjectOf t.memory o 0 limbs ∧ limbs.size < 4294967296 ∧ Runtime.Big.Trimmed limbs ∧
+    Runtime.Big.value limbs = n ∧ ∀ j, j < 16 + 4 * limbs.size → heap.owns t o (o + UInt64.ofNat j))
+
+/-- An array whose bytes are as they were still holds what it held. -/
+theorem array_kept (memory memory' : UInt64 → Option UInt8) (array : UInt64) (limbs : Runtime.Big.Limbs)
+    (holds : ArrayOf memory array limbs)
+    (kept : ∀ j, j < 24 + 8 * limbs.size → memory' (array + UInt64.ofNat j) = memory (array + UInt64.ofNat j)) :
+    ArrayOf memory' array limbs := by
+  obtain ⟨header, size, elements⟩ := holds
+  refine ⟨?_, ?_, elements_kept memory memory' array limbs elements kept⟩
+  · exact (readBytes_congr _ _ _ _ (fun i hi => kept i (by omega))).trans header
+  · exact (readBytes_congr _ _ (array + UInt64.ofNat 8) _ (fun i hi => by
+      rw [offset_add]; exact kept _ (by omega))).trans size
+
+/-- A number that is held stays held while every object that was there is there and as it was. -/
+theorem natHeld_kept {outside : Outside} (heap : Allocator outside) (t t' : State) (o : UInt64) (n : Nat)
+    (held : NatHeld heap t o n)
+    (kept : ∀ p0 q, heap.owns t p0 q → heap.owns t' p0 q ∧ t'.memory q = t.memory q) :
+    NatHeld heap t' o n := by
+  rcases held with word | ⟨big, pointer, limbs, holds, small, nozero, value, owned⟩
+  · exact Or.inl word
+  · exact Or.inr ⟨big, pointer, limbs,
+      object_kept t.memory t'.memory o 0 limbs holds (fun j hj => (kept o _ (owned j hj)).2), small, nozero, value,
+      fun j hj => (kept o _ (owned j hj)).1⟩
+
+theorem tagged_word (n : Nat) : UInt64.ofNat (2 * n + 1) &&& 1 ≠ 0 := by
+  intro e
+  have := congrArg UInt64.toNat e
+  rw [UInt64.toNat_and, UInt64.toNat_ofNat', show (1 : UInt64).toNat = 1 from rfl, Nat.and_one_is_mod] at this
+  have z : (0 : UInt64).toNat = 0 := rfl
+  omega
+
+theorem half_word (n : Nat) (h : n < 9223372036854775808) : UInt64.ofNat (2 * n + 1) >>> 1 = UInt64.ofNat n := by
+  apply UInt64.toNat_inj.mp
+  simp only [UInt64.toNat_shiftRight, UInt64.toNat_ofNat', show (1 : UInt64).toNat = 1 from rfl,
+    Nat.shiftRight_eq_div_pow, show 1 % 64 = 1 from rfl, Nat.pow_one]
+  omega
+
+theorem wordLimbs_size (value : UInt64) : (wordLimbs value).size ≤ 2 := by
+  unfold wordLimbs
+  split
+  · simp
+  · split <;> simp
+
+/-- What the allocator's promises come to for room this program asked for and then wrote in. -/
+theorem room_made {outside : Outside} (heap : Allocator outside) (bytes : Nat) (s s' : State) (p : UInt64)
+    (memory : UInt64 → Option UInt8) (good : heap.good s) (fits : bytes < 18446744073709551616)
+    (alloc : outside "lean_alloc_object" [UInt64.ofNat bytes] s = .ok (p, s'))
+    (frame : ∀ q, (∀ k, k < bytes → p + UInt64.ofNat k ≠ q) → memory q = s'.memory q) :
+    heap.good { s' with memory := memory } ∧
+    (∀ k, k < bytes → heap.owns { s' with memory := memory } p (p + UInt64.ofNat k)) ∧
+    ∀ p0 q, heap.owns s p0 q →
+      p0 ≠ p ∧ heap.owns { s' with memory := memory } p0 q ∧ memory q = s.memory q := by
+  obtain ⟨good', -, others, room⟩ := heap.alloc _ s p s' good alloc
+  have size : (UInt64.ofNat bytes).toNat = bytes := by
+    simp only [UInt64.toNat_ofNat']
+    omega
+  rw [size] at room
+  obtain ⟨good'', same⟩ := heap.written s' memory good'
+    (fun q nobody => frame q (fun k hk e => nobody p (e ▸ (room k hk).1)))
+  refine ⟨good'', fun k hk => by rw [same]; exact (room k hk).1, fun p0 q own => ?_⟩
+  obtain ⟨ne, own', mem⟩ := others p0 q own
+  exact ⟨ne, by rw [same]; exact own', (frame q (fun k hk e => (room k hk).2 p0 (e ▸ own))).trans mem⟩
+
+/-- `nat_limbs` on a natural number as compiled Lean holds it: if it returns, it gives an array, an object
+of its own, holding limbs of that number with no zero limb on top; and every object that was there is
+there and as it was. -/
+theorem natLimbs_held {outside : Outside} (heap : Allocator outside) (fuel : Nat) (o : UInt64) (n : Nat)
+    (s after : State) (ending : Ending) (good : heap.good s) (held : NatHeld heap s o n)
+    (ran : program.call outside fuel "nat_limbs" [o] s = .ok (ending, after)) :
+    ∃ array limbs, ending = .gave array ∧ heap.good after ∧ ArrayOf after.memory array limbs ∧
+      limbs.size < 4294967296 ∧ Runtime.Big.Trimmed limbs ∧ Runtime.Big.value limbs = n ∧
+      (∀ k, k < 24 + 8 * limbs.size → heap.owns after array (array + UInt64.ofNat k)) ∧
+      ∀ p0 q, heap.owns s p0 q → p0 ≠ array ∧ heap.owns after p0 q ∧ after.memory q = s.memory q := by
+  rcases held with ⟨lt, rfl⟩ | ⟨big, pointer, limbs, holds, small, nozero, value, owned⟩
+  · have tagged := tagged_word n
+    have half := half_word n lt
+    have two := wordLimbs_size (UInt64.ofNat (2 * n + 1) >>> 1)
+    have lifted := call_more program outside fuel 24 "nat_limbs" [UInt64.ofNat (2 * n + 1)] s _ ran
+    cases a : outside "lean_alloc_object"
+        [UInt64.ofNat (24 + 8 * (wordLimbs (UInt64.ofNat (2 * n + 1) >>> 1)).size)] s with
+    | error why =>
+      rw [natLimbs_word_fails outside fuel _ s why tagged a] at lifted
+      cases lifted
+    | ok r =>
+      obtain ⟨array, s'⟩ := r
+      obtain ⟨memory, run, holds, frame⟩ := natLimbs_word outside fuel _ array s s' tagged a
+      rw [run] at lifted
+      injection lifted with same
+      injection same with e1 e2
+      subst e1 e2
+      obtain ⟨good', room, others⟩ := room_made heap _ s s' array memory good (by omega) a frame
+      refine ⟨array, _, rfl, good', holds, by omega, wordLimbs_trimmed _, ?_, room, others⟩
+      rw [wordLimbs_value, half, UInt64.toNat_ofNat']
+      omega
+  · have big' : 9223372036854775808 ≤ Runtime.Big.value limbs := by rw [value]; exact big
+    have lifted := call_more program outside fuel (limbs.size + 20) "nat_limbs" [o] s _ ran
+    rw [show fuel + (limbs.size + 20) = limbs.size + fuel + 20 from by omega] at lifted
+    have pass := natLimbs_object_pass outside fuel o limbs s pointer holds small nozero big'
+    cases a : outside "lean_alloc_object" [UInt64.ofNat (24 + 8 * limbs.size)] s with
+    | error why =>
+      rw [pass.1 why (limbsOfObject_fails outside fuel limbs.size o s why a)] at lifted
+      cases lifted
+    | ok r =>
+      obtain ⟨array, s'⟩ := r
+      obtain ⟨-, -, others, room⟩ := heap.alloc _ s array s' good a
+      have size : (UInt64.ofNat (24 + 8 * limbs.size)).toNat = 24 + 8 * limbs.size := by
+        simp only [UInt64.toNat_ofNat']
+        omega
+      rw [size] at room
+      obtain ⟨memory, run, holds', frame⟩ := limbsOfObject_array outside fuel o array limbs s s' small a
+        (object_kept s.memory s'.memory o 0 limbs holds (fun j hj => (others o _ (owned j hj)).2.2)).2.2.2
+        (fun k hk j hj e => (room k hk).2 o (e ▸ owned j hj))
+      rw [pass.2 array _ run] at lifted
+      injection lifted with same
+      injection same with e1 e2
+      subst e1 e2
+      obtain ⟨good', room', others'⟩ := room_made heap _ s s' array memory good (by omega) a frame
+      exact ⟨array, limbs, rfl, good', holds', small, nozero, value, room', others'⟩
+
+/-- `nat_from` on an array of limbs that is an object of its own: if it returns, it gives the number in the
+array as compiled Lean holds it, and every object that was there but the array is there and as it was. -/
+theorem natFrom_held {outside : Outside} (heap : Allocator outside) (fuel : Nat) (array : UInt64)
+    (limbs : Runtime.Big.Limbs) (s after : State) (ending : Ending) (good : heap.good s)
+    (holds : ArrayOf s.memory array limbs) (small : limbs.size < 4294967296)
+    (owned : ∀ k, k < 24 + 8 * limbs.size → heap.owns s array (array + UInt64.ofNat k))
+    (ran : program.call outside fuel "nat_from" [array] s = .ok (ending, after)) :
+    ∃ result, ending = .gave result ∧ heap.good after ∧
+      NatHeld heap after result (Runtime.Big.value limbs) ∧
+      ∀ p0 q, heap.owns s p0 q → p0 ≠ array → heap.owns after p0 q ∧ after.memory q = s.memory q := by
+  by_cases fits : Runtime.Big.value limbs < 9223372036854775808
+  · have run := natResult_word outside array limbs s fuel (by omega) holds fits
+    have pass := (natFrom_pass outside (limbs.size + fuel + 8) array _ s holds.2.1).2 _ _ run
+    have lifted := call_more program outside fuel (limbs.size + 12) "nat_from" [array] s _ ran
+    rw [show fuel + (limbs.size + 12) = limbs.size + fuel + 8 + 4 from by omega] at lifted
+    cases d : outside "lean_dec" [array] s with
+    | error why =>
+      rw [pass.1 why d] at lifted
+      cases lifted
+    | ok r =>
+      obtain ⟨unused, after'⟩ := r
+      rw [pass.2 unused after' d] at lifted
+      injection lifted with same
+      injection same with e1 e2
+      subst e1 e2
+      obtain ⟨good', others⟩ := heap.dec array limbs s unused after' good holds owned d
+      exact ⟨_, rfl, good', Or.inl ⟨fits, rfl⟩, others⟩
+  · have big : 9223372036854775808 ≤ Runtime.Big.value limbs := by omega
+    have hle := trimCount_le limbs limbs.size
+    have lifted := call_more program outside fuel (limbs.size + 24) "nat_from" [array] s _ ran
+    rw [show fuel + (limbs.size + 24) = limbs.size + fuel + 20 + 4 from by omega] at lifted
+    have pass := natFrom_pass outside (limbs.size + fuel + 20) array _ s holds.2.1
+    cases a : outside "lean_alloc_object" [UInt64.ofNat (16 + 4 * trimCount limbs limbs.size)] s with
+    | error why =>
+      rw [pass.1 why (natResult_fails outside array limbs s fuel why small holds.2.2 big a)] at lifted
+      cases lifted
+    | ok r =>
+      obtain ⟨o, s'⟩ := r
+      obtain ⟨-, even, others, room⟩ := heap.alloc _ s o s' good a
+      have size : (UInt64.ofNat (16 + 4 * trimCount limbs limbs.size)).toNat
+          = 16 + 4 * trimCount limbs limbs.size := by
+        simp only [UInt64.toNat_ofNat']
+        omega
+      rw [size] at room
+      obtain ⟨memory, run, object, frame⟩ := natResult_object outside array o limbs s s' fuel small holds.2.2 big a
+        (fun j hj => (others array _ (owned j hj)).2.2)
+        (fun k hk j hj e => (room k hk).2 array (e ▸ owned j hj))
+      obtain ⟨good', room', others'⟩ := room_made heap _ s s' o memory good (by omega) a frame
+      have pass' := pass.2 o _ run
+      cases d : outside "lean_dec" [array] { s' with memory := memory } with
+      | error why =>
+        rw [pass'.1 why d] at lifted
+        cases lifted
+      | ok r =>
+        obtain ⟨unused, after'⟩ := r
+        rw [pass'.2 unused after' d] at lifted
+        injection lifted with same
+        injection same with e1 e2
+        subst e1 e2
+        obtain ⟨good'', others''⟩ := heap.dec array limbs { s' with memory := memory } unused after' good'
+          (array_kept s.memory memory array limbs holds (fun j hj => (others' array _ (owned j hj)).2.2))
+          (fun k hk => (others' array _ (owned k hk)).2.1) d
+        have apart : o ≠ array := fun e => (others' array _ (owned 0 (by omega))).1 e.symm
+        have ksize := keptLimbs_size limbs limbs.size (Nat.le_refl _)
+        refine ⟨o, rfl, good'', Or.inr ⟨?_, even, keptLimbs limbs limbs.size, ?_, by omega,
+          keptLimbs_trimmed limbs limbs.size (Nat.le_refl _), ?_, ?_⟩, fun p0 q own ne => ?_⟩
+        · exact big
+        · exact object_kept memory after'.memory o 0 _ object
+            (fun j hj => (others'' o _ (room' j (by omega)) apart).2)
+        · rw [keptLimbs_value limbs limbs.size (Nat.le_refl _), Runtime.Big.lower_size]
+        · exact fun j hj => (others'' o _ (room' j (by omega)) apart).1
+        · obtain ⟨-, own', mem⟩ := others' p0 q own
+          obtain ⟨own'', mem'⟩ := others'' p0 q own' ne
+          exact ⟨own'', mem'.trans mem⟩
+
+/-- A call of a function of one argument, as a statement. -/
+theorem call_stmt (p : Program) (outside : Outside) (fuel : Nat) (name function argument : String) (f : Function)
+    (value : UInt64) (s : State) (locals : Locals)
+    (found : p.functions.find? (fun f => f.name == function) = some f) (arg : locals argument = some value) :
+    (∀ why, p.call outside fuel function [value] s = .error why →
+      Stmt.run p outside (fuel + 1) (.call (some name) function [.var argument]) s locals = .error why) ∧
+    ∀ v after, p.call outside fuel function [value] s = .ok (.gave v, after) →
+      Stmt.run p outside (fuel + 1) (.call (some name) function [.var argument]) s locals
+        = .ok (.on, after, put locals name (some v)) := by
+  refine ⟨fun why h => ?_, fun v after h => ?_⟩
+  · have body := runAll_of_fails p outside fuel function f _ s why found h
+    simp [Stmt.run, found, Expr.run, arg, body]
+    rfl
+  · obtain ⟨l, body⟩ := runAll_of_call p outside fuel function f _ s _ _ found h
+    simp [Stmt.run, found, Expr.run, arg, body]
+    rfl
+
+/-- An operation on two natural numbers, as a whole. -/
+theorem natOperation_held {outside : Outside} (heap : Allocator outside) (name arithmetic about : String)
+    (f : Runtime.Big.Limbs → Runtime.Big.Limbs → Runtime.Big.Limbs) (g : Nat → Nat → Nat)
+    (found : program.functions.find? (fun f => f.name == name) = some (natOperation name arithmetic about))
+    (computes : Computes heap arithmetic f)
+    (right : ∀ a b, Runtime.Big.Trimmed a → Runtime.Big.Trimmed b →
+      Runtime.Big.value (f a b) = g (Runtime.Big.value a) (Runtime.Big.value b))
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (short : ∀ a b, Runtime.Big.Trimmed a → Runtime.Big.Trimmed b → Runtime.Big.value a = x →
+      Runtime.Big.value b = y → (f a b).size < 4294967296)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel name [a1, a2] s = .ok (ending, after)) :
+    ∃ result, ending = .gave result ∧ heap.good after ∧ NatHeld heap after result (g x y) ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q := by
+  obtain ⟨locals, ran⟩ := runAll_of_call program outside fuel name _ [a1, a2] s after ending found ran
+  have ran := runAll_more program outside fuel 6 _ _ _ _ ran
+  generalize hl0 : bind (fun _ => none) (natOperation name arithmetic about).parameters [a1, a2] = l0 at ran
+  have l0a1 : l0 "a1" = some a1 := by rw [← hl0]; simp [natOperation, bind, put]
+  have l0a2 : l0 "a2" = some a2 := by rw [← hl0]; simp [natOperation, bind, put]
+  change runAll program outside (fuel + 5 + 1) [.call (some "a") "nat_limbs" [.var "a1"],
+    .call (some "b") "nat_limbs" [.var "a2"], .callOther (some "array") arithmetic [.var "a", .var "b"],
+    .call (some "result") "nat_from" [.var "array"], .give (.var "result")] s l0 = _ at ran
+  have step1 := call_stmt program outside (fuel + 4) "a" "nat_limbs" "a1" natLimbs a1 s l0 find_natLimbs l0a1
+  cases h1 : program.call outside (fuel + 4) "nat_limbs" [a1] s with
+  | error why =>
+    rw [runAll_fails _ _ _ _ _ _ _ _ (step1.1 why h1)] at ran
+    cases ran
+  | ok r1 =>
+    obtain ⟨e1, s1⟩ := r1
+    obtain ⟨a, la, rfl, good1, arr1, -, trim1, val1, own1, kept1⟩ :=
+      natLimbs_held heap _ a1 x s s1 e1 good first h1
+    rw [runAll_on _ _ _ _ _ _ _ _ _ (step1.2 a s1 h1)] at ran
+    have second1 := natHeld_kept heap s s1 a2 y second (fun p0 q own => (kept1 p0 q own).2)
+    have step2 := call_stmt program outside (fuel + 3) "b" "nat_limbs" "a2" natLimbs a2 s1 (put l0 "a" (some a))
+      find_natLimbs (by simp [put, l0a2])
+    cases h2 : program.call outside (fuel + 3) "nat_limbs" [a2] s1 with
+    | error why =>
+      rw [runAll_fails _ _ _ _ _ _ _ _ (step2.1 why h2)] at ran
+      cases ran
+    | ok r2 =>
+      obtain ⟨e2, s2⟩ := r2
+      obtain ⟨b, lb, rfl, good2, arr2, -, trim2, val2, own2, kept2⟩ :=
+        natLimbs_held heap _ a2 y s1 s2 e2 good1 second1 h2
+      rw [runAll_on _ _ _ _ _ _ _ _ _ (step2.2 b s2 h2)] at ran
+      generalize hl2 : put (put l0 "a" (some a)) "b" (some b) = l2 at ran
+      have l2a : l2 "a" = some a := by rw [← hl2]; simp [put]
+      have l2b : l2 "b" = some b := by rw [← hl2]; simp [put]
+      have ne : a ≠ b := (kept2 a _ (own1 0 (by omega))).1
+      have arr1' := array_kept s1.memory s2.memory a la arr1 (fun j hj => (kept2 a _ (own1 j hj)).2.2)
+      have own1' : ∀ k, k < 24 + 8 * la.size → heap.owns s2 a (a + UInt64.ofNat k) :=
+        fun k hk => (kept2 a _ (own1 k hk)).2.1
+      cases h3 : outside arithmetic [a, b] s2 with
+      | error why =>
+        have st : Stmt.run program outside (fuel + 3)
+            (.callOther (some "array") arithmetic [.var "a", .var "b"]) s2 l2 = .error why := by
+          simp [Stmt.run, Expr.run, l2a, l2b, h3]
+          rfl
+        rw [runAll_fails _ _ _ _ _ _ _ _ st] at ran
+        cases ran
+      | ok r3 =>
+        obtain ⟨array, s3⟩ := r3
+        have st : Stmt.run program outside (fuel + 3)
+            (.callOther (some "array") arithmetic [.var "a", .var "b"]) s2 l2
+            = .ok (.on, s3, put l2 "array" (some array)) := by
+          simp [Stmt.run, Expr.run, l2a, l2b, h3]
+          rfl
+        rw [runAll_on _ _ _ _ _ _ _ _ _ st] at ran
+        obtain ⟨good3, arr3, own3, kept3⟩ := computes a b la lb s2 array s3 good2 arr1' arr2 own1' own2 ne h3
+        have step4 := call_stmt program outside (fuel + 1) "result" "nat_from" "array" natFrom array s3
+          (put l2 "array" (some array)) find_natFrom (by simp [put])
+        cases h4 : program.call outside (fuel + 1) "nat_from" [array] s3 with
+        | error why =>
+          rw [runAll_fails _ _ _ _ _ _ _ _ (step4.1 why h4)] at ran
+          cases ran
+        | ok r4 =>
+          obtain ⟨e4, s4⟩ := r4
+          obtain ⟨result, rfl, good4, held, kept4⟩ := natFrom_held heap _ array (f la lb) s3 s4 e4 good3 arr3
+            (short la lb trim1 trim2 val1 val2) own3 h4
+          rw [runAll_on _ _ _ _ _ _ _ _ _ (step4.2 result s4 h4)] at ran
+          have st5 : Stmt.run program outside (fuel + 1) (.give (.var "result")) s4
+              (put (put l2 "array" (some array)) "result" (some result))
+              = .ok (.gave result, s4, put (put l2 "array" (some array)) "result" (some result)) := by
+            simp [Stmt.run, Expr.run, put]
+            rfl
+          rw [runAll_gave _ _ _ _ _ _ _ _ _ _ st5] at ran
+          injection ran with same
+          injection same with eq1 eq2
+          injection eq2 with eq2 eq3
+          subst eq1 eq2
+          refine ⟨result, rfl, good4, ?_, fun p0 q own => ?_⟩
+          · rw [right la lb trim1 trim2, val1, val2] at held
+            exact held
+          · obtain ⟨n1, o1, m1⟩ := kept1 p0 q own
+            obtain ⟨n2, o2, m2⟩ := kept2 p0 q o1
+            obtain ⟨n3, o3, m3⟩ := kept3 p0 q o2 n1 n2
+            obtain ⟨o4, m4⟩ := kept4 p0 q o3 n3
+            exact ⟨o4, m4.trans (m3.trans (m2.trans m1))⟩
+
+/-- `lean_nat_big_add` as a whole. -/
+theorem natBigAdd_held {outside : Outside} (heap : Allocator outside)
+    (computes : Computes heap "rt_big_add" Runtime.Big.add)
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (short : ∀ a b, Runtime.Big.Trimmed a → Runtime.Big.Trimmed b → Runtime.Big.value a = x →
+      Runtime.Big.value b = y → (Runtime.Big.add a b).size < 4294967296)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel "lean_nat_big_add" [a1, a2] s = .ok (ending, after)) :
+    ∃ result, ending = .gave result ∧ heap.good after ∧ NatHeld heap after result (x + y) ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q :=
+  natOperation_held heap "lean_nat_big_add" "rt_big_add" "" Runtime.Big.add (· + ·) rfl computes
+    (fun a b _ _ => Runtime.Big.add_value a b) fuel a1 a2 x y s after ending short good first second ran
+
+/-- `lean_nat_big_sub` as a whole; subtraction of natural numbers stops at zero. -/
+theorem natBigSub_held {outside : Outside} (heap : Allocator outside)
+    (computes : Computes heap "rt_big_sub" Runtime.Big.natSub)
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (short : ∀ a b, Runtime.Big.Trimmed a → Runtime.Big.Trimmed b → Runtime.Big.value a = x →
+      Runtime.Big.value b = y → (Runtime.Big.natSub a b).size < 4294967296)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel "lean_nat_big_sub" [a1, a2] s = .ok (ending, after)) :
+    ∃ result, ending = .gave result ∧ heap.good after ∧ NatHeld heap after result (x - y) ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q :=
+  natOperation_held heap "lean_nat_big_sub" "rt_big_sub" _ Runtime.Big.natSub (· - ·) rfl computes
+    (fun a b ta tb => Runtime.Big.natSub_value a b ta tb) fuel a1 a2 x y s after ending short good first second ran
+
+/-- `lean_nat_big_mul` as a whole. -/
+theorem natBigMul_held {outside : Outside} (heap : Allocator outside)
+    (computes : Computes heap "rt_big_mul" Runtime.Big.mul)
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (short : ∀ a b, Runtime.Big.Trimmed a → Runtime.Big.Trimmed b → Runtime.Big.value a = x →
+      Runtime.Big.value b = y → (Runtime.Big.mul a b).size < 4294967296)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel "lean_nat_big_mul" [a1, a2] s = .ok (ending, after)) :
+    ∃ result, ending = .gave result ∧ heap.good after ∧ NatHeld heap after result (x * y) ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q :=
+  natOperation_held heap "lean_nat_big_mul" "rt_big_mul" _ Runtime.Big.mul (· * ·) rfl computes
+    (fun a b _ _ => Runtime.Big.mul_value a b) fuel a1 a2 x y s after ending short good first second ran
+
+/-- `lean_nat_big_div` as a whole; a number divided by zero is zero. -/
+theorem natBigDiv_held {outside : Outside} (heap : Allocator outside)
+    (computes : Computes heap "rt_big_div" Runtime.Big.natDiv)
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (short : ∀ a b, Runtime.Big.Trimmed a → Runtime.Big.Trimmed b → Runtime.Big.value a = x →
+      Runtime.Big.value b = y → (Runtime.Big.natDiv a b).size < 4294967296)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel "lean_nat_big_div" [a1, a2] s = .ok (ending, after)) :
+    ∃ result, ending = .gave result ∧ heap.good after ∧ NatHeld heap after result (x / y) ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q :=
+  natOperation_held heap "lean_nat_big_div" "rt_big_div" _ Runtime.Big.natDiv (· / ·) rfl computes
+    (fun a b _ tb => Runtime.Big.natDiv_value a b tb) fuel a1 a2 x y s after ending short good first second ran
+
+/-- `lean_nat_big_land` as a whole. -/
+theorem natBigLand_held {outside : Outside} (heap : Allocator outside)
+    (computes : Computes heap "rt_big_and" Runtime.Big.and)
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (short : ∀ a b, Runtime.Big.Trimmed a → Runtime.Big.Trimmed b → Runtime.Big.value a = x →
+      Runtime.Big.value b = y → (Runtime.Big.and a b).size < 4294967296)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel "lean_nat_big_land" [a1, a2] s = .ok (ending, after)) :
+    ∃ result, ending = .gave result ∧ heap.good after ∧ NatHeld heap after result (x &&& y) ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q :=
+  natOperation_held heap "lean_nat_big_land" "rt_big_and" _ Runtime.Big.and (· &&& ·) rfl computes
+    (fun a b _ _ => Runtime.Big.and_value a b) fuel a1 a2 x y s after ending short good first second ran
+
+/-- `lean_nat_big_lor` as a whole. -/
+theorem natBigLor_held {outside : Outside} (heap : Allocator outside)
+    (computes : Computes heap "rt_big_or" Runtime.Big.or)
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (short : ∀ a b, Runtime.Big.Trimmed a → Runtime.Big.Trimmed b → Runtime.Big.value a = x →
+      Runtime.Big.value b = y → (Runtime.Big.or a b).size < 4294967296)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel "lean_nat_big_lor" [a1, a2] s = .ok (ending, after)) :
+    ∃ result, ending = .gave result ∧ heap.good after ∧ NatHeld heap after result (x ||| y) ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q :=
+  natOperation_held heap "lean_nat_big_lor" "rt_big_or" _ Runtime.Big.or (· ||| ·) rfl computes
+    (fun a b _ _ => Runtime.Big.or_value a b) fuel a1 a2 x y s after ending short good first second ran
+
+/-- What is assumed of the compiled comparison: handed two different arrays of limbs, each an object of its
+own, it returns what `Runtime.Big.compare` gives for them, and leaves every object but the two there and as
+it was. -/
+def Compares {outside : Outside} (heap : Allocator outside) : Prop :=
+  ∀ (a b : UInt64) (la lb : Runtime.Big.Limbs) (t : State) (order : UInt64) (t' : State), heap.good t →
+    ArrayOf t.memory a la → ArrayOf t.memory b lb →
+    (∀ k, k < 24 + 8 * la.size → heap.owns t a (a + UInt64.ofNat k)) →
+    (∀ k, k < 24 + 8 * lb.size → heap.owns t b (b + UInt64.ofNat k)) → a ≠ b →
+    outside "rt_big_compare" [a, b] t = .ok (order, t') →
+    heap.good t' ∧ order = (Runtime.Big.compare la lb).toUInt64 ∧
+    ∀ p0 q, heap.owns t p0 q → p0 ≠ a → p0 ≠ b → heap.owns t' p0 q ∧ t'.memory q = t.memory q
+
+/-- A comparison of two natural numbers, as a whole. `truth` is what the function makes of the order. -/
+theorem natOrder_held {outside : Outside} (heap : Allocator outside) (name : String) (holds : Expr → Expr)
+    (truth : UInt64 → UInt64)
+    (found : program.functions.find? (fun f => f.name == name) = some (natOrder name holds))
+    (gives : ∀ (t : State) (l : Locals) (v : UInt64), l "order" = some v →
+      Expr.run t l (holds (.var "order")) = .ok (truth v))
+    (compares : Compares heap)
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel name [a1, a2] s = .ok (ending, after)) :
+    ending = .gave (truth (Runtime.Big.order x y).toUInt64) ∧ heap.good after ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q := by
+  obtain ⟨locals, ran⟩ := runAll_of_call program outside fuel name _ [a1, a2] s after ending found ran
+  have ran := runAll_more program outside fuel 5 _ _ _ _ ran
+  generalize hl0 : bind (fun _ => none) (natOrder name holds).parameters [a1, a2] = l0 at ran
+  have l0a1 : l0 "a1" = some a1 := by rw [← hl0]; simp [natOrder, bind, put]
+  have l0a2 : l0 "a2" = some a2 := by rw [← hl0]; simp [natOrder, bind, put]
+  change runAll program outside (fuel + 4 + 1) [.call (some "a") "nat_limbs" [.var "a1"],
+    .call (some "b") "nat_limbs" [.var "a2"], .callOther (some "order") "rt_big_compare" [.var "a", .var "b"],
+    .give (holds (.var "order"))] s l0 = _ at ran
+  have step1 := call_stmt program outside (fuel + 3) "a" "nat_limbs" "a1" natLimbs a1 s l0 find_natLimbs l0a1
+  cases h1 : program.call outside (fuel + 3) "nat_limbs" [a1] s with
+  | error why =>
+    rw [runAll_fails _ _ _ _ _ _ _ _ (step1.1 why h1)] at ran
+    cases ran
+  | ok r1 =>
+    obtain ⟨e1, s1⟩ := r1
+    obtain ⟨a, la, rfl, good1, arr1, -, trim1, val1, own1, kept1⟩ :=
+      natLimbs_held heap _ a1 x s s1 e1 good first h1
+    rw [runAll_on _ _ _ _ _ _ _ _ _ (step1.2 a s1 h1)] at ran
+    have second1 := natHeld_kept heap s s1 a2 y second (fun p0 q own => (kept1 p0 q own).2)
+    have step2 := call_stmt program outside (fuel + 2) "b" "nat_limbs" "a2" natLimbs a2 s1 (put l0 "a" (some a))
+      find_natLimbs (by simp [put, l0a2])
+    cases h2 : program.call outside (fuel + 2) "nat_limbs" [a2] s1 with
+    | error why =>
+      rw [runAll_fails _ _ _ _ _ _ _ _ (step2.1 why h2)] at ran
+      cases ran
+    | ok r2 =>
+      obtain ⟨e2, s2⟩ := r2
+      obtain ⟨b, lb, rfl, good2, arr2, -, trim2, val2, own2, kept2⟩ :=
+        natLimbs_held heap _ a2 y s1 s2 e2 good1 second1 h2
+      rw [runAll_on _ _ _ _ _ _ _ _ _ (step2.2 b s2 h2)] at ran
+      generalize hl2 : put (put l0 "a" (some a)) "b" (some b) = l2 at ran
+      have l2a : l2 "a" = some a := by rw [← hl2]; simp [put]
+      have l2b : l2 "b" = some b := by rw [← hl2]; simp [put]
+      have ne : a ≠ b := (kept2 a _ (own1 0 (by omega))).1
+      have arr1' := array_kept s1.memory s2.memory a la arr1 (fun j hj => (kept2 a _ (own1 j hj)).2.2)
+      have own1' : ∀ k, k < 24 + 8 * la.size → heap.owns s2 a (a + UInt64.ofNat k) :=
+        fun k hk => (kept2 a _ (own1 k hk)).2.1
+      cases h3 : outside "rt_big_compare" [a, b] s2 with
+      | error why =>
+        have st : Stmt.run program outside (fuel + 2)
+            (.callOther (some "order") "rt_big_compare" [.var "a", .var "b"]) s2 l2 = .error why := by
+          simp [Stmt.run, Expr.run, l2a, l2b, h3]
+          rfl
+        rw [runAll_fails _ _ _ _ _ _ _ _ st] at ran
+        cases ran
+      | ok r3 =>
+        obtain ⟨order, s3⟩ := r3
+        have st : Stmt.run program outside (fuel + 2)
+            (.callOther (some "order") "rt_big_compare" [.var "a", .var "b"]) s2 l2
+            = .ok (.on, s3, put l2 "order" (some order)) := by
+          simp [Stmt.run, Expr.run, l2a, l2b, h3]
+          rfl
+        rw [runAll_on _ _ _ _ _ _ _ _ _ st] at ran
+        obtain ⟨good3, same, kept3⟩ := compares a b la lb s2 order s3 good2 arr1' arr2 own1' own2 ne h3
+        have st4 : Stmt.run program outside (fuel + 1) (.give (holds (.var "order"))) s3
+            (put l2 "order" (some order)) = .ok (.gave (truth order), s3, put l2 "order" (some order)) := by
+          simp [Stmt.run, gives s3 (put l2 "order" (some order)) order (by simp [put])]
+          rfl
+        rw [runAll_gave _ _ _ _ _ _ _ _ _ _ st4] at ran
+        injection ran with eq
+        injection eq with eq1 eq2
+        injection eq2 with eq2 eq3
+        subst eq1 eq2
+        refine ⟨?_, good3, fun p0 q own => ?_⟩
+        · rw [same, Runtime.Big.compare_order la lb trim1 trim2, val1, val2]
+        · obtain ⟨n1, o1, m1⟩ := kept1 p0 q own
+          obtain ⟨n2, o2, m2⟩ := kept2 p0 q o1
+          obtain ⟨o3, m3⟩ := kept3 p0 q o2 n1 n2
+          exact ⟨o3, m3.trans (m2.trans m1)⟩
+
+/-- `lean_nat_big_eq` as a whole: 1 if the two numbers are equal, otherwise 0. -/
+theorem natBigEq_held {outside : Outside} (heap : Allocator outside) (compares : Compares heap)
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel "lean_nat_big_eq" [a1, a2] s = .ok (ending, after)) :
+    ending = .gave (if x = y then 1 else 0) ∧ heap.good after ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q := by
+  have h := natOrder_held heap "lean_nat_big_eq" (Expr.eq · 1) (fun v => if v = 1 then 1 else 0) rfl
+    (fun t l v h => by simp [Expr.run, Op.run, Expr.eq, h]; rfl) compares fuel a1 a2 x y s after ending good first
+    second ran
+  refine ⟨?_, h.2⟩
+  rw [h.1]
+  unfold Runtime.Big.order
+  by_cases h1 : x < y
+  · have : x ≠ y := by omega
+    simp [h1, this]
+  · by_cases h2 : x = y
+    · simp [h2]
+    · simp [h1, h2]
+
+/-- `lean_nat_big_le` as a whole: 1 if the first number is at most the second, otherwise 0. -/
+theorem natBigLe_held {outside : Outside} (heap : Allocator outside) (compares : Compares heap)
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel "lean_nat_big_le" [a1, a2] s = .ok (ending, after)) :
+    ending = .gave (if x ≤ y then 1 else 0) ∧ heap.good after ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q := by
+  have h := natOrder_held heap "lean_nat_big_le" (Expr.ne · 2) (fun v => if v = 2 then 0 else 1) rfl
+    (fun t l v h => by simp [Expr.run, Op.run, Expr.ne, h]; rfl) compares fuel a1 a2 x y s after ending good first
+    second ran
+  refine ⟨?_, h.2⟩
+  rw [h.1]
+  unfold Runtime.Big.order
+  by_cases h1 : x < y
+  · have : x ≤ y := by omega
+    simp [h1, this]
+  · by_cases h2 : x = y
+    · simp [h2]
+    · have : ¬ x ≤ y := by omega
+      simp [h1, h2, this]
+
+/-- `lean_nat_big_lt` as a whole: 1 if the first number is below the second, otherwise 0. -/
+theorem natBigLt_held {outside : Outside} (heap : Allocator outside) (compares : Compares heap)
+    (fuel : Nat) (a1 a2 : UInt64) (x y : Nat) (s after : State) (ending : Ending)
+    (good : heap.good s) (first : NatHeld heap s a1 x) (second : NatHeld heap s a2 y)
+    (ran : program.call outside fuel "lean_nat_big_lt" [a1, a2] s = .ok (ending, after)) :
+    ending = .gave (if x < y then 1 else 0) ∧ heap.good after ∧
+      ∀ p0 q, heap.owns s p0 q → heap.owns after p0 q ∧ after.memory q = s.memory q := by
+  have h := natOrder_held heap "lean_nat_big_lt" (Expr.eq · 0) (fun v => if v = 0 then 1 else 0) rfl
+    (fun t l v h => by simp [Expr.run, Op.run, Expr.eq, h]; rfl) compares fuel a1 a2 x y s after ending good first
+    second ran
+  refine ⟨?_, h.2⟩
+  rw [h.1]
+  unfold Runtime.Big.order
+  by_cases h1 : x < y
+  · simp [h1]
+  · by_cases h2 : x = y
+    · simp [h2]
+    · simp [h1, h2]
 
 end Mini.Number

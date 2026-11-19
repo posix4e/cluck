@@ -119,9 +119,10 @@ checked by compiled code, so those theorems also trust the compiler that ran the
       exactly its bytes. Not stated: what `read` and `claims` answer on bytes that are not well formed, where
       they follow Lean's own runtime, which is C and has no definition here to be held against.
 - [ ] That `Mini/Number.lean` hands the arithmetic the right limbs and reads its answer rightly. Proved at
-      both ends of a call to the arithmetic, for numbers of every size (`Mini/NumberProofs.lean`, on Lean's
-      three standard axioms), about the program as its language defines it. Not proved: an operation as a
-      whole (the last paragraph here).
+      both ends of a call to the arithmetic, for numbers of every size, and for nine operations on natural
+      numbers as wholes (`Mini/NumberProofs.lean`, on Lean's three standard axioms), about the program as
+      its language defines it. Not proved: what the wholes assume, and the other operations as wholes (the
+      last paragraphs here).
 
       A number that fits in a tagged word:
       - Going in, a natural number: `limbs_of_word`, and `nat_limbs` for one that arrives as a tagged
@@ -157,15 +158,40 @@ checked by compiled code, so those theorems also trust the compiler that ran the
         was. Nothing is assumed of what the room held. Also assumed: that an object's address has its
         lowest bit clear, which is how the program tells it from a tagged word, and that an array has
         fewer than 2^32 limbs. Where an array is given up at the end (`nat_from`,
-        `int_from`), the object is shown right in the state `lean_dec` is handed; what `lean_dec` then
-        does to memory is the allocator's and is not stated.
+        `int_from`), the object is shown right in the state `lean_dec` is handed, and is what the function
+        gives back if `lean_dec` returns; what `lean_dec` then does to memory is the allocator's and is
+        not stated here.
       - Not proved of `checked`: that it stops on an object that is not well formed. The theorems say what
         happens for an object that is.
 
-      Not proved: an operation as a whole, such as `lean_nat_big_add`. Each calls compiled
-      `Runtime/Big.lean` between the two ends, so it needs an assumption about what that call leaves in
-      memory (an array holding the limbs `Runtime/Big.lean` computes, and the arguments' arrays given up),
-      and the two allocator assumptions above would have to be discharged against `Mini/Alloc.lean`.
+      An operation as a whole, from the words compiled Lean hands in to the word it gets back:
+      - `lean_nat_big_add`, `_sub`, `_mul`, `_div`, `_land` and `_lor`. Handed two natural numbers as
+        compiled Lean holds them (a tagged word below 2^63, an object of its own from there up), if the
+        operation returns, it returns the sum (the difference stopping at zero, the product, the quotient
+        with division by zero giving zero, the and, the or) as compiled Lean holds it, and every object
+        that was there before is there and as it was.
+      - `lean_nat_big_eq`, `_le` and `_lt`, on the same terms, return 1 where the numbers are equal (the
+        first at most the second, the first below the second) and otherwise 0.
+      - They hold for any amount of fuel: a run that finished finishes the same with more.
+      - They are statements of an operation that returns. Where `lean_alloc_object` does not return, each
+        function on the way is shown not to return either, so none carries on with an address it was not
+        given.
+      - What they assume, each a hypothesis in the statement. Of the allocator (`Allocator`): room it
+        hands out is at an even address, was no object's, and is the new object's; handing it out, and
+        giving up an array of limbs, leave every other object there and as it was; and writing inside
+        objects that were handed out does not disturb it. Of the compiled arithmetic (`Computes`,
+        `Compares`): handed two different arrays of limbs, each an object of its own, it returns an array,
+        an object of its own, holding what the function in `Runtime/Big.lean` gives for those limbs (for a
+        comparison, that function's answer), and leaves every object but the two there and as it was. And
+        that the arithmetic's answer has fewer than 2^32 limbs.
+
+      Not proved:
+      - The assumptions. Nothing shows that `Mini/Alloc.lean`, with the reference counting above it,
+        meets `Allocator`; no allocator is shown to. `Computes` and `Compares` are what the Lean compiler
+        and Lean's own array code are trusted for.
+      - The other operations as wholes: `lean_nat_big_mod`, the shifts, the power and the logarithm, the
+        conversions to and from machine words, `lean_cstr_to_nat`, and every operation on integers.
+      - An answer of 2^32 limbs or more, where `big_new` reports that memory has run out.
 
 ### The code under Lean, written in Lean
 

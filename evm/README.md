@@ -15,6 +15,7 @@ it, and continuous integration does not build it. What has been run and what it 
 
 - `Evm/Service.lean`: the request and the response, and the import between them. The format is at the top of
   the file. Pure: bytes in, bytes out.
+- `Evm/Attest.lean`: a request with a challenge in front, and the REPORTDATA that ties its response to it.
 - `Evm/PowMod.lean`: `Nat.powMod` in Lean, which the minimal runtime lacks.
 - `ServeMain.lean`: the service as a process, one request on standard input.
 - `EfiMain.lean`: the service as a whole machine, an EFI guest answering framed requests on TCP port 5005
@@ -29,6 +30,8 @@ it, and continuous integration does not build it. What has been run and what it 
 - `scripts/build-min`, `scripts/build-efi`: the OS's scripts of the same names, with what Jaune makes
   necessary. `scripts/run-fixtures`: boots the guest, sends the requests, checks the answers.
   `scripts/fetch-fixtures`: makes `fixtures/` again from its source and compares.
+- `demo/`: a web page in front of a guest in a trust domain. `server.py` runs on the host, `page.html` is
+  the page, `verify.js` checks a TDX quote in the browser, and `test-verify.mjs` tests that under Node.
 - `fixtures/`: five requests and the responses they must get, made from the Prague cases of five
   blockchain tests in `ethereum/tests` (`fixtures/SOURCES`).
 
@@ -106,6 +109,33 @@ with socket.create_connection(("127.0.0.1", 5005)) as s:
     print(s.makefile("rb").read(4 + 69).hex())
 ASK
 ```
+
+## An answer that says where it came from
+
+A frame that begins with `JATT1` and 32 bytes of your choosing, then a request, is answered with the 69
+bytes of the response and, in a trust domain, a 1024-byte TDREPORT. Its REPORTDATA is the SHA-256 of your 32
+bytes and the request, followed by the SHA-256 of the response (`Evm/Attest.lean`). The host's quote
+generation service signs the report into a quote, as [../TDX.md](../TDX.md) describes, and the quote is what
+a relying party checks. The development guest answers the same frame with the response alone.
+
+`demo/` is that exchange as a web page. The server boots the TDX image, keeps it running and listens on
+loopback port 5172; it needs Python 3 and the host's quote generation service, and nothing else:
+
+```
+scripts/build-efi tdx
+SILO_TDVF=/path/to/OVMF.fd demo/server.py record     # boots once and writes down the measurements
+SILO_TDVF=/path/to/OVMF.fd demo/server.py
+node demo/test-verify.mjs                            # from another terminal
+```
+
+A visitor picks a fixture and whether to send it as it is, with a wrong state root in its last block, or
+with a wrong balance in its starting state. The page chooses the 32 bytes, and checks the quote that comes
+back itself: Intel's signatures from the quote to Intel's SGX root key, and that REPORTDATA is the hash of
+what it sent and of the answer it shows. What that check leaves out is in
+[../THREAT_MODEL.md](../THREAT_MODEL.md). The server is on the host and is not trusted by the page; it sends
+the guest only the fixtures, never a visitor's bytes. Putting it on a network is the operator's decision
+and is done in front of it, with a reverse proxy that speaks HTTPS, which the browser's cryptography
+requires anywhere but on loopback.
 
 ## A request of your own
 

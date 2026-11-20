@@ -6,7 +6,8 @@ import Kernel.Net.Fragment
 /-! The service as a whole machine: an EFI guest on the OS's Ethernet, IP and TCP, in Intel TDX or under an
 emulator. This is `TdxMain.lean` with the demo taken out. Each TCP connection carries frames (a 4-byte
 big-endian length, then that many bytes); each frame is a request and is answered with one frame holding the
-69 bytes of the response. A request may be far longer than a demo payload, up to `maxRequest`.
+69 bytes of the response, and after them a TDREPORT when the request asked for one (`Evm/Attest.lean`). A
+request may be far longer than a demo payload, up to `maxRequest`.
 
 The machine does nothing else while a request runs: no packet is read and no timer serviced until the import
 returns, which for a hard block is many seconds. A second client waits, and its TCP waits with it. -/
@@ -42,6 +43,16 @@ private partial def requests (pending : ByteArray) (out : Array ByteArray) :
 private def frame (payload : ByteArray) : ByteArray :=
   Evm.Service.be 4 payload.size ++ payload
 
+/-- The response to one frame, and after it the TDREPORT that binds it to the frame when the frame asked for
+one and this machine can make one (`Evm.Attest`). -/
+private def answer (request : ByteArray) : IO ByteArray := do
+  match Evm.Attest.asked? request with
+  | none => IO.lazyPure fun _ => Evm.Service.serve request
+  | some asked =>
+    let reply ← IO.lazyPure fun _ => Evm.Service.serve (Evm.Attest.request asked)
+    let report ← Efi.report (Evm.Attest.reportData asked reply)
+    return if report.size == 1024 then reply ++ report else reply
+
 private partial def settle (cfg : Internet.Config) (now : Nat)
     (s : Server) (events : List Tcp.Event) : IO Server := do
   let ev :: rest := events | return s
@@ -66,9 +77,10 @@ private partial def settle (cfg : Internet.Config) (now : Nat)
       for request in whole do
         Platform.write s!"evm: request of {request.size} bytes\n".toUTF8
         let started ← Efi.millis
-        let reply ← IO.lazyPure fun _ => Evm.Service.serve request
+        let reply ← answer request
         let ended ← Efi.millis
-        Platform.write s!"evm: status {reply[0]!}, {(ended - started).toNat} ms\n".toUTF8
+        let attested := if reply.size > 69 then ", with a report" else ""
+        Platform.write s!"evm: status {reply[0]!}, {(ended - started).toNat} ms{attested}\n".toUTF8
         replies := replies ++ frame reply
       -- The clock moved while the service ran; the stack is told the time it is now.
       let after ← Efi.millis

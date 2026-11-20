@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Block validation in a trust domain</title>
+<style>
+  :root {
+    --paper: #f6f4ef; --card: #fffdf9; --ink: #1b1d1c; --soft: #5d635f; --line: #dcd8cd;
+    --accent: #0f6b52; --accent-ink: #ffffff; --good: #0f6b52; --good-bg: #e2f1ea;
+    --bad: #a3271f; --bad-bg: #f8e3df; --wait: #8a6100; --wait-bg: #f7ecd0; --code: #f0ede5;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #121514; --card: #1a1e1c; --ink: #e9ebe7; --soft: #9aa39d; --line: #2c3330;
+      --accent: #43c59e; --accent-ink: #06231a; --good: #43c59e; --good-bg: #12322a;
+      --bad: #ff8a7d; --bad-bg: #3a1a17; --wait: #e6bd5a; --wait-bg: #33290f; --code: #0e1110;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.55 var(--sans); }
+  main { max-width: 880px; margin: 0 auto; padding: 28px 16px 80px; }
+  a { color: var(--accent); }
+  h1 { font-size: clamp(1.7rem, 4.6vw, 2.5rem); line-height: 1.12; letter-spacing: -0.02em; margin: 18px 0 14px; }
+  h2 { font-size: 1.12rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  p { margin: 0 0 12px; }
+  .lede { font-size: 1.08rem; color: var(--soft); max-width: 62ch; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+         font-size: 0.86rem; color: var(--soft); }
+  .top .name { font-family: var(--mono); color: var(--ink); }
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px;
+          border: 1px solid var(--line); background: var(--card); white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wait); }
+  .dot.up { background: var(--good); box-shadow: 0 0 0 3px var(--good-bg); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px;
+            margin-top: 18px; }
+  .hint { color: var(--soft); font-size: 0.92rem; margin-bottom: 14px; }
+  .step { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.09em; text-transform: uppercase;
+          color: var(--accent); margin-bottom: 8px; }
+  .choices { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .choice { display: block; position: relative; cursor: pointer; }
+  .choice input { position: absolute; opacity: 0; inset: 0; }
+  .choice span { display: block; height: 100%; padding: 11px 13px; border: 1px solid var(--line);
+                 border-radius: 10px; background: var(--paper); }
+  .choice b { display: block; font-weight: 600; font-size: 0.95rem; overflow-wrap: anywhere; }
+  .choice small { color: var(--soft); font-size: 0.82rem; display: block; margin-top: 2px; }
+  .choice input:checked + span { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .choice input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .go { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 18px; }
+  button { font: 600 1rem var(--sans); color: var(--accent-ink); background: var(--accent); border: 0;
+           border-radius: 10px; padding: 12px 20px; cursor: pointer; }
+  button:disabled { opacity: 0.55; cursor: progress; }
+  button.quiet { background: transparent; color: var(--accent); border: 1px solid var(--line);
+                 font-weight: 500; font-size: 0.9rem; padding: 8px 13px; }
+  .elapsed { color: var(--soft); font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+  .verdict { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 14px; }
+  .verdict .word { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.01em; }
+  .verdict.good .word { color: var(--good); } .verdict.bad .word { color: var(--bad); }
+  .tag { font-size: 0.8rem; padding: 3px 9px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  .tag.good { background: var(--good-bg); color: var(--good); }
+  .tag.bad { background: var(--bad-bg); color: var(--bad); }
+  .tag.wait { background: var(--wait-bg); color: var(--wait); }
+  dl { display: grid; grid-template-columns: minmax(96px, max-content) 1fr; gap: 6px 16px; margin: 0; }
+  dt { color: var(--soft); font-size: 0.88rem; }
+  dd { margin: 0; min-width: 0; }
+  .hex, code { font-family: var(--mono); font-size: 0.82rem; overflow-wrap: anywhere; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  ol.checks { list-style: none; margin: 0; padding: 0; }
+  ol.checks li { display: grid; grid-template-columns: 26px 1fr; gap: 2px 8px; padding: 10px 0;
+                 border-top: 1px solid var(--line); }
+  ol.checks li:first-child { border-top: 0; }
+  .mark { font-weight: 700; font-size: 1.05rem; line-height: 1.4; }
+  .mark.good { color: var(--good); } .mark.bad { color: var(--bad); }
+  .checks .what { font-weight: 600; }
+  .checks .how { grid-column: 2; color: var(--soft); font-size: 0.86rem; overflow-wrap: anywhere; }
+  .summary { margin: 0 0 6px; padding: 11px 14px; border-radius: 10px; font-weight: 600; }
+  .summary.good { background: var(--good-bg); color: var(--good); }
+  .summary.bad { background: var(--bad-bg); color: var(--bad); }
+  .table { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 7px 10px 7px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--soft); font-weight: 500; white-space: nowrap; }
+  tr:first-child th, tr:first-child td { border-top: 0; }
+  pre { margin: 0; padding: 12px 14px; background: var(--code); border-radius: 10px; overflow-x: auto;
+        font: 0.8rem/1.5 var(--mono); max-height: 240px; }
+  ul.plain { margin: 0; padding-left: 20px; }
+  ul.plain li { margin-bottom: 9px; }
+  .two { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .two h3 { font-size: 0.95rem; margin: 0 0 8px; }
+  .empty { color: var(--soft); font-size: 0.92rem; }
+  footer { margin-top: 26px; color: var(--soft); font-size: 0.85rem; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <span><span class="name">cluck / evm</span> &nbsp;·&nbsp; <a href="https://github.com/posix4e/cluck">source</a></span>
+    <span class="pill"><span class="dot" id="dot"></span><span id="status">looking for the guest…</span></span>
+  </div>
+
+  <h1>Ethereum blocks, validated inside an Intel TDX trust domain. Your browser checks the proof.</h1>
+  <p class="lede">A machine with <strong>no operating system under it</strong> — a unikernel written in Lean,
+    with its own network stack — is running right now in a hardware-isolated trust domain. Hand it a chain of
+    blocks and it re-executes every transaction and checks every state root. Its answer comes back with a
+    quote signed by a key Intel certified, and this page verifies that signature here, in your browser,
+    without taking this server's word for anything.</p>
+
+  <section>
+    <div class="step">1 · Choose a chain</div>
+    <h2>Blocks to validate</h2>
+    <p class="hint">Each is a starting state, a genesis block and the blocks after it, taken from Ethereum's
+      own test suite (<code>ethereum/tests</code>, Prague rules).</p>
+    <div class="choices" id="fixtures"><p class="empty">loading…</p></div>
+
+    <div class="step" style="margin-top:22px">2 · Tell the truth, or don't</div>
+    <h2>What to send</h2>
+    <p class="hint">One flipped bit is enough for a validator to have to say no.</p>
+    <div class="choices">
+      <label class="choice"><input type="radio" name="alter" value="none" checked>
+        <span><b>The chain as it is</b><small>Every block should be accepted.</small></span></label>
+      <label class="choice"><input type="radio" name="alter" value="root">
+        <span><b>A last block that lies</b><small>Its header claims a state root that executing it does not give.</small></span></label>
+      <label class="choice"><input type="radio" name="alter" value="state">
+        <span><b>A starting state that lies</b><small>One account's balance is off by one wei.</small></span></label>
+    </div>
+
+    <div class="go">
+      <button id="run" disabled>Validate in the trust domain</button>
+      <span class="elapsed" id="elapsed"></span>
+    </div>
+  </section>
+
+  <section id="answer" hidden>
+    <div class="step">The answer</div>
+    <div class="verdict" id="verdict"></div>
+    <dl id="facts"></dl>
+  </section>
+
+  <section id="proof" hidden>
+    <div class="step">The proof, checked in this browser</div>
+    <p class="summary" id="summary"></p>
+    <ol class="checks" id="checks"></ol>
+    <div class="go">
+      <button class="quiet" id="download">Download the quote</button>
+      <span class="hint" style="margin:0">to check it with a verifier of your own.</span>
+    </div>
+  </section>
+
+  <section id="measured" hidden>
+    <div class="step">What was running</div>
+    <h2>Measurements in the quote</h2>
+    <p class="hint">The processor measured the firmware as it loaded (MRTD) and the firmware measured what
+      it then started (RTMRs). These are in the signed quote. The "recorded" column is what this operator got
+      from booting the image below; it is here so you can see a change, not as something to trust.</p>
+    <div class="table"><table id="measurements"></table></div>
+    <div class="table" style="margin-top:14px"><table id="identity"></table></div>
+  </section>
+
+  <section>
+    <div class="step">The guest's console</div>
+    <p class="hint">The serial port of the trust domain, as the host sees it.</p>
+    <pre id="console">…</pre>
+  </section>
+
+  <section>
+    <div class="step">Read this before believing it</div>
+    <div class="two">
+      <div>
+        <h3>What this is</h3>
+        <ul class="plain">
+          <li>The execution half of what a block relay does to a builder's block before trusting it: decode
+            it, execute it, and refuse it unless the state root comes out as claimed.</li>
+          <li>Running in a real Intel TDX trust domain, as a single EFI program: a Lean runtime, a Lean IP
+            stack, and <a href="https://github.com/skbaek/jaune">Jaune</a>, an executable specification of
+            the EVM in Lean. No Linux underneath, and no one else's C library.</li>
+          <li>Each answer is bound to your request and a random number your browser picked, inside a quote
+            only that trust domain could have had made.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>What it is not</h3>
+        <ul class="plain">
+          <li>Not connected to any relay, builder or validator, and not affiliated with one. It checks no
+            bid and no payment to a proposer.</li>
+          <li>Not validating mainnet. The whole starting state travels in the request; real blocks need a
+            state witness, which this does not read yet.</li>
+          <li>Not a full attestation check. Your browser verifies Intel's signatures; it does not ask Intel
+            whether this processor's firmware is current or a certificate revoked.</li>
+          <li>Not proof the measurements are the published source. For that, rebuild the image (it builds
+            to the same bytes) and boot it on a TDX host of your own.</li>
+          <li>Not finished: the known shortcuts are listed in
+            <a href="https://github.com/posix4e/cluck/blob/main/TODO.md">TODO.md</a>.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>This web server is outside the trust domain and is the untrusted host in this demonstration: it
+    carries bytes between you, the guest and Intel's quote generation service.</footer>
+</main>
+
+<script src="verify.js"></script>
+<script>
+"use strict";
+const { verifyQuote, sha256, hex, concat, same } = TdxQuote;
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, ...kids) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) k === "class" ? (node.className = v) : node.setAttribute(k, v);
+  node.append(...kids);
+  return node;
+};
+const unhex = (text) => Uint8Array.from(text.match(/../g) || [], (h) => parseInt(h, 16));
+const kib = (n) => n < 1024 ? `${n} bytes` : n < 1048576 ? `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KiB`
+  : `${(n / 1048576).toFixed(1)} MiB`;
+const span = (ms) => ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+let info = null, lastQuote = null;
+const bodies = new Map();
+
+async function loadInfo() {
+  info = await (await fetch("api/info")).json();
+  info.fixtures.sort((a, b) => a.size - b.size);
+  $("dot").className = "dot up";
+  const up = info.guest_up_seconds;
+  const age = up < 120 ? `${up} s` : up < 7200 ? `${Math.round(up / 60)} min` : `${Math.round(up / 3600)} h`;
+  $("status").textContent = `trust domain up ${age}`;
+  const box = $("fixtures");
+  if (box.dataset.ready) {
+    for (const f of info.fixtures) {
+      const note = document.querySelector(`[data-time="${f.name}"]`);
+      if (note && f.last_ms != null) note.textContent = timeNote(f);
+    }
+    return;
+  }
+  box.dataset.ready = "1";
+  box.replaceChildren(...info.fixtures.map((f, i) => {
+    const input = el("input", { type: "radio", name: "fixture", value: f.name });
+    if (i === 0) input.checked = true;
+    return el("label", { class: "choice" }, input, el("span", {},
+      el("b", {}, f.name),
+      el("small", {}, `${plural(f.blocks, "block")}, ${plural(f.accounts, "account")}, ${kib(f.size)}`),
+      el("small", { "data-time": f.name }, timeNote(f))));
+  }));
+  $("run").disabled = false;
+}
+
+const timeNote = (f) => f.last_ms == null ? "not yet timed on this boot" : `last took ${span(f.last_ms)} in the guest`;
+
+async function loadConsole() {
+  if (document.hidden) return;
+  try {
+    const { lines } = await (await fetch("api/console")).json();
+    const pre = $("console");
+    const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+    pre.textContent = lines.join("\n") || "(nothing yet)";
+    if (atEnd) pre.scrollTop = pre.scrollHeight;
+  } catch (_) { /* the next poll will try again */ }
+}
+
+async function body(name) {
+  if (!bodies.has(name)) {
+    bodies.set(name, new Uint8Array(await (await fetch(`fixtures/${name}.req`)).arrayBuffer()));
+  }
+  return bodies.get(name);
+}
+
+const statusWords = {
+  1: ["Refused", "The genesis block does not decode."],
+  4: ["Failed", "The import stopped for a reason other than an invalid block."],
+  5: ["Refused", "The request is malformed."],
+};
+
+function showAnswer(fixture, alter, response, reply, tookTotal) {
+  const status = response[0];
+  const imported = new DataView(response.buffer, response.byteOffset).getUint32(1);
+  const tip = hex(response.subarray(5, 37)), root = hex(response.subarray(37, 69));
+  let word, line, good;
+  if (status === 0) {
+    [word, line, good] = ["Valid", `All ${plural(imported, "block")} executed and every state root matched.`, true];
+  } else if (status === 3) {
+    [word, line, good] = ["Rejected", `Block ${imported + 1} of ${fixture.blocks} is invalid. ` +
+      (imported ? `The ${plural(imported, "block")} before it stand.` : "Nothing was imported."), false];
+  } else if (status === 2) {
+    [word, line, good] = ["Refused", "The starting state does not hash to the state root in the genesis block.", false];
+  } else {
+    [word, line] = statusWords[status] || ["Unknown", `Status ${status}.`];
+    good = false;
+  }
+  const verdict = $("verdict");
+  verdict.className = "verdict " + (good ? "good" : "bad");
+  verdict.replaceChildren(el("span", { class: "word" }, word), el("span", {}, line));
+  if (alter === "none") {
+    const agrees = hex(response) === fixture.expected;
+    verdict.append(el("span", { class: "tag " + (agrees ? "good" : "bad") },
+      agrees ? "the answer ethereum/tests gives" : "NOT the answer ethereum/tests gives"));
+  } else {
+    verdict.append(el("span", { class: "tag " + (good ? "bad" : "good") },
+      good ? "the lie was not caught" : "the lie was caught"));
+  }
+  const guestLine = (reply.console || []).map((l) => /status .*?, (\d+) ms/.exec(l)).filter(Boolean).pop();
+  const rows = [
+    [status === 2 ? "Tip block" : "Tip block hash", status === 2 ? "(none)" : "0x" + tip],
+    [status === 2 ? "Root the state does hash to" : "State root", "0x" + root],
+    ["Time in the guest", guestLine ? span(Number(guestLine[1])) : "not reported"],
+    ["Round trip", `${span(reply.round_trip_ms)} through the host, ${span(tookTotal)} from your click`],
+  ];
+  $("facts").replaceChildren(...rows.flatMap(([k, v]) => [el("dt", {}, k), el("dd", { class: "hex" }, v)]));
+  $("answer").hidden = false;
+}
+
+function showChecks(steps) {
+  const all = steps.every((s) => s.ok);
+  const summary = $("summary");
+  summary.className = "summary " + (all ? "good" : "bad");
+  summary.textContent = all
+    ? "Every check passed: this answer was computed inside an Intel TDX trust domain, for your request, after you asked."
+    : "A check failed. Do not believe this answer.";
+  $("checks").replaceChildren(...steps.map((s) => el("li", {},
+    el("span", { class: "mark " + (s.ok ? "good" : "bad") }, s.ok ? "✓" : "✗"),
+    el("span", { class: "what" }, s.title),
+    el("span", { class: "how" }, s.detail))));
+  $("proof").hidden = false;
+}
+
+function showMeasurements(fields) {
+  const recorded = info.recorded;
+  const names = ["MRTD", "RTMR0", "RTMR1", "RTMR2", "RTMR3"];
+  $("measurements").replaceChildren(
+    el("tr", {}, el("th", {}, ""), el("th", {}, "in this quote"), el("th", {}, "recorded")),
+    ...names.map((n) => el("tr", {}, el("th", {}, n), el("td", { class: "hex" }, fields[n] || "—"),
+      el("td", {}, !recorded ? "none" : recorded[n] === fields[n]
+        ? el("span", { class: "tag good" }, "same") : el("span", { class: "tag bad" }, "DIFFERENT")))));
+  const commit = info.commit ? el("a", { href: `https://github.com/posix4e/cluck/tree/${info.commit}` },
+                                  info.commit.slice(0, 12)) : "unknown";
+  $("identity").replaceChildren(
+    el("tr", {}, el("th", {}, "EFI image, SHA-256"), el("td", { class: "hex" }, info.image_sha256)),
+    el("tr", {}, el("th", {}, "Firmware (TDVF), SHA-256"), el("td", { class: "hex" }, info.firmware_sha256)),
+    el("tr", {}, el("th", {}, "Built from"), el("td", {}, commit,
+      info.uncommitted_changes ? " plus changes not yet committed, so not yet reproducible from the public source" : "")),
+    el("tr", {}, el("th", {}, "Certificates"), el("td", {}, (fields.certificates || []).join(" ← "))));
+  $("measured").hidden = false;
+}
+
+async function run() {
+  const name = document.querySelector('input[name="fixture"]:checked').value;
+  const alter = document.querySelector('input[name="alter"]:checked').value;
+  const fixture = info.fixtures.find((f) => f.name === name);
+  const button = $("run");
+  button.disabled = true;
+  const began = performance.now();
+  const tick = setInterval(() => {
+    $("elapsed").textContent = `working… ${((performance.now() - began) / 1000).toFixed(1)} s`;
+  }, 100);
+  const poll = setInterval(loadConsole, 1000);
+  try {
+    // The challenge is chosen here, so a quote that contains it was made after this moment.
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    const request = new Uint8Array(await body(name));
+    const at = fixture.alter[alter];
+    if (at != null) request[at] ^= 1;
+    const answer = await fetch("api/run", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fixture: name, alter, challenge: hex(challenge) }),
+    });
+    const reply = await answer.json();
+    if (!answer.ok) throw new Error(reply.error || `the server said ${answer.status}`);
+    const response = unhex(reply.response);
+    const quote = Uint8Array.from(atob(reply.quote), (c) => c.charCodeAt(0));
+    lastQuote = quote;
+    showAnswer(fixture, alter, response, reply, Math.round(performance.now() - began));
+
+    const steps = [];
+    let fields = {};
+    if (quote.length === 0) {
+      steps.push({ title: "A quote came with the answer", ok: false,
+                   detail: "The guest sent no report: it is not running in a trust domain." });
+    } else {
+      const checked = await verifyQuote(quote, Date.now());
+      fields = checked.fields;
+      steps.push(...checked.steps);
+      const asked = await sha256(concat(challenge, request));
+      const answered = await sha256(response);
+      const data = unhex(fields.reportData || "");
+      steps.push({
+        title: "The quote is for your request and your challenge",
+        ok: same(asked, data.subarray(0, 32)),
+        detail: `SHA-256 of your 32 random bytes and the ${kib(request.length)} request, computed here: ${hex(asked)}`,
+      }, {
+        title: "The quote is for the answer shown above",
+        ok: same(answered, data.subarray(32, 64)),
+        detail: `SHA-256 of the 69-byte response, computed here: ${hex(answered)}`,
+      });
+      if (info.recorded) {
+        const names = ["MRTD", "RTMR0", "RTMR1", "RTMR2", "RTMR3"];
+        steps.push({
+          title: "The measurements are the ones recorded for this image",
+          ok: names.every((n) => info.recorded[n] === fields[n]),
+          detail: "firmware and EFI program as booted; see below for what that does and does not tell you",
+        });
+      }
+    }
+    showChecks(steps);
+    showMeasurements(fields);
+    $("answer").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    $("answer").hidden = false;
+    $("verdict").className = "verdict bad";
+    $("verdict").replaceChildren(el("span", { class: "word" }, "No answer"), el("span", {}, String(error.message || error)));
+    $("facts").replaceChildren();
+    $("proof").hidden = true;
+  } finally {
+    clearInterval(tick);
+    clearInterval(poll);
+    $("elapsed").textContent = "";
+    button.disabled = false;
+    loadConsole();
+    loadInfo().catch(() => {});
+  }
+}
+
+$("run").addEventListener("click", run);
+$("download").addEventListener("click", () => {
+  if (!lastQuote) return;
+  const link = el("a", { href: URL.createObjectURL(new Blob([lastQuote])), download: "tdx-quote.bin" });
+  link.click();
+  URL.revokeObjectURL(link.href);
+});
+loadInfo().catch(() => { $("status").textContent = "the demo server is not answering"; });
+loadConsole();
+setInterval(loadConsole, 5000);
+</script>
+</body>
+</html>

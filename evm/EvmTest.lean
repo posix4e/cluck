@@ -1,7 +1,7 @@
 import Evm
 
 /-! Pure tests: `Evm.powMod` against Lean's own `Nat.powMod`, and the request format against itself and
-against input that is not a request. Run on Lean's own runtime, where `Nat.powMod` is the reference. -/
+against input that is not a request, and the attested answer's hash and framing. Run on Lean's own runtime, where `Nat.powMod` is the reference. -/
 open Jaune Evm.Service
 
 /-- A pseudo-random number of about `bits` bits; the same sequence every run. -/
@@ -25,6 +25,15 @@ def sample : Request :=
     accounts := [(⟨7, 9⟩, ⟨3, 1000, Storage.ofList [(1, 2), (5, 6)], ⟨#[0x60, 0x00]⟩⟩),
                  (⟨8, 1⟩, ⟨0, 0, Storage.ofList [], .empty⟩)],
     genesis := [0xc0], blocks := [[1, 2, 3], []] }
+
+def hex (bytes : ByteArray) : String :=
+  bytes.foldl (fun out b => out ++ String.ofList [Nat.digitChar (b.toNat / 16), Nat.digitChar (b.toNat % 16)]) ""
+
+def sha256Cases : List (String × String) :=
+  [("abc", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+   ("", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+   ("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+    "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1")]
 
 def main : IO UInt32 := do
   let mut failures := 0
@@ -56,5 +65,24 @@ def main : IO UInt32 := do
     failures := failures + 1
     IO.println "a request whose genesis is not a block was not answered with status 1"
   IO.println s!"request format: {bytes.size + 3} cases"
+  -- SHA-256 as the attested answer uses it, against the standard's own examples (FIPS 180-4, one block,
+  -- none, and two), and the shape of an attested frame.
+  for (text, digest) in sha256Cases do
+    if hex (Evm.Attest.sha256 text.toUTF8) != digest then
+      failures := failures + 1
+      IO.println s!"SHA-256 of {text.quote} is {hex (Evm.Attest.sha256 text.toUTF8)}"
+  let challenge : ByteArray := ⟨(List.range 32).map (·.toUInt8) |>.toArray⟩
+  let attested := Evm.Attest.tag ++ challenge ++ bytes
+  if (Evm.Attest.asked? attested).map Evm.Attest.request != some bytes then
+    failures := failures + 1
+    IO.println "an attested frame does not give back the request inside it"
+  if (Evm.Attest.asked? bytes).isSome || (Evm.Attest.asked? (Evm.Attest.tag ++ challenge.extract 0 31)).isSome then
+    failures := failures + 1
+    IO.println "a frame that is not an attested one was taken for one"
+  let data := Evm.Attest.reportData (challenge ++ bytes) malformed
+  if data != Evm.Attest.sha256 (challenge ++ bytes) ++ Evm.Attest.sha256 malformed || data.size != 64 then
+    failures := failures + 1
+    IO.println "REPORTDATA is not the two hashes, 64 bytes"
+  IO.println s!"attested answer: {sha256Cases.length + 3} cases"
   if failures == 0 then IO.println "evm-test: all checks passed" else IO.println s!"evm-test: {failures} FAILED"
   return if failures == 0 then 0 else 1

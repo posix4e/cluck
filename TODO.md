@@ -45,7 +45,7 @@ the tip hash and state root after importing them (`evm/README.md`).
 On 2026-11-19 it ran three ways on one Intel machine under Linux 7.0.0-14-generic and QEMU 10.2.1: as a
 process on Lean's runtime, as a process on the minimal runtime, and as an EFI guest in an Intel TDX trust
 domain with the two TDVF patches in `boot/efi/`. The same guest built for development ran under QEMU's
-emulated processor. No attestation was asked of it.
+emulated processor. No attestation was asked of it that day.
 
 The requests are the Prague cases of five blockchain tests from `ethereum/tests` at `3129f16`. Each answer
 was compared, byte for byte, with the fixture's own `lastblockhash` and the root of its `postState`. All
@@ -78,6 +78,26 @@ after it. Under the emulated processor four of the five were run and agreed (56 
   4. The big-number work is slower because the minimal runtime's arithmetic is Lean on 32-bit limbs where
   Lean's own runtime calls GMP. Both runtimes computed the same results every time.
 
+On 2026-11-20 the TDX guest answered attested requests (`evm/Evm/Attest.lean`): the response, then a
+TDREPORT whose REPORTDATA is the SHA-256 of a 32-byte challenge and the request, then the SHA-256 of the
+response. This host's Intel QGS turned each report into a 5,243-byte version 4 quote.
+
+- `evm/demo/test-verify.mjs`, under Node 25, checked three quotes with `evm/demo/verify.js`: the quote's
+  signature, the quoting enclave's endorsement of the attestation key, that enclave's signer against Intel's
+  published TD_QE identity, its report against the PCK certificate, the chain to Intel's SGX root key, the
+  DEBUG attribute clear, and REPORTDATA against hashes computed by the client. It refused the same quote
+  with one byte changed in each of eleven places and with the clock set to 2060. Intel's DCAP library was
+  not run on these quotes: it is not installed on this host. TCB status and revocation were not checked.
+- The three requests were a fixture as it is (status 0, the fixture's answer), with one bit changed in the
+  state root its last block's header claims (status 3 after ten of eleven blocks), and with one bit changed
+  in an account's starting balance (status 2).
+- Two boots of the image with SHA-256 `9c694a30d3002158554911f3e142b754353af9b8aa99ebdf20ca3eddd4fed369`
+  gave the same measurements: MRTD `d316047a…4188a7`, RTMR0 `32b983e0…09da10`, RTMR1 `85029e71…89f5e5`,
+  RTMR2 and RTMR3 zero. Nobody has derived those from the image and firmware without booting them.
+- The page (`evm/demo/`) ran the same checks in headless Chrome 154 at desktop and phone widths, and the
+  five fixtures gave the fixture's answer through it. It has been served on loopback and, behind an HTTPS
+  proxy, to the operator's private network; it has not faced the internet.
+
 What it stands on that is not sound yet:
 
 - [ ] **Seven of mathlib's start-up routines are replaced by routines that do nothing** (`evm/rt/start.c`).
@@ -96,8 +116,11 @@ Not done:
 - [ ] A block of the real chain. The whole state is in the request, and there is no reading of an account
       against a state root other than hashing every account, so mainnet's state cannot be sent. That needs a
       witness format and a checker for it, which Jaune does not have.
-- [ ] An attestation bound to an answer. The guest can produce a TDREPORT (command `05` of the demo, which
-      this service does not carry), but nothing ties a report to a request and its response.
+- [ ] A full check of the attested answer. The quote is checked up to Intel's root key in a browser
+      (above); TCB status, revocation and the quoting enclave's version are not, the measurements are compared
+      only with ones the same operator recorded, and no one has verified a quote off this host with DCAP.
+- [ ] The measurements derived from the image and the firmware, so that a quote can be tied to a commit
+      without a TDX machine to boot it on.
 - [ ] Any fork but Prague has been run. Cancun and Osaka are accepted and untried.
 - [ ] More than one request at a time, or anything else while one runs: the machine reads no packet until
       the import returns.

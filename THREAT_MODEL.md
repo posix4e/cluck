@@ -67,14 +67,35 @@ The machine reads no packet while an import runs, so one request holds off every
 as it takes, and a sender who wants that can have it. Jaune holds byte strings as lists, many bytes of heap
 for each byte of input, on a heap of 256 MiB; a request that needs more stops the machine, which says so.
 
-**The answer proves nothing yet.** It comes back over cleartext TCP from a machine that has shown no
-evidence of what it is. The guest can produce a TDREPORT, but this service does not carry that command, and
-nothing binds a report to a request and its response. Until something does, a response is worth what the
-network between is worth.
+**An answer with a report.** A frame that begins `JATT1` carries 32 bytes of the sender's choosing and then
+a request, and is answered with the response and a TDREPORT whose REPORTDATA is the SHA-256 of those bytes
+and the request, then the SHA-256 of the response (`evm/Evm/Attest.lean`). It is the only way this image
+asks the processor for a report, so a report from it with other REPORTDATA does not exist. What a verified
+quote of that report says is that a trust domain with the quoted measurements answered this request with
+this response after the 32 bytes were chosen. It does not say the measurements are of this repository's
+source: that is for whoever relies on it to establish, by building the image and firmware and comparing.
+The hash is Jaune's SHA-256, the one behind the EVM's precompile; the fixtures exercise it through the
+precompile and `evm-test` holds it to three of the standard's examples. Nothing is secret here, so the
+report protects no confidentiality: it says who computed an answer, not that the request was hidden from
+the host. Outside a trust domain the answer carries no report.
+
+**The page (`evm/demo/`).** `demo/server.py` is a web server on the host, outside the trust domain, and is
+in no image. It is the adversary of the demonstration it gives: it starts the guest, carries frames to it,
+and has the host's quote generation service sign the guest's report. It can refuse to answer, answer slowly,
+or run some other image; it cannot make a quote that verifies with these measurements over an answer the
+guest did not give. A visitor chooses one of the fixtures, one of three alterations and a challenge, so no
+bytes of a visitor's own reach the guest, and one request runs at a time. `demo/verify.js` checks the quote
+in the visitor's browser: the signatures from the quote up to Intel's SGX root key, written in the file, and
+the signer of the quoting enclave. It does not fetch Intel's TCB information or revocation lists, so it
+accepts a quote from a processor whose firmware Intel no longer considers current, and it is served by the
+same host it is checking; a visitor who doubts the host reads the file or uses a verifier of their own on
+the quote the page offers for download.
+
+**A plain answer still proves nothing.** A request without the `JATT1` prefix is answered over cleartext
+TCP with no report, and that response is worth what the network between is worth.
 
 **No secret is held.** The service has no key. Its arithmetic is on `Nat` throughout and takes time that
 depends on the values, which is the reason a service with a key could not be built on Jaune as it is.
-
 ## What is being protected
 
 | Asset | When | Why it matters |

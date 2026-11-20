@@ -7,7 +7,8 @@ import Kernel.Net.Fragment
 emulator. This is `TdxMain.lean` with the demo taken out. Each TCP connection carries frames (a 4-byte
 big-endian length, then that many bytes); each frame is a request and is answered with one frame holding the
 69 bytes of the response, and after them a TDREPORT when the request asked for one (`Evm/Attest.lean`). A
-request may be far longer than a demo payload, up to `maxRequest`.
+request may be far longer than a demo payload, up to `maxRequest`, and what is held of requests still on their
+way in is bounded over all clients (`maxHeld`).
 
 The machine does nothing else while a request runs: no packet is read and no timer serviced until the import
 returns, which for a hard block is many seconds. A second client waits, and its TCP waits with it. -/
@@ -16,14 +17,35 @@ open Kernel Kernel.Net
 
 private def servicePort : UInt16 := 5005
 
-/-- The longest request accepted. -/
-private def maxRequest : Nat := 8 * 1024 * 1024
+/-- The longest request accepted. A block of mainnet with its witness has been 2 to 22 MB (`TODO.md`), and
+this is room for half as much again. The heap (256 MiB) has held the largest seen; what a request of this
+length needs of it has not been measured. -/
+private def maxRequest : Nat := 32 * 1024 * 1024
+
+/-- The most that is held of requests still arriving, over all clients together. Each client may be part
+way through a request of `maxRequest`, and eight of those would be the whole heap: a client whose next
+bytes would take the total past this is closed instead. -/
+private def maxHeld : Nat := 40 * 1024 * 1024
+
+/-- What a client has sent that is not yet a whole request: the pieces as they came, and how long they are
+together. A request arrives as thousands of segments, and joining each to the last as it came would copy
+the request thousands of times; they are joined once, when the last is here. The first piece is never
+shorter than the four bytes of the length while there are four to be had. -/
+private structure Pending where
+  pieces : Array ByteArray := #[]
+  size : Nat := 0
+  deriving Inhabited
+
+private def Pending.add (p : Pending) (bytes : ByteArray) : Pending :=
+  if bytes.isEmpty then p
+  else if p.pieces.size == 1 && p.size < 4 then { pieces := #[p.pieces[0]! ++ bytes], size := p.size + bytes.size }
+  else { pieces := p.pieces.push bytes, size := p.size + bytes.size }
 
 private structure Server where
   tcp : Tcp.Endpoint := { listenPort := servicePort }
   fragments : Fragment.Cache := {}
   nextIpId : UInt32 := 0
-  clients : Array (Tcp.Key × ByteArray) := #[]
+  clients : Array (Tcp.Key × Pending) := #[]
 
 private def removeClient (s : Server) (key : Tcp.Key) : Server :=
   { s with clients := s.clients.filter (·.1 != key) }
@@ -31,14 +53,39 @@ private def removeClient (s : Server) (key : Tcp.Key) : Server :=
 private def length (b : ByteArray) : Nat :=
   (b[0]!.toNat <<< 24) ||| (b[1]!.toNat <<< 16) ||| (b[2]!.toNat <<< 8) ||| b[3]!.toNat
 
-/-- Whole requests at the front of `pending`, and what is left. `none` when a header is not acceptable. -/
-private partial def requests (pending : ByteArray) (out : Array ByteArray) :
-    Option (ByteArray × Array ByteArray) :=
-  if pending.size < 4 then some (pending, out) else
-  let n := length pending
-  if n == 0 || n > maxRequest then none
-  else if pending.size < 4 + n then some (pending, out)
-  else requests (pending.extract (4 + n) pending.size) (out.push (pending.extract 4 (4 + n)))
+private inductive Front
+  /-- The request at the front is not all here. -/
+  | wait
+  /-- Its length is not one that is accepted. -/
+  | refuse
+  /-- It is here, and this is what came after it. -/
+  | whole (request : ByteArray) (rest : Pending)
+
+/-- The request at the front of what a client has sent, joined into one array of exactly its length. -/
+private def Pending.front (p : Pending) : Front :=
+  if p.size < 4 then .wait else
+  let n := length p.pieces[0]!
+  if n == 0 || n > maxRequest then .refuse
+  else if p.size < 4 + n then .wait
+  else Id.run do
+    let mut request := ByteArray.emptyWithCapacity n
+    let mut rest : Pending := {}
+    let mut skip := 4
+    for piece in p.pieces do
+      let start := min skip piece.size
+      skip := skip - start
+      let stop := min piece.size (start + (n - request.size))
+      request := piece.copySlice start request request.size (stop - start)
+      rest := rest.add (piece.extract stop piece.size)
+    return .whole request rest
+
+/-- The whole requests at the front of what a client has sent, and what is left. `none` when a length is
+not acceptable. -/
+private partial def requests (p : Pending) (out : Array ByteArray) : Option (Pending × Array ByteArray) :=
+  match p.front with
+  | .wait => some (p, out)
+  | .refuse => none
+  | .whole request rest => requests rest (out.push request)
 
 private def frame (payload : ByteArray) : ByteArray :=
   Evm.Service.be 4 payload.size ++ payload
@@ -61,17 +108,26 @@ private partial def settle (cfg : Internet.Config) (now : Nat)
     if let some frame := Internet.tcpFrame cfg peer segment then Efi.send frame
     settle cfg now s rest
   | .opened key =>
-    settle cfg now { s with clients := s.clients.push (key, .empty) } rest
+    settle cfg now { s with clients := s.clients.push (key, {}) } rest
   | .closed key => settle cfg now (removeClient s key) rest
   | .finished key =>
     let (tcp, more) := s.tcp.close now key
     settle cfg now { (removeClient s key) with tcp } (rest ++ more.toList)
   | .data key bytes =>
-    let some (_, pending) := s.clients.find? (·.1 == key) | settle cfg now s rest
-    match requests (pending ++ bytes) #[] with
+    let some i := s.clients.findIdx? (·.1 == key) | settle cfg now s rest
+    -- The client's pieces are taken out of the table while they are added to: held in two places, every
+    -- segment would copy the list of them.
+    let clients := s.clients
+    let s := { s with clients := #[] }
+    let pending := clients[i]!.2
+    let clients := clients.set! i (key, {})
+    let others := clients.foldl (fun held client => held + client.2.size) 0
+    let gathered :=
+      if others + pending.size + bytes.size > maxHeld then none else requests (pending.add bytes) #[]
+    match gathered with
     | none =>
       let (tcp, more) := s.tcp.close now key
-      settle cfg now { (removeClient s key) with tcp } (rest ++ more.toList)
+      settle cfg now { (removeClient { s with clients } key) with tcp } (rest ++ more.toList)
     | some (pending, whole) =>
       let mut replies := ByteArray.empty
       for request in whole do
@@ -86,8 +142,7 @@ private partial def settle (cfg : Internet.Config) (now : Nat)
       let after ← Efi.millis
       let now := if whole.isEmpty then now else after.toNat
       let (tcp, more) := s.tcp.send now key replies
-      let clients := s.clients.map fun c => if c.1 == key then (key, pending) else c
-      settle cfg now { s with tcp, clients } (rest ++ more.toList)
+      settle cfg now { s with tcp, clients := clients.set! i (key, pending) } (rest ++ more.toList)
 
 private def freshWord : IO UInt32 := do
   let b ← Platform.random 4

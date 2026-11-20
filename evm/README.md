@@ -177,12 +177,20 @@ lighthouse bn --network mainnet --datadir DIR/lighthouse \
   --checkpoint-sync-url https://mainnet.checkpoint.sigp.io --http --http-address 127.0.0.1
 ```
 
+The same requests go to the guest from wherever they were written:
+
+```
+SILO_TDVF=/path/to/OVMF.fd scripts/run-fixtures tdx --from DIR 26456375
+```
+
 From another machine, `ssh -L 8545:127.0.0.1:8545 HOST` puts that node within reach of `witness/fetch`,
 and everything in this section but the guest then runs anywhere Lean does.
 
 `fetch` asks for the block, the 255 headers before it and the node's own witness, adds the code of every
-account the witness names, and writes a request that asks for mainnet's fork schedule. `stateless-why`
-says what the answer was and, when the witness fell short, what it lacked. A witness taken while the node
+account the witness names, and writes a request that asks for mainnet's fork schedule. It then puts the
+request to `stateless-why`, and while the answer is that the witness lacks a named account or slot it adds
+that one and tries again, because a node's witness sometimes leaves out the address of an account the block
+reads. `stateless-why` says what the answer was and, when the witness fell short, what it lacked. A witness taken while the node
 is still catching up does not hang from the parent's state root and gets no verdict.
 
 The service does not trust the witness. What it relies on, and what its answer means, is at the top of

@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
 """Boots the service as an EFI guest, puts fixture requests to it over TCP, and checks each answer.
 
-    scripts/run-fixtures dev|tdx [name...]        (from evm/, after: scripts/build-efi dev|tdx)
+    scripts/run-fixtures dev|tdx [--limits] [--from DIR] [name...]   (from evm/, after: scripts/build-efi dev|tdx)
 
 `dev` is an emulated processor and OVMF, and runs anywhere QEMU does. `tdx` is an Intel TDX trust domain,
 and needs what the OS's TDX.md says a host needs, with SILO_TDVF naming the firmware built there. With no
-names, every request in fixtures/ is sent. The guest is started by the OS's scripts/run-efi and is ended
-when this is done. Exit status 0 only if every answer is byte for byte the fixture's.
+names, every request in fixtures/ is sent. `--from DIR` takes the requests and the answers they must get
+from DIR instead (NAME.req, NAME.expected): blocks of mainnet with their witnesses are too large to keep
+here (witness/fetch makes them). The guest is started by the OS's scripts/run-efi and is ended when this is
+done. Exit status 0 only if every answer is byte for byte the one expected.
+
+`--limits` then tries what the guest must refuse: a frame longer than it accepts, and two clients that
+between them hold more of unfinished requests than it keeps. Each must be closed, and a fixture must still
+get its answer afterwards. It sends some 60 MB, which an emulated processor takes minutes over.
+
+For each request it prints the time from the first byte sent to the answer, and how much of that the guest
+says it spent on the request; the rest is the request on its way in.
 
 SILO_HOST_PORT is the loopback port the guest's port 5005 is forwarded to (default 5015).
 """
-import glob, os, shutil, signal, socket, struct, subprocess, sys, time
+import glob, os, re, shutil, signal, socket, struct, subprocess, sys, time
 
 if len(sys.argv) < 2 or sys.argv[1] not in ("dev", "tdx"):
     sys.exit(__doc__)
@@ -18,6 +27,11 @@ mode, names = sys.argv[1], sys.argv[2:]
 here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 system = os.path.dirname(here)
 fixtures = os.path.join(here, "fixtures")
+limits = names[:1] == ["--limits"]
+if limits:
+    names = names[1:]
+if names[:1] == ["--from"] and len(names) > 1:
+    fixtures, names = os.path.abspath(names[1]), names[2:]
 if not names:
     names = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(fixtures, "*.req")))
 image = os.path.join(here, ".lake/build/efi", mode, "evm-os/BOOTX64.EFI")
@@ -69,9 +83,55 @@ try:
         except OSError as error:
             got = b""
             print(f"{name}: {error}")
+        took = time.time() - sent
         ok = got == struct.pack(">I", 69) + expected
         failed += not ok
-        print(f"{name}: {'the fixture answer' if ok else 'WRONG ' + got.hex()}, {time.time() - sent:.1f} s")
+        inside = re.findall(r"evm: status \d+, (\d+) ms", serial())
+        inside = f", {int(inside[-1]) / 1000:.2f} s of it in the guest" if inside else ""
+        print(f"{name}: {len(request)} bytes, {'the expected answer' if ok else 'WRONG ' + got.hex()}, "
+              f"{took:.2f} s{inside}")
+    if limits:
+        def closed(s, patience=30):
+            """Whether the guest ends the connection without sending a byte."""
+            s.settimeout(patience)
+            try:
+                return s.recv(1) == b""
+            except (ConnectionError, socket.timeout) as error:
+                return isinstance(error, ConnectionError)
+
+        def partial(megabytes):
+            """A client part way through a request of 32 MiB less one byte."""
+            s = socket.create_connection(("127.0.0.1", port), timeout=10)
+            s.settimeout(600)
+            s.sendall(struct.pack(">I", 32 * 1024 * 1024 - 1) + bytes(megabytes * 1024 * 1024))
+            return s
+
+        with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
+            s.sendall(struct.pack(">I", 32 * 1024 * 1024 + 1) + bytes(64))
+            ok = closed(s)
+        failed += not ok
+        print(f"a frame one byte over the longest accepted: {'closed' if ok else 'NOT CLOSED'}")
+        first = partial(30)
+        try:
+            second = partial(9)
+            try:
+                second.sendall(bytes(2 * 1024 * 1024))
+            except ConnectionError:
+                pass
+            ok = closed(second)
+            second.close()
+        except ConnectionError:
+            ok = True
+        failed += not ok
+        print(f"a second client taking what is held past the limit: {'closed' if ok else 'NOT CLOSED'}")
+        first.close()
+        with open(os.path.join(here, "fixtures/highGasUsage.req"), "rb") as f:
+            request = f.read()
+        with open(os.path.join(here, "fixtures/highGasUsage.expected"), "rb") as f:
+            expected = f.read()
+        ok = exchange(request, 600) == struct.pack(">I", 69) + expected
+        failed += not ok
+        print(f"a fixture after that: {'the expected answer' if ok else 'WRONG'}")
 finally:
     try:
         os.killpg(guest.pid, signal.SIGTERM)

@@ -127,26 +127,61 @@ witness instead of the state (`evm/Evm/Stateless.lean`, `evm/Evm/Trie.lean`). Th
 - Before the jump-destination check was replaced, one mainnet block ran for ten minutes without finishing,
   99.9% of it in Jaune's `noPushBefore`.
 
+Later the same day the service answered about blocks of mainnet from inside the TDX guest.
+
+- 100 consecutive blocks, 26458315 to 26458414 (66 to 625 transactions, 6.3M to 60.0M gas, requests of
+  1.9 to 21.7 MB): as a process on Lean's own runtime, and then in the TDX guest (image SHA-256
+  `62a005f3…db12309`, one boot, one after another), every one was answered valid with the block hash and
+  state root the node reports. In the guest a block took 1.8 to 70.5 seconds, median 10.8, 4 of them
+  under 3 seconds and 41 under 10; the request took a further 0.2 to 2.2 seconds to arrive, median 0.9.
+  Two profiles of the service as a process were being taken on the same machine for part of that run.
+- The 21 blocks above, in the guest: all valid, 2.7 to 36.6 seconds; and all valid again on the image
+  this source builds (SHA-256 `aabff013…c43233e1`), which differs from the one the 100 were put to by
+  the limit on what is held of unfinished requests. One mainnet block (the smallest, 1.9 MB) was put to
+  the emulated guest and was valid, in 22 seconds. The two that had fallen short now
+  have the address they lacked (`evm/witness/fetch` adds what the service says is missing and tries
+  again; it had to for 4 of the 100).
+- The guest's runtime, not the guest, is what is slow: as processes, three of those blocks took 26.0, 28.6
+  and 13.0 seconds on the minimal runtime against 10.2, 10.9 and 4.4 on Lean's own, and 31.7, 36.6 and
+  15.7 in the guest.
+- Where the time goes, from a profile of the 21 blocks as a process on the minimal runtime (310 seconds in
+  all): 40% in the final exponentiation and Frobenius maps of the bn254 pairing, which Jaune computes as
+  plain powers in the extension field; 26% in recovering senders' addresses from signatures; 13% in
+  checking jump destinations, a pass over the contract from its start for every jump; 11% in the rest of
+  the interpreter; 4% in the witness and trie; 3% in the rest of the pairing; 2% in BLS12-381. Almost all
+  of the first two is arithmetic on numbers of 254 and 256 bits, which the minimal runtime does in Lean
+  on arrays of 32-bit limbs with a division for every reduction.
+- A request arrives at about 8.5 MB a second. It was 5.5 before the wait for the network device to hand
+  back a transmit buffer (`boot/efi/platform.c`) was preceded by asking for it again at once, which is
+  what each acknowledgement was waiting on. A TCP window of 64 KiB instead of 8 changed nothing, before
+  that or after, and was not kept.
+- `scripts/run-fixtures tdx --limits`: a frame one byte over the 32 MiB accepted is closed; of two
+  clients each part way through a request, the one that would take what is held past 40 MiB is closed;
+  a fixture is answered afterwards.
+- `ShanghaiLove`, which took 39 seconds when it was first run (above), takes 0.2 since the jump-destination
+  check was replaced, on both runtimes and in the guest, with the same answer.
+- Not tried: a request of the full 32 MiB (the largest was 21.7 MB, and as a process on the minimal
+  runtime that block's peak was 183 MB of a heap that is 256 MiB in the guest); mainnet blocks on the
+  emulated processor beyond the smallest of them; more than one boot; a build of the image from a fresh
+  clone.
+
 What is next, in the order it depends on itself. The aim is the check a relay makes of a builder's block
 (re-execute it on the real chain, confirm the state root, confirm the proposer is paid), attested, in the
 guest:
 
-1. **A mainnet block in the guest.** Requests of 3 to 14 MB: the request limit and how a request is
-   gathered in `evm/EfiMain.lean`, the TCP receive window in `Kernel/Net/Tcp.lean`, witness bytes kept as
-   byte arrays, heap and guest memory sized from what is measured.
-2. **Time.** Profile the 21 blocks on both runtimes and fix in order of cost. Known candidates in Jaune:
-   sender recovery, memory held as an array of boxed bytes, the stack's length taken on every push, a table
-   of jump destinations per contract, byte lists for call data and RLP. The line to reach is a median
-   mainnet block in 3 seconds in the TDX guest; if it is still above 10 after the five largest, stop and
-   say so.
-3. **The relay's own checks** (`flashbots_validateBuilderSubmissionV5`, as reth's
+1. **Time.** The line to reach is a median mainnet block in 3 seconds in the TDX guest, from 10.8; if it
+   is still above 10 after the five largest items of the profile above have been dealt with, stop and say
+   so. In order: the bn254 pairing's final exponentiation, sender recovery on fixed-width words, the jump
+   check, then whatever a new profile puts first. Each change to Jaune is held to Jaune's own Osaka and
+   BPO2 suites (its pinned fixtures are in place) and to these 121 blocks.
+2. **The relay's own checks** (`flashbots_validateBuilderSubmissionV5`, as reth's
    `crates/rpc/rpc/src/validation.rs` makes them): the bid against the block, the gas limit against the one
    registered, blob commitments, and payment to the proposer. A host-side adapter that speaks the relay's
    JSON-RPC and gets a witness for a submitted payload.
-4. **Hostile input.** A step budget and a host that replaces a guest that overruns; the recursions in
+3. **Hostile input.** A step budget and a host that replaces a guest that overruns; the recursions in
    Jaune that follow the input made into loops; the items under "not sound yet" below; fuzzing of the trie
    and request readers; `evm/` in CI.
-5. **A week of every relay-delivered mainnet block**, validated after the fact and attested, shown on
+4. **A week of every relay-delivered mainnet block**, validated after the fact and attested, shown on
    the page.
 
 What it stands on that is not sound yet:
@@ -164,17 +199,17 @@ What it stands on that is not sound yet:
 
 Not done:
 
-- [ ] A block of the real chain, in the guest. As a process it is done for some blocks (below). In the
-      guest it has not been tried: a request for a mainnet block is 3 to 14 MB against a limit of 8, the
-      guest's TCP takes 8 KiB at a time, and its heap is 256 MiB.
-- [ ] A witness that is always enough. `evm/witness/fetch` takes the node's witness and adds code for the
-      accounts it names; 2 of 21 blocks read an account that was still not supplied.
+- [ ] A witness that is always enough. `evm/witness/fetch` now adds what the service says it lacks and
+      tries again, which was enough for 121 blocks of 121; it knows how to add an address or a slot number,
+      not a trie node, and a node that keeps no proofs of past state (reth's default) could not supply one.
 - [ ] A verdict on a block that is rejected while it runs. That is answered with status 8, which is no
       verdict, because Jaune's error does not carry what had been read up to then.
 - [ ] Jaune's conformance suites on the branch this package uses, and the compiled jump-destination check
       proved equal to its definition.
-- [ ] Time. 1.7 to 12.5 seconds a block as a process on Lean's own runtime, on a machine doing other work;
-      nothing has been profiled since the one function that dominated was replaced.
+- [ ] Time. A median of 10.8 seconds a block in the guest (above), against the 3 a relay's after-the-fact
+      check could live with.
+- [ ] A request on its way in faster than 8.5 MB a second. Each segment is acknowledged on its own and
+      costs the guest two exits to the host; acknowledging several at once is the next thing to try.
 - [ ] A full check of the attested answer. The quote is checked up to Intel's root key in a browser
       (above); TCB status, revocation and the quoting enclave's version are not, the measurements are compared
       only with ones the same operator recorded, and no one has verified a quote off this host with DCAP.

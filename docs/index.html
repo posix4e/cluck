@@ -195,32 +195,32 @@
           runtime, as a process on the minimal runtime, and as a TDX guest.</p>
         <div class="table"><table>
           <tr><th>Test chain</th><th class="n">Blocks</th><th class="n">Gas</th><th class="n">In the TDX guest</th></tr>
-          <tr><td>highGasUsage</td><td class="n">11</td><td class="n">0.23M</td><td class="n">112 ms</td></tr>
-          <tr><td>DelegateCallSpam</td><td class="n">1</td><td class="n">8M</td><td class="n">439 ms</td></tr>
-          <tr><td>walletReorganizeOwners</td><td class="n">259</td><td class="n">38M</td><td class="n">4.6 s</td></tr>
-          <tr><td>ShanghaiLove</td><td class="n">1</td><td class="n">4.5M</td><td class="n">39 s</td></tr>
+          <tr><td>highGasUsage</td><td class="n">11</td><td class="n">0.23M</td><td class="n">150 ms</td></tr>
+          <tr><td>DelegateCallSpam</td><td class="n">1</td><td class="n">8M</td><td class="n">640 ms</td></tr>
+          <tr><td>walletReorganizeOwners</td><td class="n">259</td><td class="n">38M</td><td class="n">5.6 s</td></tr>
+          <tr><td>ShanghaiLove</td><td class="n">1</td><td class="n">4.5M</td><td class="n">150 ms</td></tr>
         </table></div>
       </div>
       <div>
-        <h3>Being built: blocks of the real chain</h3>
+        <h3>Blocks of the real chain, in the guest</h3>
         <p>Mainnet's state cannot be sent whole, so a request carries a witness instead: the trie nodes on
           the paths to what the block touches. The guest checks them against the parent's state root,
           executes, and recomputes the root. Anything the block read that the witness did not prove is
           answered with "no verdict", never with a guess.</p>
-        <p id="mainnet">On 20 November 2026, 21 consecutive mainnet blocks (26456375 to 26456395) were
-          put to it as an ordinary process, each with a witness from a reth node. 19 came back valid with
-          the block hash and state root the node reports, the largest of them 544 transactions and 45.6M
-          gas, in 1.7 to 12.5 seconds each. The other 2 were answered "no verdict": the tool that
-          assembles witnesses had left out an account. None was answered wrongly. This has not yet run
-          inside the guest.</p>
+        <p id="mainnet">On 20 November 2026, 100 consecutive mainnet blocks (26458315 to 26458414, up to
+          625 transactions and 60M gas, requests of 2 to 22 MB) were put to the TDX guest, each with a
+          witness from a reth node. All 100 came back valid with the block hash and state root the node
+          reports. It is not fast: a block took 1.8 to 70 seconds, 10.8 at the median. Two fifths of that
+          is one step of the pairing check that zero-knowledge proofs use, a quarter is recovering
+          senders from signatures, and both are being rewritten.</p>
       </div>
     </div>
 
-    <div class="note"><strong>What this is not, yet:</strong> it has returned no verdict on a mainnet block
-      inside the guest, it checks no bid and no payment to a proposer, it is connected to no relay or
-      builder, and a hostile block can still hold the machine for a long time. Those are the four pieces of
-      work in progress, in that order of dependence. The shortcuts already taken are listed in the
-      repository, not here.</div>
+    <div class="note"><strong>What this is not, yet:</strong> it is too slow for a relay, which needs an
+      answer in about 3 seconds; it checks no bid and no payment to a proposer; it is connected to no relay
+      or builder; and a hostile block can still hold the machine for a long time. Those are the four pieces
+      of work in progress, in that order. The shortcuts already taken are listed in the repository, not
+      here.</div>
   </section>
 
   <section id="build">

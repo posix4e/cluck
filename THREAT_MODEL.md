@@ -57,15 +57,24 @@ agreeing is all that stands behind it.
 past the end of it writes into the image. How deep Jaune recurses depends on the request, and no bound on
 that depth has been worked out.
 
-**The input.** Anyone who can reach TCP port 5005 can send a request of up to 8 MiB. `Evm/Service.lean`
+**The input.** Anyone who can reach TCP port 5005 can send a request of up to 32 MiB, which is what a block
+of mainnet with its witness needs room for (the largest seen was 22 MB). `Evm/Service.lean`
 reads it in Lean, with every length checked against what is left of the request; Jaune's own decoder then
 reads the blocks. The C added here never looks at a byte of it: `evm/rt/names.c` passes numbers through to
 Lean, and the other two files hold no data at all.
 
-**Time and memory.** A block's cost is not bounded by its gas: one fixture takes 39 seconds for 4.5M gas.
+**Time and memory.** A block's time does not follow its gas: of 100 blocks of mainnet the slowest took 70
+seconds in the guest for 47M gas, and another took 26 for 60M. A pairing check costs far more time for its
+gas than most of what a block does, and nothing here bounds what a sender can make of that.
 The machine reads no packet while an import runs, so one request holds off every other client for as long
 as it takes, and a sender who wants that can have it. Jaune holds byte strings as lists, many bytes of heap
 for each byte of input, on a heap of 256 MiB; a request that needs more stops the machine, which says so.
+A request is held as the pieces it came in until it is whole and is then joined once, so for a moment it is
+held twice. Eight clients may each be part way through a request, and what is held for all of them together
+is kept to 40 MiB (`maxHeld` in `evm/EfiMain.lean`): the client whose bytes would pass that is closed. So
+unfinished requests cannot fill the heap, and a sender who holds most of that 40 MiB keeps large requests
+from everyone else for as long as its connections live, which is no more than a slow block already gives
+it. The largest request seen ran in this heap; one of the full 32 MiB has not been tried and may not.
 
 **An answer with a report.** A frame that begins `JATT1` carries 32 bytes of the sender's choosing and then
 a request, and is answered with the response and a TDREPORT whose REPORTDATA is the SHA-256 of those bytes

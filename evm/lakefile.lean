@@ -62,3 +62,8 @@ lean_exe «evm-test» where
 lean_exe «evm-bench» where
   root := `Bench
   moreLinkObjs := #[platformHosted, clockHosted]
+
+/-- `Evm.Trie` against Jaune's root computation, through witnesses whole and incomplete. -/
+@[default_target]
+lean_exe «trie-test» where
+  root := `TrieTest

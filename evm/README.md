@@ -16,13 +16,16 @@ it, and continuous integration does not build it. What has been run and what it 
 - `Evm/Service.lean`: the request and the response, and the import between them. The format is at the top of
   the file. Pure: bytes in, bytes out.
 - `Evm/Attest.lean`: a request with a challenge in front, and the REPORTDATA that ties its response to it.
+- `Evm/Trie.lean`: a Merkle-Patricia trie known only in part, from a witness of nodes named by hash: reads
+  that say when the witness falls short, and writes and removals that give the new root.
 - `Evm/PowMod.lean`: `Nat.powMod` in Lean, which the minimal runtime lacks.
 - `ServeMain.lean`: the service as a process, one request on standard input.
 - `EfiMain.lean`: the service as a whole machine, an EFI guest answering framed requests on TCP port 5005
   over the OS's own Ethernet, IP and TCP.
 - `MkRequest.lean`: turns a case of a blockchain-test fixture into a request and the response the fixture
   calls for. The only program here that reads JSON, and it never goes in an image.
-- `EvmTest.lean`: pure tests of the format and of `Evm.powMod`.
+- `EvmTest.lean`: pure tests of the format and of `Evm.powMod`. `TrieTest.lean`: the trie against Jaune's
+  root computation.
 - `Bench.lean`: times hashing, curve arithmetic and the interpreter on either runtime.
 - `rt/start.c`: seven of mathlib's start-up routines as routines that do nothing, and why.
   `rt/names.c`: three names compiled Jaune asks a runtime for. `rt/hosted/clock.c`: a clock for the benchmark.
@@ -46,6 +49,7 @@ lake exe cache get Mathlib.Data.Nat.Basic Mathlib.Data.List.Lemmas Mathlib.Data.
   Mathlib.Data.List.TakeWhile Mathlib.Data.UInt Mathlib.Tactic.NormNum Mathlib.Data.List.Chain
 lake build
 .lake/build/bin/evm-test
+.lake/build/bin/trie-test
 ```
 
 The service as a process, on Lean's own runtime and then on the minimal one. Each answer has to be the

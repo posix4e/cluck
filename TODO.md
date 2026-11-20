@@ -94,6 +94,7 @@ response. This host's Intel QGS turned each report into a 5,243-byte version 4 q
 - Two boots of the image with SHA-256 `9c694a30d3002158554911f3e142b754353af9b8aa99ebdf20ca3eddd4fed369`
   gave the same measurements: MRTD `d316047a…4188a7`, RTMR0 `32b983e0…09da10`, RTMR1 `85029e71…89f5e5`,
   RTMR2 and RTMR3 zero. Nobody has derived those from the image and firmware without booting them.
+  A fresh clone of commit `4c3cf93` built the same image.
 - The page (`evm/demo/`) ran the same checks in headless Chrome 154 at desktop and phone widths, and the
   five fixtures gave the fixture's answer through it. It has been served on loopback and, behind an HTTPS
   proxy, to the operator's private network; it has not faced the internet.
@@ -113,7 +114,11 @@ What it stands on that is not sound yet:
 
 Not done:
 
-- [ ] A block of the real chain. The whole state is in the request, and there is no reading of an account
+- [ ] A block of the real chain. Begun: `evm/Evm/Trie.lean` reads and updates a trie from a witness, and
+      `trie-test` holds it to Jaune's root over 9,900 random changes in five shapes of trie, through whole
+      and partial witnesses, with 14 malformed node encodings refused. Nothing calls it yet. Still needed:
+      Jaune recording what a block reads, the request that carries a witness, and a node to make witnesses.
+      What follows is how things stood before. The whole state is in the request, and there is no reading of an account
       against a state root other than hashing every account, so mainnet's state cannot be sent. That needs a
       witness format and a checker for it, which Jaune does not have.
 - [ ] A full check of the attested answer. The quote is checked up to Intel's root key in a browser

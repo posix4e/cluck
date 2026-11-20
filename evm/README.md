@@ -163,6 +163,23 @@ witness/fetch 26456375 block.req block.expected
 .lake/build/bin/stateless-why block.req
 ```
 
+The node these were run against was reth 2.11.0 with Lighthouse 8.3.3, started from reth's minimal
+snapshot (163 GB to fetch, about 270 GB on disk), which keeps the state of the last 10,064 blocks and so
+can make a witness for any of them:
+
+```
+reth download --minimal -y --chain mainnet --datadir DIR/reth
+reth node --minimal --chain mainnet --datadir DIR/reth \
+  --authrpc.jwtsecret DIR/jwt.hex --authrpc.addr 127.0.0.1 --authrpc.port 8551 \
+  --http --http.addr 127.0.0.1 --http.port 8545 --http.api eth,debug,net,web3
+lighthouse bn --network mainnet --datadir DIR/lighthouse \
+  --execution-endpoint http://127.0.0.1:8551 --execution-jwt DIR/jwt.hex \
+  --checkpoint-sync-url https://mainnet.checkpoint.sigp.io --http --http-address 127.0.0.1
+```
+
+From another machine, `ssh -L 8545:127.0.0.1:8545 HOST` puts that node within reach of `witness/fetch`,
+and everything in this section but the guest then runs anywhere Lean does.
+
 `fetch` asks for the block, the 255 headers before it and the node's own witness, adds the code of every
 account the witness names, and writes a request that asks for mainnet's fork schedule. `stateless-why`
 says what the answer was and, when the witness fell short, what it lacked. A witness taken while the node

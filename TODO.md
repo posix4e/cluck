@@ -127,6 +127,28 @@ witness instead of the state (`evm/Evm/Stateless.lean`, `evm/Evm/Trie.lean`). Th
 - Before the jump-destination check was replaced, one mainnet block ran for ten minutes without finishing,
   99.9% of it in Jaune's `noPushBefore`.
 
+What is next, in the order it depends on itself. The aim is the check a relay makes of a builder's block
+(re-execute it on the real chain, confirm the state root, confirm the proposer is paid), attested, in the
+guest:
+
+1. **A mainnet block in the guest.** Requests of 3 to 14 MB: the request limit and how a request is
+   gathered in `evm/EfiMain.lean`, the TCP receive window in `Kernel/Net/Tcp.lean`, witness bytes kept as
+   byte arrays, heap and guest memory sized from what is measured.
+2. **Time.** Profile the 21 blocks on both runtimes and fix in order of cost. Known candidates in Jaune:
+   sender recovery, memory held as an array of boxed bytes, the stack's length taken on every push, a table
+   of jump destinations per contract, byte lists for call data and RLP. The line to reach is a median
+   mainnet block in 3 seconds in the TDX guest; if it is still above 10 after the five largest, stop and
+   say so.
+3. **The relay's own checks** (`flashbots_validateBuilderSubmissionV5`, as reth's
+   `crates/rpc/rpc/src/validation.rs` makes them): the bid against the block, the gas limit against the one
+   registered, blob commitments, and payment to the proposer. A host-side adapter that speaks the relay's
+   JSON-RPC and gets a witness for a submitted payload.
+4. **Hostile input.** A step budget and a host that replaces a guest that overruns; the recursions in
+   Jaune that follow the input made into loops; the items under "not sound yet" below; fuzzing of the trie
+   and request readers; `evm/` in CI.
+5. **A week of every relay-delivered mainnet block**, validated after the fact and attested, shown on
+   the page.
+
 What it stands on that is not sound yet:
 
 - [ ] **Seven of mathlib's start-up routines are replaced by routines that do nothing** (`evm/rt/start.c`).

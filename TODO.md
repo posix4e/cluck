@@ -165,15 +165,44 @@ Later the same day the service answered about blocks of mainnet from inside the 
   emulated processor beyond the smallest of them; more than one boot; a build of the image from a fresh
   clone.
 
+That evening the three largest items of that profile were taken off it, in this package's branch of Jaune
+(`posix4e/jaune` at `6143c7b`): the bn254 pairing check makes one final exponentiation, by the split into
+an easy and a hard part, where it made a plain power for every pair; the jump-destination check goes back
+from the destination to a position that must start an instruction, where it walked the contract from its
+start; and senders are recovered over a field of ten 26-bit limbs in machine words, where every
+multiplication was a product and a division of big numbers.
+
+- The 100 blocks as a process on the minimal runtime: median 10.4 seconds before, 7.6 with the first two
+  changes, 3.65 with all three (mean 12.3 to 4.0, slowest 65 to 21). On Lean's own runtime: 5.4, 3.1,
+  2.5. Every answer the node's at each step.
+- The 100 blocks in the TDX guest (image SHA-256 `fa2bc573…25af4ef9`): all valid, 0.6 to 25.3 seconds,
+  median 4.6 where it was 10.8, 21 under 3 seconds and 95 under 10. The 21 blocks: all valid, 1.0 to 9.8,
+  median 3.9. The machine was building and testing other things for the whole of that run, so the guest
+  may be faster than this says; it is not yet known to be.
+- The test chains in the guest: `walletReorganizeOwners` 2.3 seconds where it was 5.6, `highGasUsage`
+  0.02 where it was 0.15.
+- Each change was held to Jaune's own gates on the branch, none of which had been run there before: its
+  Osaka (2,333 files), Prague (2,341) and BPO2 (11) suites of `tests@v21.0.2`, its 76 transition-tool
+  cases, its curve oracle (596 cases, 23 of them now put to the new recovery), and its layering and
+  hygiene checks. All pass. The hygiene check passes because the unproved jump check is now on its list
+  of exceptions with the reasons, not because it was proved.
+- `evm-test` compares the two substitutions with what they stand in for: 26,784 positions of made-up
+  code, some of it all pushes so that the check has to give up looking back, and 3,000 made-up signatures,
+  1,536 of which have a key.
+- Where the time goes now, from a profile of 33 of the 100 blocks as a process on the minimal runtime:
+  50% in the interpreter and the rest of Jaune, 18% in this package's own witness and trie code, 6% in
+  sender recovery, 5% each in BLS12-381, keccak and the bn254 Miller loop, 3% in the bn254 final power,
+  2% in the jump check. Counted another way, 35% of it is the minimal runtime allocating and freeing
+  (issue #1), and 7% is one function of Jaune's that grows EVM memory an element at a time.
+
 What is next, in the order it depends on itself. The aim is the check a relay makes of a builder's block
 (re-execute it on the real chain, confirm the state root, confirm the proposer is paid), attested, in the
 guest:
 
-1. **Time.** The line to reach is a median mainnet block in 3 seconds in the TDX guest, from 10.8; if it
-   is still above 10 after the five largest items of the profile above have been dealt with, stop and say
-   so. In order: the bn254 pairing's final exponentiation, sender recovery on fixed-width words, the jump
-   check, then whatever a new profile puts first. Each change to Jaune is held to Jaune's own Osaka and
-   BPO2 suites (its pinned fixtures are in place) and to these 121 blocks.
+1. **Time.** The line to reach is a median mainnet block in 3 seconds in the TDX guest, from 4.6. Next:
+   this package's own witness and trie code, then Jaune's growing of EVM memory, then a new profile. The
+   runtime's allocator is left alone for now (issue #1). Once the median is under 3 seconds the relay's
+   checks come next, not more speed.
 2. **The relay's own checks** (`flashbots_validateBuilderSubmissionV5`, as reth's
    `crates/rpc/rpc/src/validation.rs` makes them): the bid against the block, the gas limit against the one
    registered, blob commitments, and payment to the proposer. A host-side adapter that speaks the relay's
@@ -204,9 +233,11 @@ Not done:
       not a trie node, and a node that keeps no proofs of past state (reth's default) could not supply one.
 - [ ] A verdict on a block that is rejected while it runs. That is answered with status 8, which is no
       verdict, because Jaune's error does not carry what had been read up to then.
-- [ ] Jaune's conformance suites on the branch this package uses, and the compiled jump-destination check
-      proved equal to its definition.
-- [ ] Time. A median of 10.8 seconds a block in the guest (above), against the 3 a relay's after-the-fact
+- [ ] Proofs that the three things the branch of Jaune runs in place of its definitions are equal to them:
+      the jump-destination check, sender recovery over fixed-width words, and the bn254 final
+      exponentiation. They are tested (above, and `THREAT_MODEL.md`), which was decided to be enough for
+      now.
+- [ ] Time. A median of 4.6 seconds a block in the guest (above), against the 3 a relay's after-the-fact
       check could live with.
 - [ ] A request on its way in faster than 8.5 MB a second. Each segment is acknowledged on its own and
       costs the guest two exits to the host; acknowledging several at once is the next thing to try.

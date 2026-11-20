@@ -16,10 +16,10 @@
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "58e29ee6e24177ab3443333bbe37bad872be6268",
+   "rev": "6143c7bc43698d9b3d9d18090fff7957f3c547da",
    "name": "jaune",
    "manifestFile": "lake-manifest.json",
-   "inputRev": "58e29ee6e24177ab3443333bbe37bad872be6268",
+   "inputRev": "6143c7bc43698d9b3d9d18090fff7957f3c547da",
    "inherited": false,
    "configFile": "lakefile.lean"
   },

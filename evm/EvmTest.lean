@@ -1,7 +1,9 @@
 import Evm
 
 /-! Pure tests: `Evm.powMod` against Lean's own `Nat.powMod`, and the request format against itself and
-against input that is not a request, and the attested answer's hash and framing. Run on Lean's own runtime, where `Nat.powMod` is the reference. -/
+against input that is not a request, the attested answer's hash and framing, and the two things this
+package's Jaune runs that nothing proves (the jump-destination check and sender recovery) against what
+they stand in for. Run on Lean's own runtime, where `Nat.powMod` is the reference. -/
 open Jaune Evm.Service
 
 /-- A pseudo-random number of about `bits` bits; the same sequence every run. -/
@@ -84,20 +86,41 @@ def main : IO UInt32 := do
     failures := failures + 1
     IO.println "REPORTDATA is not the two hashes, 64 bytes"
   IO.println s!"attested answer: {sha256Cases.length + 3} cases"
-  -- This package's Jaune compiles `jumpable` as a forward pass that nothing proves equal to it. `jumpdestOk`
-  -- is proved equal to it, so the two must agree at every position of code made of the bytes that matter:
-  -- jump destinations, pushes of every width, and whatever else.
+  -- This package's Jaune compiles `jumpable` as something nothing proves equal to it: back from the
+  -- destination to a position that must start an instruction, then forward. `jumpdestOk` is proved equal to
+  -- `jumpable`, so the two must agree at every position of code made of the bytes that matter: jump
+  -- destinations, pushes of every width, and whatever else. One code in seven is nothing but pushes and
+  -- destinations, where no position is certain and the check has to give up looking back; one in ten is
+  -- long enough for that to happen far from the start.
   let mut jumps := 0
   for seed in [0 : 300] do
-    let length := seed % 97 + 1
+    let length := if seed % 10 == 0 then 300 + seed else seed % 97 + 1
     let code : ByteArray := ⟨(List.range length).map (fun i =>
       let x := scramble (seed * 131 + i) 16
-      if x % 5 == 0 then (0x5b : UInt8) else if x % 5 < 3 then (0x5f + (x / 5) % 34).toUInt8 else x.toUInt8) |>.toArray⟩
+      if seed % 7 == 0 then (if x % 8 == 0 then (0x5b : UInt8) else (0x60 + (x / 8) % 32).toUInt8)
+      else if x % 5 == 0 then (0x5b : UInt8) else if x % 5 < 3 then (0x5f + (x / 5) % 34).toUInt8
+      else x.toUInt8) |>.toArray⟩
     for k in [0 : length + 2] do
       jumps := jumps + 1
       if jumpable code k != jumpdestOk code k then
         failures := failures + 1
         IO.println s!"jumpable and jumpdestOk differ at {k} of {hex code}"
   IO.println s!"jump destinations: {jumps} positions in 300 codes"
+  -- This package's Jaune recovers senders over a field of fixed-width words (`recoverFast`), which
+  -- nothing proves equal to the recovery on `Nat` it stands in for (`recover`). So the two are put the
+  -- same made-up signatures: about half have an `r` that is the abscissa of a point, and for those any
+  -- `s` and hash give a key, so both go all the way through.
+  let mut recovered := 0
+  for seed in [0 : 1500] do
+    let h := (scramble (4 * seed) 256).toU256
+    let r := (scramble (4 * seed + 1) 256).toU256
+    let s := (scramble (4 * seed + 2) (if seed % 9 == 0 then 64 else 256)).toU256
+    for v in [false, true] do
+      let fast := secp256k1.recoverFast h v r s
+      if fast.isSome then recovered := recovered + 1
+      if fast != secp256k1.recover h v r s then
+        failures := failures + 1
+        IO.println s!"recoverFast and recover differ for seed {seed}, parity {v}"
+  IO.println s!"sender recovery: 3000 signatures, {recovered} of them with a key"
   if failures == 0 then IO.println "evm-test: all checks passed" else IO.println s!"evm-test: {failures} FAILED"
   return if failures == 0 then 0 else 1

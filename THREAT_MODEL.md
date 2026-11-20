@@ -126,17 +126,33 @@ went unrecorded, which were then closed; that it now finds none is evidence abou
 which hold no EIP-7702 authorization, no blob and no withdrawal. An answer of "valid" also says nothing of
 the parent: it is about this block on that parent, whatever chain the parent is or is not part of.
 
-**A branch of Jaune.** The image now holds `posix4e/jaune`, four commits ahead of the upstream commit this
-section was written about. One of them replaces how a function is compiled without proving the
-replacement equal (`jumpable`, the test of whether a jump lands on an instruction): compiled code and
-specification can differ there, and what holds them together is a comparison on 14,904 positions of
-random code and the fixtures. None of Jaune's conformance suites has been run on the branch.
+**A branch of Jaune.** The image now holds `posix4e/jaune`, seven commits ahead of the upstream commit this
+section was written about. Three of them put code in the image that nothing proves equal to what Jaune
+defines, so compiled code and specification can differ in three places, each of which decides whether a
+block is valid:
+
+- whether a jump lands on an instruction (`jumpable`, compiled as `jumpableCompiled`: the compiler makes
+  this substitution itself, and the branch's own list of such things says so);
+- who signed a transaction (`secp256k1.recoverFast`, on a field of fixed-width words, called where
+  `recover` was);
+- whether a bn254 pairing check passes (`bn254Pairing` and `bn254FinalExpFast`, called where `pairing`
+  was).
+
+What holds them to the definitions is testing, and the user of this repository has said that is enough for
+now: comparisons in Jaune's build and in `evm-test` (26,784 positions of made-up code against the proved
+`jumpdestOk`; 3,000 made-up signatures against `recover`; field arithmetic on every pair of some 130
+awkward values against `Nat`; the fast pairing against the reference on two pairs of points), Jaune's own
+Osaka, Prague and BPO2 suites and its curve oracle, all passing on the branch, and 121 blocks of mainnet
+whose state roots come out right, which they would not if one sender were recovered wrongly (there are
+29,812 transactions in 100 of them).
+None of that is a proof, and a block made to find the difference has not been looked for.
 
 **A plain answer still proves nothing.** A request without the `JATT1` prefix is answered over cleartext
 TCP with no report, and that response is worth what the network between is worth.
 
-**No secret is held.** The service has no key. Its arithmetic is on `Nat` throughout and takes time that
-depends on the values, which is the reason a service with a key could not be built on Jaune as it is.
+**No secret is held.** The service has no key. Its arithmetic, on `Nat` and on fixed-width words alike,
+takes time that depends on the values, which is the reason a service with a key could not be built on Jaune
+as it is.
 ## What is being protected
 
 | Asset | When | Why it matters |

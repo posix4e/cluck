@@ -84,5 +84,20 @@ def main : IO UInt32 := do
     failures := failures + 1
     IO.println "REPORTDATA is not the two hashes, 64 bytes"
   IO.println s!"attested answer: {sha256Cases.length + 3} cases"
+  -- This package's Jaune compiles `jumpable` as a forward pass that nothing proves equal to it. `jumpdestOk`
+  -- is proved equal to it, so the two must agree at every position of code made of the bytes that matter:
+  -- jump destinations, pushes of every width, and whatever else.
+  let mut jumps := 0
+  for seed in [0 : 300] do
+    let length := seed % 97 + 1
+    let code : ByteArray := ⟨(List.range length).map (fun i =>
+      let x := scramble (seed * 131 + i) 16
+      if x % 5 == 0 then (0x5b : UInt8) else if x % 5 < 3 then (0x5f + (x / 5) % 34).toUInt8 else x.toUInt8) |>.toArray⟩
+    for k in [0 : length + 2] do
+      jumps := jumps + 1
+      if jumpable code k != jumpdestOk code k then
+        failures := failures + 1
+        IO.println s!"jumpable and jumpdestOk differ at {k} of {hex code}"
+  IO.println s!"jump destinations: {jumps} positions in 300 codes"
   if failures == 0 then IO.println "evm-test: all checks passed" else IO.println s!"evm-test: {failures} FAILED"
   return if failures == 0 then 0 else 1

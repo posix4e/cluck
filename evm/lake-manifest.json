@@ -12,14 +12,14 @@
    "configFile": "lakefile.lean"
   },
   {
-   "url": "https://github.com/skbaek/jaune",
+   "url": "https://github.com/posix4e/jaune",
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "ba15f397195d9c73c89aec7bfc179e0f32a3e8dc",
+   "rev": "58e29ee6e24177ab3443333bbe37bad872be6268",
    "name": "jaune",
    "manifestFile": "lake-manifest.json",
-   "inputRev": "ba15f397195d9c73c89aec7bfc179e0f32a3e8dc",
+   "inputRev": "58e29ee6e24177ab3443333bbe37bad872be6268",
    "inherited": false,
    "configFile": "lakefile.lean"
   },

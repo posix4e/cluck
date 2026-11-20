@@ -9,5 +9,5 @@ partial def readAll (soFar : ByteArray) : IO ByteArray := do
   if chunk.isEmpty then pure soFar else readAll (soFar ++ chunk)
 
 def main : IO UInt32 := do
-  Platform.write (Evm.Service.serve (← readAll .empty))
+  Platform.write (Evm.serve (← readAll .empty))
   return 0

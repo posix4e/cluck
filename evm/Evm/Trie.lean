@@ -299,6 +299,44 @@ def put (store : Store) (node : Node) (key : Path) (value : ByteArray) : Except 
   else if (← get store node key) == some value then pure node
   else set store node key value
 
+/-- Every key and value that can be reached from `node` through the witness, with `path` in front of each
+key. A subtree the witness does not hold is passed over: what is under it is unknown, not absent, and
+`get` says so when asked for a key there. -/
+partial def leaves (store : Store) (node : Node) (path : Path := #[])
+    (out : Array (Path × ByteArray) := #[]) : Except Fault (Array (Path × ByteArray)) := do
+  if path.size > 64 then .error .shape
+  match resolve store node with
+  | .error (.missing _) => pure out
+  | .error fault => .error fault
+  | .ok .empty => pure out
+  | .ok (.leaf rest value) => pure (out.push (path ++ rest, value))
+  | .ok (.ext rest child) => leaves store child (path ++ rest) out
+  | .ok (.branch children) =>
+    let mut out := out
+    for slot in [0 : 16] do
+      out ← leaves store children[slot]! (path.push slot.toUInt8) out
+    pure out
+  | .ok (.sealed _) => .error .shape
+
+/-- The strings of an RLP list that holds nothing but strings, such as an account, or `none`. -/
+def strings (b : ByteArray) : Option (Array ByteArray) := do
+  let top ← item b 0
+  guard (top.list && top.stop == b.size)
+  (← items b top.start top.stop #[]).mapM fun (_, it) =>
+    if it.list then none else some (b.extract it.start it.stop)
+
+/-- The string that is the whole of `b` as RLP, or `none`. -/
+def string (b : ByteArray) : Option ByteArray := do
+  let top ← item b 0
+  guard (!top.list && top.stop == b.size)
+  pure (b.extract top.start top.stop)
+
+/-- The bytes of a path of 64 nibbles: the hash a state or storage key is. -/
+def pathWord (path : Path) : U256 := Id.run do
+  let mut out := ByteArray.empty
+  for i in [0 : path.size / 2] do out := out.push ((path[2 * i]! <<< 4) ||| path[2 * i + 1]!)
+  return Bytes.toU256 out.toList
+
 /-- The encoding of every node of a trie that a parent names by hash, and of the root: a witness for all
 of it. Sealed nodes are not opened. -/
 partial def encodings (node : Node) (out : Array ByteArray := #[]) (root : Bool := true) : Array ByteArray :=

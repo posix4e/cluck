@@ -47,9 +47,9 @@ private def frame (payload : ByteArray) : ByteArray :=
 one and this machine can make one (`Evm.Attest`). -/
 private def answer (request : ByteArray) : IO ByteArray := do
   match Evm.Attest.asked? request with
-  | none => IO.lazyPure fun _ => Evm.Service.serve request
+  | none => IO.lazyPure fun _ => Evm.serve request
   | some asked =>
-    let reply ← IO.lazyPure fun _ => Evm.Service.serve (Evm.Attest.request asked)
+    let reply ← IO.lazyPure fun _ => Evm.serve (Evm.Attest.request asked)
     let report ← Efi.report (Evm.Attest.reportData asked reply)
     return if report.size == 1024 then reply ++ report else reply
 

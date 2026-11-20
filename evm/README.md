@@ -1,11 +1,14 @@
 # evm
 
-An Ethereum block importer as a service on silo-os. A request holds a chain's starting accounts, its genesis
-block and some blocks; the service decodes, validates and executes each block and answers with the chain's
-tip hash and state root. The execution is [Jaune](https://github.com/skbaek/jaune), an executable
-specification of the EVM written in Lean with no foreign code, at the same Lean version as the OS. Nothing
-here is a client: there is no network of peers, no mempool and no store, and the whole state travels in the
-request.
+An Ethereum block importer as a service on silo-os. It takes two kinds of request. One holds a chain's
+starting accounts, its genesis block and some blocks; the service decodes, validates and executes each
+block and answers with the chain's tip hash and state root. The other holds one block, the headers before
+it and a witness for the part of the state it touches, which is how a block of the real chain can be asked
+about. The execution is [Jaune](https://github.com/skbaek/jaune), an executable specification of the EVM
+written in Lean with no foreign code, at the same Lean version as the OS; this package uses a branch of it,
+[`posix4e/jaune`](https://github.com/posix4e/jaune/tree/cluck), with four changes described below. Nothing
+here is a client: there is no network of peers, no mempool and no store, and whatever state a request needs
+travels in it.
 
 It is an experiment, in a package of its own. The OS does not depend on it, no image the OS releases holds
 it, and continuous integration does not build it. What has been run and what it showed is in
@@ -15,6 +18,8 @@ it, and continuous integration does not build it. What has been run and what it 
 
 - `Evm/Service.lean`: the request and the response, and the import between them. The format is at the top of
   the file. Pure: bytes in, bytes out.
+- `Evm/Stateless.lean`: one block against a witness. The format and every status are at the top of the
+  file, with what an answer of "valid" does and does not mean.
 - `Evm/Attest.lean`: a request with a challenge in front, and the REPORTDATA that ties its response to it.
 - `Evm/Trie.lean`: a Merkle-Patricia trie known only in part, from a witness of nodes named by hash: reads
   that say when the witness falls short, and writes and removals that give the new root.
@@ -25,7 +30,11 @@ it, and continuous integration does not build it. What has been run and what it 
 - `MkRequest.lean`: turns a case of a blockchain-test fixture into a request and the response the fixture
   calls for. The only program here that reads JSON, and it never goes in an image.
 - `EvmTest.lean`: pure tests of the format and of `Evm.powMod`. `TrieTest.lean`: the trie against Jaune's
-  root computation.
+  root computation. `StatelessTest.lean`: a block with a witness against the same block with the whole
+  state, and with every piece of the witness left out in turn.
+- `StatelessWhy.lean`: a stateless request's answer in words, with Jaune's reason for a rejection and what a
+  short witness lacks. `witness/fetch`: makes a stateless request for a block from a node that follows the
+  chain. Neither goes in an image.
 - `Bench.lean`: times hashing, curve arithmetic and the interpreter on either runtime.
 - `rt/start.c`: seven of mathlib's start-up routines as routines that do nothing, and why.
   `rt/names.c`: three names compiled Jaune asks a runtime for. `rt/hosted/clock.c`: a clock for the benchmark.
@@ -50,6 +59,7 @@ lake exe cache get Mathlib.Data.Nat.Basic Mathlib.Data.List.Lemmas Mathlib.Data.
 lake build
 .lake/build/bin/evm-test
 .lake/build/bin/trie-test
+.lake/build/bin/stateless-test
 ```
 
 The service as a process, on Lean's own runtime and then on the minimal one. Each answer has to be the
@@ -57,7 +67,7 @@ fixture's, byte for byte:
 
 ```
 scripts/build-min evm-serve
-for request in fixtures/*.req; do
+for request in fixtures/*.req fixtures/stateless/*.req; do
   .lake/build/bin/evm-serve     < "$request" | cmp - "${request%.req}.expected"
   .lake/build/bin/evm-serve-min < "$request" | cmp - "${request%.req}.expected"
 done
@@ -140,6 +150,44 @@ what it sent and of the answer it shows. What that check leaves out is in
 the guest only the fixtures, never a visitor's bytes. Putting it on a network is the operator's decision
 and is done in front of it, with a reverse proxy that speaks HTTPS, which the browser's cryptography
 requires anywhere but on loopback.
+
+## A block of the real chain
+
+`fixtures/stateless/` holds three requests of the second kind, cut from the fixtures by `stateless-test
+write`. For a block of mainnet, a node has to supply the witness. With reth following the chain and serving
+`debug` and `eth` on loopback:
+
+```
+witness/fetch 26456375 block.req block.expected
+.lake/build/bin/evm-serve < block.req | cmp - block.expected
+.lake/build/bin/stateless-why block.req
+```
+
+`fetch` asks for the block, the 255 headers before it and the node's own witness, adds the code of every
+account the witness names, and writes a request that asks for mainnet's fork schedule. `stateless-why`
+says what the answer was and, when the witness fell short, what it lacked. A witness taken while the node
+is still catching up does not hang from the parent's state root and gets no verdict.
+
+The service does not trust the witness. What it relies on, and what its answer means, is at the top of
+`Evm/Stateless.lean` and in [../THREAT_MODEL.md](../THREAT_MODEL.md).
+
+## The branch of Jaune
+
+Four commits on [`posix4e/jaune`](https://github.com/posix4e/jaune/tree/cluck), on top of `ba15f39`:
+
+- **Reads are recorded under every fork.** Upstream records the accounts and slots a block reads only under
+  Amsterdam, where they go in the block. Stateless validation is sound only if every read can be checked
+  against the witness, so the branch records them always and keeps the block's total.
+- **A failed or pre-Amsterdam transaction hands its reads over too.** They were dropped on the way from
+  the top-level frame to the transaction.
+- **What is read in preparing a transaction is recorded**: the account it is sent to, the one that account
+  delegates to, and the signer of each EIP-7702 authorization.
+- **The jump-destination check compiles to one forward pass.** As written it is exponential on real
+  contract code; a mainnet block spent ten minutes in it without finishing. The compiled form is not
+  proved equal to the definition: `evm-test` compares it with Jaune's proved linear form.
+
+All of Jaune's own targets, proofs included, build with them. Its conformance suites have not been run on
+the branch.
 
 ## A request of your own
 

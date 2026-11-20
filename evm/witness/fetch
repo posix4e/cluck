@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Makes a stateless request (Evm/Stateless.lean) for a block of the chain a node follows.
+
+    witness/fetch [--rpc URL] BLOCK OUT.req [OUT.expected]      (BLOCK is a number or `latest`)
+
+Asks an execution node for the block, the 255 headers before it, and the node's own witness for it
+(`debug_executionWitness`, which reth serves for recent blocks), and adds the code of every account the
+witness names, because the service wants the code of every account a block reads and a node leaves out
+code that was only looked at from outside. The request names no fork: it asks for mainnet's schedule.
+
+OUT.expected, if asked for, is the response a valid block must get: status 0, one block imported, the
+block's hash and the state root in its header, both as the node reports them.
+
+Nothing here is trusted by the service. A wrong or short witness gets a refusal, not a wrong answer.
+The node is on loopback by default (http://127.0.0.1:8545) and needs the `debug` and `eth` namespaces.
+"""
+import json, struct, sys, urllib.request
+
+args = sys.argv[1:]
+rpc_url = "http://127.0.0.1:8545"
+if args[:1] == ["--rpc"]:
+    rpc_url, args = args[1], args[2:]
+if len(args) not in (2, 3):
+    sys.exit(__doc__)
+
+
+def call(batch):
+    """A batch of (method, params), answered in order."""
+    out = []
+    for at in range(0, len(batch), 200):
+        body = [{"jsonrpc": "2.0", "id": i, "method": m, "params": p}
+                for i, (m, p) in enumerate(batch[at:at + 200])]
+        request = urllib.request.Request(rpc_url, json.dumps(body).encode(), {"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=600) as response:
+            answers = sorted(json.load(response), key=lambda a: a["id"])
+        for (method, _), answer in zip(batch[at:at + 200], answers):
+            if "error" in answer:
+                sys.exit(f"fetch: {method}: {answer['error'].get('message', answer['error'])}")
+            out.append(answer["result"])
+    return out
+
+
+def raw(text):
+    return bytes.fromhex(text[2:])
+
+
+def sized(data):
+    return struct.pack(">I", len(data)) + data
+
+
+def listed(items):
+    return struct.pack(">I", len(items)) + b"".join(sized(item) for item in items)
+
+
+block, = call([("eth_getBlockByNumber", [args[0] if args[0] == "latest" else hex(int(args[0])), False])])
+if block is None:
+    sys.exit("fetch: the node does not have that block")
+number = int(block["number"], 16)
+name = hex(number)
+body, witness = call([("debug_getRawBlock", [name]), ("debug_executionWitness", [name])])
+before = range(max(0, number - 255), number)
+headers = [raw(h) for h in call([("debug_getRawHeader", [hex(n)]) for n in before])]
+keys = [raw(k) for k in witness.get("keys") or []]
+if not keys:
+    sys.exit("fetch: the node's witness names no keys, and the service cannot do without them")
+addresses = [k for k in keys if len(k) == 20]
+codes = {raw(c) for c in witness["codes"]}
+codes |= {raw(c) for c in call([("eth_getCode", ["0x" + a.hex(), hex(number - 1)]) for a in addresses])}
+codes.discard(b"")
+nodes = [raw(n) for n in witness["state"]]
+request = (b"JWIT1" + bytes([255]) + struct.pack(">Q", 1) + sized(raw(body)) + listed(headers) +
+           listed(nodes) + listed(sorted(codes)) + listed(keys))
+with open(args[1], "wb") as out:
+    out.write(request)
+if len(args) == 3:
+    with open(args[2], "wb") as out:
+        out.write(bytes([0]) + struct.pack(">I", 1) + raw(block["hash"]) + raw(block["stateRoot"]))
+print(f"block {number}: {len(block['transactions'])} transactions, {int(block['gasUsed'], 16)} gas, "
+      f"{len(nodes)} nodes, {len(codes)} codes, {len(keys)} keys, request of {len(request)} bytes")

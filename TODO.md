@@ -38,8 +38,9 @@ instructions are in [TDX.md](TDX.md).
 ## Ethereum block import, as a service (`evm/`)
 
 An experiment: whether someone else's Lean, written for proofs and for Lean's own runtime, can be the service
-on this OS. The Lean is Jaune at `ba15f39`, an executable specification of the EVM and of block validation
-with no foreign code. The service takes a starting state, a genesis block and some blocks, and answers with
+on this OS. The Lean is Jaune, an executable specification of the EVM and of block validation with no
+foreign code: upstream's `ba15f39` until 2026-11-20, and since then the branch `cluck` of `posix4e/jaune`,
+four commits ahead of it (`evm/README.md`). The service takes a starting state, a genesis block and some blocks, and answers with
 the tip hash and state root after importing them (`evm/README.md`).
 
 On 2026-11-19 it ran three ways on one Intel machine under Linux 7.0.0-14-generic and QEMU 10.2.1: as a
@@ -99,6 +100,33 @@ response. This host's Intel QGS turned each report into a 5,243-byte version 4 q
   five fixtures gave the fixture's answer through it. It has been served on loopback and, behind an HTTPS
   proxy, to the operator's private network; it has not faced the internet.
 
+On 2026-11-20 the service answered about blocks of mainnet, as a process on Lean's own runtime, from a
+witness instead of the state (`evm/Evm/Stateless.lean`, `evm/Evm/Trie.lean`). The witnesses came from reth
+2.11.0 following mainnet on the same machine (`evm/witness/fetch`).
+
+- 21 consecutive blocks, 26456375 to 26456395: 19 were answered valid with the block hash and state root
+  the node reports, in 1.7 to 12.5 seconds each; the largest had 544 transactions and 45.6M gas. 2 were
+  answered with status 6, the witness falling short of an account the block read. None was answered with
+  a verdict the node disagrees with.
+- `stateless-test`: every block of four fixtures (279 blocks), with a witness cut from the whole state,
+  gets the answer the import with the whole state gives. For three of them every node, key and code of
+  every block's witness was then left out in turn: of 1,143 shortened witnesses, 560 were answered with no
+  verdict (status 6 or 8) and 583 with the same answer as before; none with a different one. A block whose
+  header claims a wrong state root was answered invalid.
+- That test found three ways a read went unrecorded and a wrong verdict came out, each now closed: Jaune
+  dropped the read sets of every transaction before Amsterdam; nothing recorded what is read in preparing
+  a transaction; and a payment to an account left out of the witness looked like the making of a new one.
+- `trie-test`: 9,900 random writes and removals in five shapes of trie agree with Jaune's root, through
+  whole and partial witnesses, with 14 malformed node encodings refused.
+- The three stateless fixtures in `evm/fixtures/stateless/` get their answers as processes on both
+  runtimes. In a TDX guest built from the same source (image SHA-256
+  `78571353b486874dceff57fcd6527568079f985d7b1f4a157e2a623ba8fcaadc`) they and four of the whole-state
+  fixtures got their answers too; the whole-state ones took 126 ms to 6.4 s there against 87 ms to 4.5 s
+  the day before, on a machine now also running a node, and how much of that is the reads being recorded
+  has not been separated out.
+- Before the jump-destination check was replaced, one mainnet block ran for ten minutes without finishing,
+  99.9% of it in Jaune's `noPushBefore`.
+
 What it stands on that is not sound yet:
 
 - [ ] **Seven of mathlib's start-up routines are replaced by routines that do nothing** (`evm/rt/start.c`).
@@ -114,13 +142,17 @@ What it stands on that is not sound yet:
 
 Not done:
 
-- [ ] A block of the real chain. Begun: `evm/Evm/Trie.lean` reads and updates a trie from a witness, and
-      `trie-test` holds it to Jaune's root over 9,900 random changes in five shapes of trie, through whole
-      and partial witnesses, with 14 malformed node encodings refused. Nothing calls it yet. Still needed:
-      Jaune recording what a block reads, the request that carries a witness, and a node to make witnesses.
-      What follows is how things stood before. The whole state is in the request, and there is no reading of an account
-      against a state root other than hashing every account, so mainnet's state cannot be sent. That needs a
-      witness format and a checker for it, which Jaune does not have.
+- [ ] A block of the real chain, in the guest. As a process it is done for some blocks (below). In the
+      guest it has not been tried: a request for a mainnet block is 3 to 14 MB against a limit of 8, the
+      guest's TCP takes 8 KiB at a time, and its heap is 256 MiB.
+- [ ] A witness that is always enough. `evm/witness/fetch` takes the node's witness and adds code for the
+      accounts it names; 2 of 21 blocks read an account that was still not supplied.
+- [ ] A verdict on a block that is rejected while it runs. That is answered with status 8, which is no
+      verdict, because Jaune's error does not carry what had been read up to then.
+- [ ] Jaune's conformance suites on the branch this package uses, and the compiled jump-destination check
+      proved equal to its definition.
+- [ ] Time. 1.7 to 12.5 seconds a block as a process on Lean's own runtime, on a machine doing other work;
+      nothing has been profiled since the one function that dominated was replaced.
 - [ ] A full check of the attested answer. The quote is checked up to Intel's root key in a browser
       (above); TCB status, revocation and the quoting enclave's version are not, the measurements are compared
       only with ones the same operator recorded, and no one has verified a quote off this host with DCAP.

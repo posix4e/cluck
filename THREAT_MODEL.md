@@ -91,6 +91,38 @@ accepts a quote from a processor whose firmware Intel no longer considers curren
 same host it is checking; a visitor who doubts the host reads the file or uses a verifier of their own on
 the quote the page offers for download.
 
+**A block with a witness.** A request that begins `JWIT1` carries one block, the headers before it and a
+witness: trie nodes, contract code, and the addresses and slot numbers behind the hashed keys
+(`evm/Evm/Stateless.lean`). All of it is the sender's, and none of it is believed. Nodes are found by
+their hash from the parent's state root down, which is in the parent header, whose hash is in the block;
+`evm/Evm/Trie.lean` reads them in Lean, strictly, and a node that is not there is "missing", never empty.
+Code and keys are matched by hash. The fork is the sender's choice unless the request asks for mainnet's
+schedule, so an answer about a mainnet block is worth something only if it did.
+
+What is new here is a way to be wrong that the whole-state request does not have. Jaune reads an account
+it was not given as an account that does not exist, so a witness that leaves one out makes the block run
+on a state that never was. Three things stand in the way. After the block has run, every account and slot
+it read must have been supplied or be proven absent; what it read is recorded by this package's branch of
+Jaune, in the interpreter and in the preparation of each transaction. Every account and slot that exists
+after the block and was not supplied must be proven to have been absent before. And the new state root
+cannot be computed without the nodes on the path of everything that changed. If any of these fails the
+answer is status 6, which is no verdict. A block rejected while it runs is answered with status 8, also no
+verdict, because the reads up to the rejection are lost with it; so a sender can always turn a good block
+into "no verdict", and never into "invalid".
+
+What that rests on is the read record being complete, and nothing proves it is. It was written by Jaune's
+author for another purpose (the access list Amsterdam puts in a block) and extended here to the forks
+before it. `stateless-test` leaves every piece of every witness out in turn and found three reads that
+went unrecorded, which were then closed; that it now finds none is evidence about the fixtures it runs,
+which hold no EIP-7702 authorization, no blob and no withdrawal. An answer of "valid" also says nothing of
+the parent: it is about this block on that parent, whatever chain the parent is or is not part of.
+
+**A branch of Jaune.** The image now holds `posix4e/jaune`, four commits ahead of the upstream commit this
+section was written about. One of them replaces how a function is compiled without proving the
+replacement equal (`jumpable`, the test of whether a jump lands on an instruction): compiled code and
+specification can differ there, and what holds them together is a comparison on 14,904 positions of
+random code and the fixtures. None of Jaune's conformance suites has been run on the branch.
+
 **A plain answer still proves nothing.** A request without the `JATT1` prefix is answered over cleartext
 TCP with no report, and that response is worth what the network between is worth.
 

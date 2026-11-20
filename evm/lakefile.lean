@@ -10,7 +10,7 @@ package «evm»
 require «silo-os» from ".."
 
 /-- Jaune, at the commit this was built and run against. Its own manifest pins mathlib. -/
-require jaune from git "https://github.com/skbaek/jaune" @ "ba15f397195d9c73c89aec7bfc179e0f32a3e8dc"
+require jaune from git "https://github.com/posix4e/jaune" @ "58e29ee6e24177ab3443333bbe37bad872be6268"
 
 /-- The service: requests, responses, and the block import between them. Pure. -/
 @[default_target]
@@ -67,3 +67,13 @@ lean_exe «evm-bench» where
 @[default_target]
 lean_exe «trie-test» where
   root := `TrieTest
+
+/-- `Evm.Stateless` against the import that has the whole state, with whole and shortened witnesses. -/
+@[default_target]
+lean_exe «stateless-test» where
+  root := `StatelessTest
+
+/-- A stateless request's answer in words, with Jaune's reason for a rejection. For making witnesses. -/
+@[default_target]
+lean_exe «stateless-why» where
+  root := `StatelessWhy

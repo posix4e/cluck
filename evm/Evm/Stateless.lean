@@ -152,8 +152,7 @@ def Leaf.read (bytes : ByteArray) : Option Leaf := do
   let nonce ← number fields[0]! 8
   let balance ← number fields[1]! 32
   guard (fields[2]!.size == 32 && fields[3]!.size == 32)
-  pure ⟨(Bytes.toNat nonce).toUInt64, Bytes.toU256 balance, Bytes.toU256 fields[2]!.toList,
-        Bytes.toU256 fields[3]!.toList⟩
+  pure ⟨(Bytes.toNat nonce).toUInt64, Bytes.toU256 balance, Trie.word fields[2]! 0, Trie.word fields[3]! 0⟩
 
 def Leaf.write (l : Leaf) : ByteArray :=
   let scalar (b : Bytes) : ByteArray := Trie.rlpString (Bytes.sig b).toByteArray
@@ -175,16 +174,16 @@ storage the witness holds and names. The rest of the state is not here, and is n
 `checkReads`. -/
 def materialise (r : Request) (root : U256) : M Known := do
   let store := Store.ofNodes r.nodes
-  let codes : Std.TreeMap U256 ByteArray compare :=
+  let codes : Std.TreeMap U256 ByteArray Trie.order :=
     r.codes.foldl (fun m code => m.insert (Trie.hashOf code) code) .empty
-  let mut addresses : Std.TreeMap U256 Address compare := .empty
-  let mut slots : Std.TreeMap U256 U256 compare := .empty
+  let mut addresses : Std.TreeMap U256 Address Trie.order := .empty
+  let mut slots : Std.TreeMap U256 U256 Trie.order := .empty
   for key in r.keys do
     let hash := Trie.hashOf key
     if key.size == 20 then
       let some address := Bytes.toAddress? key.toList | .error .malformed
       addresses := addresses.insert hash address
-    else if key.size == 32 then slots := slots.insert hash (Bytes.toU256 key.toList)
+    else if key.size == 32 then slots := slots.insert hash (Trie.word key 0)
     else .error .malformed
   let mut accounts : List (Address × Account) := []
   let mut leaves : Std.TreeMap Address Leaf compare := .empty
@@ -231,35 +230,39 @@ def checkReads (known : Known) (accounts : List Address) (slots : List (Address 
 def rootAfter (known : Known) (after : State) : M U256 := do
   let mut trie : Node := .sealed known.root
   let before := known.state
-  let addresses := (before.keys ++ after.keys).eraseDups
-  for address in addresses do
+  -- Every account there is afterwards, and then every one there was that is gone. The two lists are not
+  -- joined and searched for repeats: that is the square of their length, and the witness sets the length.
+  for (address, account) in after.toList do
     let key := keyOf address.toBytes
-    match after[address]? with
-    | none => trie ← ofTrieFor (fun _ => s!"removing account {hexOf address.toBytes}") (Trie.remove known.store trie key)
-    | some account =>
-      let old := before[address]?
-      let leaf := known.leaves.get? address
-      let oldStorage := (old.map (·.storage)).getD .empty
-      let mut storage : Node := .sealed ((leaf.map (·.storageRoot)).getD Trie.emptyRoot)
-      let mut changed := false
-      for slot in (oldStorage.keys ++ account.storage.keys).eraseDups do
-        let value := account.storage.get slot
-        if value != oldStorage.get slot then
-          changed := true
-          let slotKey := keyOf slot.toBytes
-          storage ← ofTrieFor (fun _ => s!"{if value == 0 then "clearing" else "writing"} slot \
-              {hexOf slot.toBytes} of {hexOf address.toBytes}") <|
-            if value == 0 then Trie.remove known.store storage slotKey
-            else Trie.put known.store storage slotKey (slotValue value)
-      let sameCode := old.any (·.code.data == account.code.data)
-      let unchanged := !changed && sameCode &&
-        old.any fun o => o.nonce == account.nonce && o.balance == account.balance
-      if unchanged then continue
-      let codeHash := match leaf with
-        | some l => if sameCode then l.codeHash else Trie.hashOf account.code
-        | none => Trie.hashOf account.code
-      let written : Leaf := ⟨account.nonce, account.balance, Trie.rootHash storage, codeHash⟩
-      trie ← ofTrieFor (fun _ => s!"writing account {hexOf address.toBytes}") (Trie.put known.store trie key written.write)
+    let old := before[address]?
+    let leaf := known.leaves.get? address
+    let oldStorage := (old.map (·.storage)).getD .empty
+    let mut storage : Node := .sealed ((leaf.map (·.storageRoot)).getD Trie.emptyRoot)
+    let mut changed := false
+    -- In the same way: every slot the account has, then every one it had and has no more.
+    let now := account.storage.toList
+    let gone := (oldStorage.keys.filter fun slot => (account.storage.get? slot).isNone).map fun slot => (slot, (0 : U256))
+    for (slot, value) in now ++ gone do
+      if value != oldStorage.get slot then
+        changed := true
+        let slotKey := keyOf slot.toBytes
+        storage ← ofTrieFor (fun _ => s!"{if value == 0 then "clearing" else "writing"} slot \
+            {hexOf slot.toBytes} of {hexOf address.toBytes}") <|
+          if value == 0 then Trie.remove known.store storage slotKey
+          else Trie.put known.store storage slotKey (slotValue value)
+    let sameCode := old.any (·.code.data == account.code.data)
+    let unchanged := !changed && sameCode &&
+      old.any fun o => o.nonce == account.nonce && o.balance == account.balance
+    if unchanged then continue
+    let codeHash := match leaf with
+      | some l => if sameCode then l.codeHash else Trie.hashOf account.code
+      | none => Trie.hashOf account.code
+    let written : Leaf := ⟨account.nonce, account.balance, Trie.rootHash storage, codeHash⟩
+    trie ← ofTrieFor (fun _ => s!"writing account {hexOf address.toBytes}") (Trie.put known.store trie key written.write)
+  for address in before.keys do
+    if (after[address]?).isNone then
+      trie ← ofTrieFor (fun _ => s!"removing account {hexOf address.toBytes}")
+        (Trie.remove known.store trie (keyOf address.toBytes))
   pure (Trie.rootHash trie)
 
 def header (bytes : ByteArray) : Option Header := do

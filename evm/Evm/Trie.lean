@@ -43,7 +43,18 @@ inductive Fault where
 
 def hashOf (bytes : ByteArray) : U256 := ByteArray.keccak 0 bytes.size bytes
 
-def wordBytes (w : U256) : ByteArray := w.toBytes.toByteArray
+/-- The 32 bytes of a word, highest first. Written from its four 64-bit parts, with no list between. -/
+def wordBytes (w : U256) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity 32
+  for part in [w.1.1, w.1.2, w.2.1, w.2.2] do
+    for k in [0 : 8] do
+      out := out.push (part >>> (56 - 8 * k).toUInt64).toUInt8
+  return out
+
+/-- Words in the order of their bytes. A map of hashes is looked into for every node of a witness, and
+Jaune's own `compare` on words goes through two generic comparisons of pairs of pairs. -/
+def order (a b : U256) : Ordering :=
+  (compare a.1.1 b.1.1).then <| (compare a.1.2 b.1.2).then <| (compare a.2.1 b.2.1).then (compare a.2.2 b.2.2)
 
 /-- The nibbles of some bytes, high half first. -/
 def nibbles (bytes : ByteArray) : Path :=
@@ -142,8 +153,16 @@ private partial def items (b : ByteArray) (pos stop : Nat) (out : Array (Nat × 
     guard (it.stop ≤ stop)
     items b it.stop stop (out.push (pos, it))
 
-private def word (b : ByteArray) (start : Nat) : U256 :=
-  Bytes.toU256 (b.extract start (start + 32)).toList
+private def word64 (b : ByteArray) (i : Nat) : UInt64 := Id.run do
+  let mut w : UInt64 := 0
+  for k in [0 : 8] do w := (w <<< 8) ||| b[i + k]!.toUInt64
+  return w
+
+/-- The 32 bytes from `start` as a word, highest first; zero if there are not 32. A branch reads up to
+sixteen of these, and each used to be cut out, made a list and read from the list. -/
+def word (b : ByteArray) (start : Nat) : U256 :=
+  if start + 32 > b.size then 0
+  else ⟨⟨word64 b start, word64 b (start + 8)⟩, ⟨word64 b (start + 16), word64 b (start + 24)⟩⟩
 
 private def readPath (s : ByteArray) : Option (Path × Bool) := do
   guard (s.size ≥ 1 && s.size ≤ 33)
@@ -172,7 +191,7 @@ partial def decode (b : ByteArray) : Option Node := do
     guard (!last.list && last.size == 0)
     let children ← (parts.extract 0 16).mapM child
     -- A branch with fewer than two children is not one a trie would hold.
-    guard ((children.filter fun c => !(c matches .empty)).size ≥ 2)
+    guard (children.foldl (fun n c => if c matches .empty then n else n + 1) 0 ≥ 2)
     pure (.branch children)
   else if parts.size == 2 then
     let first := parts[0]!.2
@@ -193,7 +212,7 @@ partial def decode (b : ByteArray) : Option Node := do
 /-! ## The witness -/
 
 /-- Node encodings by their hash. -/
-abbrev Store := Std.TreeMap U256 ByteArray compare
+abbrev Store := Std.TreeMap U256 ByteArray order
 
 def Store.ofNodes (nodes : Array ByteArray) : Store :=
   nodes.foldl (fun store node => store.insert (hashOf node) node) .empty
@@ -331,11 +350,14 @@ def string (b : ByteArray) : Option ByteArray := do
   guard (!top.list && top.stop == b.size)
   pure (b.extract top.start top.stop)
 
-/-- The bytes of a path of 64 nibbles: the hash a state or storage key is. -/
-def pathWord (path : Path) : U256 := Id.run do
-  let mut out := ByteArray.empty
-  for i in [0 : path.size / 2] do out := out.push ((path[2 * i]! <<< 4) ||| path[2 * i + 1]!)
-  return Bytes.toU256 out.toList
+/-- The word a path of 64 nibbles spells: the hash a state or storage key is. Zero for any other path. -/
+def pathWord (path : Path) : U256 :=
+  if path.size != 64 then 0 else
+  let part (i : Nat) : UInt64 := Id.run do
+    let mut w : UInt64 := 0
+    for k in [0 : 16] do w := (w <<< 4) ||| path[i + k]!.toUInt64
+    return w
+  ⟨⟨part 0, part 16⟩, ⟨part 32, part 48⟩⟩
 
 /-- The encoding of every node of a trie that a parent names by hash, and of the root: a witness for all
 of it. Sealed nodes are not opened. -/

@@ -189,7 +189,16 @@ multiplication was a product and a division of big numbers.
 - `evm-test` compares the two substitutions with what they stand in for: 26,784 positions of made-up
   code, some of it all pushes so that the check has to give up looking back, and 3,000 made-up signatures,
   1,536 of which have a key.
-- Where the time goes now, from a profile of 33 of the 100 blocks as a process on the minimal runtime:
+- Then this package's own witness and trie code (`evm/Evm/Trie.lean`, `evm/Evm/Stateless.lean`): the
+  32-byte words of a node are read where they lie, not cut out and made lists; the maps of hashes are
+  ordered by comparing four machine words; and the state root after a block no longer joins the lists of
+  accounts and of slots before and after and searches the result for repeats, which cost the square of
+  what the witness held. In the TDX guest with that (image SHA-256 `44d221a2…eb6b8ff6`), on a machine
+  doing nothing else but following the chain: the 100 blocks all valid, 0.4 to 24.5 seconds, median 3.9,
+  29 under 3 seconds and 95 under 10; the 21 all valid, 0.8 to 6.9, median 2.6; `--limits` as before.
+  One block put to the same guest five times among 35 others took 7.2, 7.8, 6.3, 8.3 and 6.2 seconds:
+  no steady slowing as the guest serves, and a spread of a quarter that has not been explained.
+- Where the time went before that last change, from a profile of 33 of the 100 blocks as a process on the minimal runtime:
   50% in the interpreter and the rest of Jaune, 18% in this package's own witness and trie code, 6% in
   sender recovery, 5% each in BLS12-381, keccak and the bn254 Miller loop, 3% in the bn254 final power,
   2% in the jump check. Counted another way, 35% of it is the minimal runtime allocating and freeing
@@ -199,8 +208,8 @@ What is next, in the order it depends on itself. The aim is the check a relay ma
 (re-execute it on the real chain, confirm the state root, confirm the proposer is paid), attested, in the
 guest:
 
-1. **Time.** The line to reach is a median mainnet block in 3 seconds in the TDX guest, from 4.6. Next:
-   this package's own witness and trie code, then Jaune's growing of EVM memory, then a new profile. The
+1. **Time.** The line to reach is a median mainnet block in 3 seconds in the TDX guest, from 3.9. Next:
+   Jaune's growing of EVM memory, then a new profile. The
    runtime's allocator is left alone for now (issue #1). Once the median is under 3 seconds the relay's
    checks come next, not more speed.
 2. **The relay's own checks** (`flashbots_validateBuilderSubmissionV5`, as reth's
@@ -237,7 +246,7 @@ Not done:
       the jump-destination check, sender recovery over fixed-width words, and the bn254 final
       exponentiation. They are tested (above, and `THREAT_MODEL.md`), which was decided to be enough for
       now.
-- [ ] Time. A median of 4.6 seconds a block in the guest (above), against the 3 a relay's after-the-fact
+- [ ] Time. A median of 3.9 seconds a block in the guest (above), against the 3 a relay's after-the-fact
       check could live with.
 - [ ] A request on its way in faster than 8.5 MB a second. Each segment is acknowledged on its own and
       costs the guest two exits to the host; acknowledging several at once is the next thing to try.

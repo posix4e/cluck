@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cluck: a Lean unikernel for TEEs</title>
+<meta name="description" content="An operating system written in Lean that boots in an AWS Nitro Enclave or an Intel TDX trust domain with no Linux under it, and an Ethereum block validator running on it.">
+<meta property="og:title" content="cluck: a Lean unikernel for TEEs">
+<meta property="og:description" content="Lean all the way down in Nitro Enclaves and Intel TDX: no Linux, no libc, its own IP stack, answers bound to an attestation a browser can check. With an Ethereum block validator running on it.">
+<meta property="og:image" content="https://posix4e.github.io/cluck/demo-dark.png">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --paper: #f6f4ef; --card: #fffdf9; --ink: #1b1d1c; --soft: #5d635f; --line: #dcd8cd;
+    --accent: #0f6b52; --accent-ink: #ffffff; --good-bg: #e2f1ea; --warn: #8a6100; --warn-bg: #f7ecd0;
+    --code: #f0ede5;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #121514; --card: #1a1e1c; --ink: #e9ebe7; --soft: #9aa39d; --line: #2c3330;
+      --accent: #43c59e; --accent-ink: #06231a; --good-bg: #12322a; --warn: #e6bd5a; --warn-bg: #33290f;
+      --code: #0e1110;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.6 var(--sans); }
+  main { max-width: 900px; margin: 0 auto; padding: 28px 16px 80px; }
+  a { color: var(--accent); }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+         font-size: 0.88rem; color: var(--soft); }
+  .top .name { font: 600 1rem var(--mono); color: var(--ink); }
+  .top nav a { margin-left: 16px; text-decoration: none; }
+  h1 { font-size: clamp(2rem, 6vw, 3.2rem); line-height: 1.06; letter-spacing: -0.03em; margin: 44px 0 18px;
+       max-width: 17ch; }
+  h2 { font-size: 1.45rem; letter-spacing: -0.015em; line-height: 1.2; margin: 0 0 10px; }
+  h3 { font-size: 1rem; margin: 0 0 6px; }
+  p { margin: 0 0 14px; }
+  .lede { font-size: 1.16rem; color: var(--soft); max-width: 60ch; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 24px 0 8px; }
+  .button { display: inline-block; font-weight: 600; text-decoration: none; padding: 11px 18px;
+            border-radius: 10px; border: 1px solid var(--line); color: var(--ink); background: var(--card); }
+  .button.main { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 34px 0 0; }
+  .fact { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .fact b { display: block; font-size: 1.5rem; letter-spacing: -0.02em; line-height: 1.15; }
+  .fact span { color: var(--soft); font-size: 0.86rem; display: block; margin-top: 4px; }
+  section { margin-top: 58px; }
+  .eyebrow { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase;
+             color: var(--accent); margin-bottom: 10px; }
+  .wide { max-width: 64ch; }
+  .stack { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; margin-top: 18px; background: var(--card); }
+  .layer { display: grid; grid-template-columns: minmax(120px, 190px) 1fr; gap: 4px 18px; padding: 12px 16px;
+           border-top: 1px solid var(--line); }
+  .layer:first-child { border-top: 0; }
+  .layer b { font-weight: 600; }
+  .layer span { color: var(--soft); font-size: 0.93rem; }
+  .layer .lang { font: 0.74rem var(--mono); color: var(--accent); display: block; margin-top: 2px; }
+  .layer.c .lang { color: var(--warn); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 18px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .card p { color: var(--soft); font-size: 0.94rem; margin: 0; }
+  .card .when { font: 0.74rem var(--mono); color: var(--accent); margin-bottom: 6px; display: block; }
+  figure { margin: 22px 0 0; }
+  figure img { width: 100%; height: auto; display: block; border-radius: 12px; border: 1px solid var(--line); }
+  figcaption { color: var(--soft); font-size: 0.86rem; margin-top: 8px; }
+  code { font: 0.86em var(--mono); background: var(--code); padding: 1px 5px; border-radius: 4px;
+         overflow-wrap: anywhere; }
+  pre { margin: 14px 0 0; padding: 14px 16px; background: var(--code); border-radius: 10px; overflow-x: auto;
+        font: 0.82rem/1.55 var(--mono); }
+  .table { overflow-x: auto; margin-top: 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 8px 14px 8px 0; border-top: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--soft); font-weight: 500; border-top: 0; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .note { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 12px 16px;
+          font-size: 0.94rem; margin-top: 18px; }
+  .note strong { font-weight: 600; }
+  ul.plain { margin: 12px 0 0; padding-left: 20px; }
+  ul.plain li { margin-bottom: 9px; }
+  .two { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); margin-top: 6px; }
+  footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--soft);
+           font-size: 0.86rem; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <span class="name">cluck</span>
+    <nav>
+      <a href="#guest">The guest</a><a href="#proof">Attestation</a><a href="#evm">Block validation</a>
+      <a href="https://github.com/posix4e/cluck">GitHub</a>
+    </nav>
+  </div>
+
+  <h1>Lean all the way down, inside a TEE.</h1>
+  <p class="lede">cluck is an operating system written in <strong>Lean 4</strong> that boots in an AWS Nitro
+    Enclave or an Intel TDX trust domain with <strong>no Linux and no C library under it</strong>. A service
+    on it is a function from bytes to bytes. Everything that reads a byte from outside the machine is Lean,
+    and what the machine answers comes back with an attestation you can check.</p>
+  <div class="actions">
+    <a class="button main" href="https://github.com/posix4e/cluck">Source on GitHub</a>
+    <a class="button" href="https://github.com/posix4e/cluck/blob/main/THREAT_MODEL.md">Threat model</a>
+    <a class="button" href="https://github.com/posix4e/cluck/blob/main/TODO.md">What is done, and what is not</a>
+  </div>
+
+  <div class="facts">
+    <div class="fact"><b>2 TEEs</b><span>AWS Nitro Enclaves and Intel TDX, each run on real hardware</span></div>
+    <div class="fact"><b>108 functions</b><span>is the whole runtime compiled Lean was measured to need</span></div>
+    <div class="fact"><b>Same bytes</b><span>the image builds twice to the same hash, from a clean clone too</span></div>
+    <div class="fact"><b>~4 seconds</b><span>from starting QEMU to a TDX guest answering on TCP</span></div>
+  </div>
+
+  <section id="guest">
+    <div class="eyebrow">The guest</div>
+    <h2>What is in the machine, and what language it is in</h2>
+    <p class="wide">The usual confidential VM is a Linux distribution with your program somewhere on top, and
+      its attestation measures all of it. Here the measured image is small enough to read: a service, the
+      drivers and network stack it needs, and a Lean runtime cut down to what compiled Lean actually calls.
+      C and assembly exist only underneath, and never interpret bytes that came from outside.</p>
+    <div class="stack">
+      <div class="layer"><div><b>Service</b><span class="lang">Lean</span></div>
+        <span>A function from a request to a response. The demo answers <code>ping</code>, <code>random</code>,
+          <code>selftest</code> and an attestation over a nonce.</span></div>
+      <div class="layer"><div><b>Network, TDX</b><span class="lang">Lean</span></div>
+        <span>Ethernet, ARP and neighbour discovery, IPv4, IPv6, fragments, routes, TCP, UDP and a DNS
+          resolver, over a virtio device.</span></div>
+      <div class="layer"><div><b>Drivers, Nitro</b><span class="lang">Lean</span></div>
+        <span>virtio-mmio, vsock, the attestation device, serial, the server loop.</span></div>
+      <div class="layer"><div><b>Runtime</b><span class="lang">Lean, and Lean printed as C</span></div>
+        <span>Big-number arithmetic with machine-checked proofs, UTF-8, the allocator, reference counting,
+          arrays, strings, hashing. Held to Lean's own runtime by differential tests, under sanitizers and
+          bare under QEMU.</span></div>
+      <div class="layer c"><div><b>Underneath</b><span class="lang">C and assembly, by hand</span></div>
+        <span>Closures, start-up and stopping; the boot stub and page tables on Nitro; the firmware calls and
+          the TDX report call on TDX.</span></div>
+    </div>
+    <div class="cards">
+      <div class="card"><span class="when">2026-11-15 · AWS Nitro</span><h3>A real enclave, verified off-host</h3>
+        <p>The image CI built ran in a Nitro Enclave, not in debug mode. Its attestation document verified on
+          another machine against the AWS root, with the measurements CI reproduced from source.</p></div>
+      <div class="card"><span class="when">2026-11-18 · Intel TDX</span><h3>An EFI program on its own IP stack</h3>
+        <p>Booted on Intel hardware under KVM. Concurrent TCP streams, IPv6, fragmented UDP and DNS were
+          exercised against it, and the host's quoting service turned its report into a quote that Intel's
+          DCAP library accepted.</p></div>
+      <div class="card"><span class="when">No Linux means</span><h3>The guest cannot be broken the way the host can</h3>
+        <p>The enclave and the machine beside it share no kernel, no C library and no parser. One flaw is
+          not enough to take both. The threat model says where that holds and where it does not.</p></div>
+    </div>
+  </section>
+
+  <section id="proof">
+    <div class="eyebrow">Attestation</div>
+    <h2>An answer tied to the machine that gave it</h2>
+    <p class="wide">A request can carry 32 bytes of the asker's choosing. The response then comes with a TDX
+      report whose <code>REPORTDATA</code> is <code>SHA-256(challenge ‖ request) ‖ SHA-256(response)</code>,
+      and the host's quoting service signs that into a quote. Whoever checks the quote learns that a trust
+      domain with those measurements gave this response to this request, after the challenge was chosen.</p>
+    <p class="wide">The repository has a page that does the checking in the browser: Intel's signatures from
+      the quote up to Intel's SGX root key, the signer of the quoting enclave, the debug attribute, and the
+      two hashes computed locally. The server it talks to is treated as the adversary it is.</p>
+    <figure>
+      <picture>
+        <source srcset="demo-dark.png" media="(prefers-color-scheme: dark)">
+        <img src="demo-light.png" width="1728" height="2356" loading="lazy"
+             alt="The demo page after a block with a false state root was sent to the TDX guest: the block is rejected, and ten checks of the TDX quote pass in the browser.">
+      </picture>
+      <figcaption>The demo page from <code>evm/demo/</code>. A chain whose last block claims a state root that
+        executing it does not give was sent to the guest. It rejected the block, and the rejection itself is
+        what the quote covers.</figcaption>
+    </figure>
+    <div class="note"><strong>What the browser check leaves out:</strong> it does not ask Intel whether the
+      processor's firmware is current or a certificate revoked, and the measurements are compared with ones
+      recorded by whoever runs the page. Tying a measurement to a commit means rebuilding the image and
+      booting it on a TDX host of your own.</div>
+  </section>
+
+  <section id="evm">
+    <div class="eyebrow">An experiment on top</div>
+    <h2>Ethereum block validation as the service</h2>
+    <p class="wide">The service in <code>evm/</code> is <a href="https://github.com/skbaek/jaune">Jaune</a>, an
+      executable specification of the EVM written in Lean by someone else, for proofs. Linked against this
+      runtime it becomes a machine that takes blocks, re-executes every transaction, and refuses a block
+      unless the state root comes out as its header claims. The aim is the check a relay runs on a builder's
+      block, done in a trust domain by an implementation that shares nothing with the node beside it.</p>
+
+    <div class="two">
+      <div>
+        <h3>Running today, in TDX</h3>
+        <p>Five chains from Ethereum's own test suite, each with its whole starting state in the request.
+          Every answer is the fixture's tip hash and state root, byte for byte, as a process on Lean's
+          runtime, as a process on the minimal runtime, and as a TDX guest.</p>
+        <div class="table"><table>
+          <tr><th>Test chain</th><th class="n">Blocks</th><th class="n">Gas</th><th class="n">In the TDX guest</th></tr>
+          <tr><td>highGasUsage</td><td class="n">11</td><td class="n">0.23M</td><td class="n">112 ms</td></tr>
+          <tr><td>DelegateCallSpam</td><td class="n">1</td><td class="n">8M</td><td class="n">439 ms</td></tr>
+          <tr><td>walletReorganizeOwners</td><td class="n">259</td><td class="n">38M</td><td class="n">4.6 s</td></tr>
+          <tr><td>ShanghaiLove</td><td class="n">1</td><td class="n">4.5M</td><td class="n">39 s</td></tr>
+        </table></div>
+      </div>
+      <div>
+        <h3>Being built: blocks of the real chain</h3>
+        <p>Mainnet's state cannot be sent whole, so a request carries a witness instead: the trie nodes on
+          the paths to what the block touches. The guest checks them against the parent's state root,
+          executes, and recomputes the root. Anything the block read that the witness did not prove is
+          answered with "no verdict", never with a guess.</p>
+        <p id="mainnet">On 20 November 2026, 21 consecutive mainnet blocks (26456375 to 26456395) were
+          put to it as an ordinary process, each with a witness from a reth node. 19 came back valid with
+          the block hash and state root the node reports, the largest of them 544 transactions and 45.6M
+          gas, in 1.7 to 12.5 seconds each. The other 2 were answered "no verdict": the tool that
+          assembles witnesses had left out an account. None was answered wrongly. This has not yet run
+          inside the guest.</p>
+      </div>
+    </div>
+
+    <div class="note"><strong>What this is not, yet:</strong> it has returned no verdict on a mainnet block
+      inside the guest, it checks no bid and no payment to a proposer, it is connected to no relay or
+      builder, and a hostile block can still hold the machine for a long time. Those are the four pieces of
+      work in progress, in that order of dependence. The shortcuts already taken are listed in the
+      repository, not here.</div>
+  </section>
+
+  <section id="build">
+    <div class="eyebrow">Try it</div>
+    <h2>Build the guest and boot it</h2>
+    <p class="wide">The development image runs under QEMU's emulated processor anywhere; the TDX image needs
+      an Intel TDX host. Lean is pinned by the repository.</p>
+<pre>git clone https://github.com/posix4e/cluck &amp;&amp; cd cluck
+lake build
+scripts/build-efi dev &amp;&amp; scripts/run-efi dev          # the OS and its demo, emulated
+export SILO_TDVF=/path/to/OVMF.fd                      # the patched firmware, see TDX.md
+scripts/build-efi tdx &amp;&amp; scripts/run-efi tdx          # in a trust domain
+
+cd evm                                                 # the block validator
+scripts/build-efi tdx &amp;&amp; scripts/run-fixtures tdx     # five test chains, in TDX
+demo/server.py                                         # the page in the picture above</pre>
+    <p class="wide" style="margin-top:14px">Details, including the firmware the TDX target needs, are in
+      <a href="https://github.com/posix4e/cluck/blob/main/TDX.md">TDX.md</a> and
+      <a href="https://github.com/posix4e/cluck/blob/main/evm/README.md">evm/README.md</a>.</p>
+  </section>
+
+  <footer>
+    cluck is licensed under the GNU Affero General Public License, version 3. This page describes the
+    repository as of 20 November 2026; <a href="https://github.com/posix4e/cluck/blob/main/TODO.md">TODO.md</a>
+    is the record that is kept current.
+  </footer>
+</main>
+</body>
+</html>

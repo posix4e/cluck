@@ -20,6 +20,9 @@ package is `«silo-os»`, the machine's own lines on its console begin `silo:`, 
 `SILO_`. The two targets share the runtime, its proofs and the demo service; they differ in how the machine
 is entered, in what carries bytes to the service, and in what the attestation is.
 
+A short tour of all three, with a picture of the attestation being checked in a browser, is at
+<https://posix4e.github.io/cluck/> (`docs/`).
+
 What is done and what is left is in [TODO.md](TODO.md). What it defends against, and what it does not, is in
 [THREAT_MODEL.md](THREAT_MODEL.md). How to work on it is in [CONTRIBUTING.md](CONTRIBUTING.md). To build a
 service of your own on it, see "Building on it" below.

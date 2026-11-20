@@ -181,6 +181,10 @@ lean_obj_res silo_efi_send(b_lean_obj_arg frame) {
         system_table->boot->stall(100);
     } while (millis() - start < 1000);
     if (!outstanding) return error("SNP transmit queue timed out");
+    // The buffer usually comes back within microseconds, so it is asked for
+    // many times before any waiting is done: a wait is never shorter than
+    // 100 microseconds, and one per frame is most of what a frame would cost.
+    unsigned asked = 0;
     do {
         void *completed = NULL;
         if (nic->status(nic, NULL, &completed) != 0) return error("SNP GetStatus failed");
@@ -188,7 +192,7 @@ lean_obj_res silo_efi_send(b_lean_obj_arg frame) {
             outstanding = false;
             return lean_io_result_mk_ok(lean_box(0));
         }
-        system_table->boot->stall(100);
+        if (++asked > 256) system_table->boot->stall(100);
     } while (millis() - start < 1000);
     return error("SNP did not release the transmit buffer");
 }

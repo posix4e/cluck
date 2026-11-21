@@ -5,9 +5,11 @@ import Std.Data.HashMap
 
 /-! `evm/Tls/` against the standards' examples and against OpenSSL.
 
-    cat Tls/vectors.txt Tls/handshakes.txt | .lake/build/bin/tls-test        (from evm/)
+    cat Tls/vectors.txt Tls/hpke.txt Tls/handshakes.txt | .lake/build/bin/tls-test        (from evm/)
 
-and the same into `tls-test-min` after `scripts/build-min tls-test`. `Tls/handshakes.txt` is made by
+and the same into `tls-test-min` after `scripts/build-min tls-test`. `Tls/hpke.txt` is made by `scripts/hpke-vectors`: messages
+sealed to a key by OpenSSL's own HPKE, which `Tls/Hpke.lean` must open, and the same with a byte changed,
+which it must not. `Tls/handshakes.txt` is made by
 `scripts/tls-handshakes`: whole conversations with a TLS 1.3 server written there, which the client in
 `Tls/Client.lean` must come through, or refuse for the reason given.
 
@@ -118,6 +120,10 @@ def main : IO UInt32 := do
       | "poly1305" => (Poly1305.tag (f 1) (f 2), f 3)
       | "x25519" => (X25519.x25519 (f 1) (f 2), f 3)
       | "public" => (X25519.publicKey (f 1), f 2)
+      -- A message OpenSSL sealed: opened, it is the message (after a 01), or it does not open (00).
+      | "hpke" => (match Hpke.open? (f 1) (f 2) (f 3) (f 4) (f 5) (f 6) with
+          | some plain => ByteArray.mk #[1] ++ plain
+          | none => ByteArray.mk #[0], f 7)
       -- Signatures and chains: the answer is yes or no, and OpenSSL's is the last field.
       | "rsa1" => (verdict (Rsa.verifyPkcs1 ⟨natOf (f 1), natOf (f 2), (f 1).size⟩ (f 3) (f 4)), fields.getD 5 .empty)
       | "rsapss" => (verdict (Rsa.verifyPss ⟨natOf (f 1), natOf (f 2), (f 1).size⟩ (f 3) (f 4)), fields.getD 5 .empty)
@@ -194,6 +200,19 @@ def main : IO UInt32 := do
   if refused != tried then
     failures := failures + 1
     say s!"a sealed message with something changed opened {tried - refused} times of {tried}"
+  -- What this seals to a key, the key's holder opens, and nobody else.
+  let holder := Sha256.hash "a receiver".toUTF8
+  let other := Sha256.hash "somebody else".toUTF8
+  match Hpke.seal? (Sha256.hash "a sender, once".toUTF8) (X25519.publicKey holder) "why".toUTF8 aad plain with
+  | some (enc, sealed) =>
+    if Hpke.open? holder (X25519.publicKey holder) enc "why".toUTF8 aad sealed != some plain
+        || (Hpke.open? other (X25519.publicKey other) enc "why".toUTF8 aad sealed).isSome
+        || (Hpke.open? holder (X25519.publicKey holder) enc "why not".toUTF8 aad sealed).isSome then
+      failures := failures + 1
+      say "a message sealed to a key: not opened by its holder alone"
+  | none =>
+    failures := failures + 1
+    say "a message could not be sealed to a key"
   -- The roots written into the images are certificates this reads, every one.
   for table in [Evm.Relays.live, Evm.Relays.standIn] do
     if table.anchors.size != table.roots.size || table.roots.isEmpty then

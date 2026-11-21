@@ -11,6 +11,7 @@ import Tls.X509
 import Tls.Wire
 import Tls.Client
 import Tls.Http
+import Tls.Hpke
 
 /-! What the guest needs to keep a secret on a wire. So far the pieces: SHA-256, SHA-384 and SHA-512, HMAC
 and HKDF, ChaCha20-Poly1305, X25519; and for certificates, which are public, RSA and ECDSA signatures

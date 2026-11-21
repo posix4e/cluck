@@ -126,9 +126,11 @@ went unrecorded, which were then closed; that it now finds none is evidence abou
 which hold no EIP-7702 authorization, no blob and no withdrawal. An answer of "valid" also says nothing of
 the parent: it is about this block on that parent, whatever chain the parent is or is not part of.
 
-**A branch of Jaune.** The image now holds `posix4e/jaune`, seven commits ahead of the upstream commit this
-section was written about. Three of them put code in the image that nothing proves equal to what Jaune
-defines, so compiled code and specification can differ in three places, each of which decides whether a
+**A branch of Jaune.** The image now holds `posix4e/jaune`, eleven commits ahead of the upstream commit
+this section was written about. Four of them change how something is computed and prove the result the
+same (how EVM memory grows, a polynomial division, and what holds the machine's state while an instruction
+runs, the last through four theorems that the compiler is told to use). Three put code in the image that
+nothing proves equal to what Jaune defines, so compiled code and specification can differ in three places, each of which decides whether a
 block is valid:
 
 - whether a jump lands on an instruction (`jumpable`, compiled as `jumpableCompiled`: the compiler makes

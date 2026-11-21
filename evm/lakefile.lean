@@ -10,7 +10,7 @@ package «evm»
 require «silo-os» from ".."
 
 /-- Jaune, at the commit this was built and run against. Its own manifest pins mathlib. -/
-require jaune from git "https://github.com/posix4e/jaune" @ "6143c7bc43698d9b3d9d18090fff7957f3c547da"
+require jaune from git "https://github.com/posix4e/jaune" @ "69db932e439faad9315d82a4a39d500c9e01e732"
 
 /-- The service: requests, responses, and the block import between them. Pure. -/
 @[default_target]

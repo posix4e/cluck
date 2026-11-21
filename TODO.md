@@ -179,8 +179,9 @@ multiplication was a product and a division of big numbers.
   median 4.6 where it was 10.8, 21 under 3 seconds and 95 under 10. The 21 blocks: all valid, 1.0 to 9.8,
   median 3.9. The machine was building and testing other things for the whole of that run, so the guest
   may be faster than this says; it is not yet known to be.
-- The test chains in the guest: `walletReorganizeOwners` 2.3 seconds where it was 5.6, `highGasUsage`
-  0.02 where it was 0.15.
+- The test chains in the guest: `walletReorganizeOwners` 2.3 seconds where it was 5.6 (and about 3.1 on
+  every run since, with no change between that would explain it; as a process it is 3.0 on every build
+  after the first), `highGasUsage` 0.02 where it was 0.15.
 - Each change was held to Jaune's own gates on the branch, none of which had been run there before: its
   Osaka (2,333 files), Prague (2,341) and BPO2 (11) suites of `tests@v21.0.2`, its 76 transition-tool
   cases, its curve oracle (596 cases, 23 of them now put to the new recovery), and its layering and
@@ -198,6 +199,21 @@ multiplication was a product and a division of big numbers.
   29 under 3 seconds and 95 under 10; the 21 all valid, 0.8 to 6.9, median 2.6; `--limits` as before.
   One block put to the same guest five times among 35 others took 7.2, 7.8, 6.3, 8.3 and 6.2 seconds:
   no steady slowing as the guest serves, and a spread of a quarter that has not been explained.
+- Then how Jaune's interpreter holds its state (`posix4e/jaune` at `69db932`, four more commits, each
+  proved equal to what it replaces and held to the same gates). Every write to EVM memory was copying
+  all of memory and freeing the copy it replaced: the loop that runs instructions kept the machine
+  record through each step in order to read one field of it afterwards, and the wrappers around each
+  instruction kept the state they had handed it, so the state always had two owners and nothing in it
+  could be written where it lay. The loop now takes the record apart first and the wrappers have compiled
+  forms that do the same. Two smaller changes went in with it (memory grows where it lies, and a
+  polynomial division no longer inverts a leading coefficient of one), neither of which could be seen in
+  the times on its own.
+  - The 100 blocks as a process on the minimal runtime: median 2.58 seconds where it was 3.4, mean 3.0,
+    slowest 21, 59 under 3 seconds. The worst block for memory went from 8.2 seconds to 4.4.
+  - In the TDX guest (image SHA-256 `68228fdf…b6ac064c`), on a machine doing nothing else but following
+    the chain, one run: the 100 blocks all valid, 0.4 to 19.0 seconds, **median 2.99**, mean 3.5, 51 under
+    3 seconds and 99 under 10; the 21 all valid, 0.7 to 6.5, median 2.8; `--limits` as before. That is
+    the line this was working towards, reached with nothing to spare and on one run.
 - Where the time went before that last change, from a profile of 33 of the 100 blocks as a process on the minimal runtime:
   50% in the interpreter and the rest of Jaune, 18% in this package's own witness and trie code, 6% in
   sender recovery, 5% each in BLS12-381, keccak and the bn254 Miller loop, 3% in the bn254 final power,
@@ -208,19 +224,21 @@ What is next, in the order it depends on itself. The aim is the check a relay ma
 (re-execute it on the real chain, confirm the state root, confirm the proposer is paid), attested, in the
 guest:
 
-1. **Time.** The line to reach is a median mainnet block in 3 seconds in the TDX guest, from 3.9. Next:
-   Jaune's growing of EVM memory, then a new profile. The
-   runtime's allocator is left alone for now (issue #1). Once the median is under 3 seconds the relay's
-   checks come next, not more speed.
-2. **The relay's own checks** (`flashbots_validateBuilderSubmissionV5`, as reth's
+1. **The relay's own checks** (`flashbots_validateBuilderSubmissionV5`, as reth's
    `crates/rpc/rpc/src/validation.rs` makes them): the bid against the block, the gas limit against the one
    registered, blob commitments, and payment to the proposer. A host-side adapter that speaks the relay's
    JSON-RPC and gets a witness for a submitted payload.
-3. **Hostile input.** A step budget and a host that replaces a guest that overruns; the recursions in
+2. **Hostile input.** A step budget and a host that replaces a guest that overruns; the recursions in
    Jaune that follow the input made into loops; the items under "not sound yet" below; fuzzing of the trie
    and request readers; `evm/` in CI.
-4. **A week of every relay-delivered mainnet block**, validated after the fact and attested, shown on
+3. **A week of every relay-delivered mainnet block**, validated after the fact and attested, shown on
    the page.
+
+Time is where it was meant to get to before those (a median of 3 seconds in the guest), and no further:
+it was decided that the relay's checks come next. What is known to be left in it: the minimal runtime's
+allocator (issue #1), the stack held as a list whose length is counted at every push (3%), extension
+fields held as lists of big numbers (13%, in both pairings), keccak in Lean (5%), and a request's 0.9
+seconds on its way in.
 
 What it stands on that is not sound yet:
 
@@ -246,8 +264,8 @@ Not done:
       the jump-destination check, sender recovery over fixed-width words, and the bn254 final
       exponentiation. They are tested (above, and `THREAT_MODEL.md`), which was decided to be enough for
       now.
-- [ ] Time. A median of 3.9 seconds a block in the guest (above), against the 3 a relay's after-the-fact
-      check could live with.
+- [ ] Time, beyond the line. A median of 3.0 seconds a block in the guest on one run (above), with the
+      slowest block in a hundred at 19.
 - [ ] A request on its way in faster than 8.5 MB a second. Each segment is acknowledged on its own and
       costs the guest two exits to the host; acknowledging several at once is the next thing to try.
 - [ ] A full check of the attested answer. The quote is checked up to Intel's root key in a browser

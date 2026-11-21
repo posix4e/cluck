@@ -195,10 +195,10 @@
           runtime, as a process on the minimal runtime, and as a TDX guest.</p>
         <div class="table"><table>
           <tr><th>Test chain</th><th class="n">Blocks</th><th class="n">Gas</th><th class="n">In the TDX guest</th></tr>
-          <tr><td>highGasUsage</td><td class="n">11</td><td class="n">0.23M</td><td class="n">150 ms</td></tr>
-          <tr><td>DelegateCallSpam</td><td class="n">1</td><td class="n">8M</td><td class="n">640 ms</td></tr>
-          <tr><td>walletReorganizeOwners</td><td class="n">259</td><td class="n">38M</td><td class="n">5.6 s</td></tr>
-          <tr><td>ShanghaiLove</td><td class="n">1</td><td class="n">4.5M</td><td class="n">150 ms</td></tr>
+          <tr><td>highGasUsage</td><td class="n">11</td><td class="n">0.23M</td><td class="n">20 ms</td></tr>
+          <tr><td>DelegateCallSpam</td><td class="n">1</td><td class="n">8M</td><td class="n">600 ms</td></tr>
+          <tr><td>walletReorganizeOwners</td><td class="n">259</td><td class="n">38M</td><td class="n">3.1 s</td></tr>
+          <tr><td>ShanghaiLove</td><td class="n">1</td><td class="n">4.5M</td><td class="n">110 ms</td></tr>
         </table></div>
       </div>
       <div>
@@ -210,17 +210,19 @@
         <p id="mainnet">On 20 November 2026, 100 consecutive mainnet blocks (26458315 to 26458414, up to
           625 transactions and 60M gas, requests of 2 to 22 MB) were put to the TDX guest, each with a
           witness from a reth node. All 100 came back valid with the block hash and state root the node
-          reports. It is not fast: a block took 1.8 to 70 seconds, 10.8 at the median. Two fifths of that
-          is one step of the pairing check that zero-knowledge proofs use, a quarter is recovering
-          senders from signatures, and both are being rewritten.</p>
+          reports. The first time through, a block took 10.8 seconds at the median. After a day of
+          rewrites (one step of the pairing check that zero-knowledge proofs use, the recovery of senders
+          from signatures, the check of jump destinations, the reading of witnesses, and an interpreter
+          that copied all of a contract's memory at every write to it) it takes 3.0, between 0.4 and 19.
+          A relay needs about 3.</p>
       </div>
     </div>
 
-    <div class="note"><strong>What this is not, yet:</strong> it is too slow for a relay, which needs an
-      answer in about 3 seconds; it checks no bid and no payment to a proposer; it is connected to no relay
-      or builder; and a hostile block can still hold the machine for a long time. Those are the four pieces
-      of work in progress, in that order. The shortcuts already taken are listed in the repository, not
-      here.</div>
+    <div class="note"><strong>What this is not, yet:</strong> it is only just fast enough for a relay, and
+      one block in a hundred still takes 19 seconds; it checks no bid and no payment to a proposer; it is connected to no relay or builder; a hostile block can
+      still hold the machine for a long time; and three of the fast paths it now runs are tested against
+      the specification, not proved equal to it. Those are the pieces of work in progress. The shortcuts
+      already taken are listed in the repository, not here.</div>
   </section>
 
   <section id="build">

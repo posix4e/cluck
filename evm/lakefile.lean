@@ -10,7 +10,7 @@ package «evm»
 require «silo-os» from ".."
 
 /-- Jaune, at the commit this was built and run against. Its own manifest pins mathlib. -/
-require jaune from git "https://github.com/posix4e/jaune" @ "69db932e439faad9315d82a4a39d500c9e01e732"
+require jaune from git "https://github.com/posix4e/jaune" @ "3c2835998fe13be9bb6e9ddd21bbdc4a71db6670"
 
 /-- The service: requests, responses, and the block import between them. Pure. -/
 @[default_target]
@@ -95,6 +95,11 @@ lean_exe «build-test» where
 lean_exe «bls-test» where
   root := `BlsTest
   moreLinkObjs := #[secretHosted]
+
+/-- What became of each transaction in a request to build. For making requests. -/
+@[default_target]
+lean_exe «build-why» where
+  root := `BuildWhy
 
 /-- A stateless request's answer in words, with Jaune's reason for a rejection. For making witnesses. -/
 @[default_target]

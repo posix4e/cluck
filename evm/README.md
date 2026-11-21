@@ -42,6 +42,10 @@ it, and continuous integration does not build it. What has been run and what it 
 - `BuildTest.lean`: `Evm.Build` against `Evm.Stateless`, which checks what it builds, and against blocks
   that exist, which it has to build again exactly. `witness/to-build`: turns a request to check a block
   into a request to build one from the same transactions.
+- `BuildWhy.lean`: what became of each transaction in a request to build, and why one was left out.
+  `builder/shadow`: the builder run in shadow on the host, a block built in the guest for every slot from
+  pending transactions and judged by the node's own validator, nothing signed or sent. Neither goes in an
+  image.
 - `StatelessWhy.lean`: a stateless request's answer in words, with Jaune's reason for a rejection and what a
   short witness lacks. `witness/fetch`: makes a stateless request for a block from a node that follows the
   chain. Neither goes in an image.
@@ -202,6 +206,19 @@ witness/to-build block.req build.req
 .lake/build/bin/evm-serve < build.req | xxd | head -3     # status 00, then the block's hash
 .lake/build/bin/build-test DIR                            # every NAME.req in DIR, as given and by the rule
 ```
+
+To build from what is pending, every slot, with the node judging each block (reth has to serve `txpool`
+and `flashbots` beside `eth` and `debug`, and prove state a few blocks back, `--rpc.eth-proof-window 64`;
+a consensus node has to answer on its API):
+
+```
+SILO_TDVF=/path/to/OVMF.fd builder/shadow --slots 100       # in a guest in a trust domain
+builder/shadow --process --slots 100                         # or as a process, after scripts/build-min evm-serve
+.lake/build/bin/build-why /data/eth/shadow/unbuilt/N.req     # why a request built nothing
+```
+
+`stateless-test real DIR` and `build-test real DIR` take requests for real blocks and leave addresses out
+of their witnesses in turn; a wrong answer or a block the checker refuses fails them.
 
 From another machine, `ssh -L 8545:127.0.0.1:8545 HOST` puts that node within reach of `witness/fetch`,
 and everything in this section but the guest then runs anywhere Lean does.

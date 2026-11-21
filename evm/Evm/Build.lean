@@ -18,12 +18,13 @@ cannot be shown is left out, never guessed.
     4   length, then a block as RLP: the header the slot fixes, the proposed transactions, withdrawals
     then headers, nodes, codes and keys exactly as in a stateless request
 
-The header in the request is a template. What the slot and the parent fix has to be in it and right:
-parent hash, fee recipient, number, gas limit, time, randomness, base fee, excess blob gas, parent beacon
-root, extra data. It is checked against the parent by Jaune's own `validateHeader`, so a wrong base fee or
-a gas limit out of step is refused here, not found out by a relay. The fields that follow from running the
-block (state root, the roots of transactions and receipts, logs bloom, gas used, blob gas used,
-withdrawals root, requests hash) are whatever the sender put, and are replaced.
+The header in the request is a template. What the slot fixes has to be in it and right: parent hash, fee
+recipient, number, gas limit, time, randomness, parent beacon root, extra data. It is checked against the
+parent by Jaune's own `validateHeader`, so a gas limit out of step or a time not after the parent's is
+refused here, not found out by a relay. Two fields follow from the parent alone, the base fee and the
+excess blob gas, and are worked out here from it. The fields that follow from running the block (state
+root, the roots of transactions and receipts, logs bloom, gas used, blob gas used, withdrawals root,
+requests hash) are worked out here too. Whatever the sender put in any of those is replaced.
 
 ## What goes in
 
@@ -55,6 +56,9 @@ that go in is not theirs to choose under rule 1.
     8    gas used
     4    how many transactions went in, then for each, 4 bytes: its place among those proposed
     4    length, then the header as RLP
+    4    how many requests the block made of the consensus layer (deposits, withdrawals, consolidations),
+         then each with its length: a byte for its kind and then its data, as the header's hash of them
+         is taken
 
 The block is that header, those transactions in that order, no ommers, and the withdrawals proposed. The
 sender has the transactions and puts the block together; the response is small whatever the block is.
@@ -111,6 +115,8 @@ structure Built where
   /-- Places, among the transactions proposed, of those that went in, in the block's order. -/
   included : List Nat
   value : Nat
+  /-- What the block asks of the consensus layer, each a byte for its kind and then its data. -/
+  requests : List Bytes := []
 
 structure Response where
   status : UInt8
@@ -125,7 +131,8 @@ def Response.encode (r : Response) : ByteArray :=
     b.included.foldl (fun out i => out ++ be 4 i)
       (be 1 0 ++ Trie.wordBytes b.hash ++ Trie.wordBytes b.header.stateRoot ++
         Trie.wordBytes b.value.toU256 ++ be 8 b.header.gasUsed ++ be 4 b.included.length) ++
-      Evm.Service.sized header
+      Evm.Service.sized header ++
+      b.requests.foldl (fun out r => out ++ Evm.Service.sized r.toByteArray) (be 4 b.requests.length)
   | status, _ => be 1 status.toNat ++ Trie.wordBytes r.lacking
 
 /-- What a transaction pays the fee recipient for each unit of gas, at this base fee; `none` when it does
@@ -167,44 +174,66 @@ structure Shown where
   accounts : AdrSet := {}
   slots : KeySet := {}
 
-/-- Whether everything in `reads` that is not yet in `shown` is supplied or proven absent. `none` when
-something was read that the witness does not account for. -/
-def showReads (known : Known) (shown : Shown) (reads : BlockAccessListBuilder) : Option Shown :=
+/-- Whether everything in `reads` that is not yet in `shown` is supplied or proven absent. An error, saying
+what, when something was read that the witness does not account for. -/
+def showReads (known : Known) (shown : Shown) (reads : BlockAccessListBuilder) : Except String Shown :=
   let accounts := reads.readAccounts.toList.filter fun a => !shown.accounts.contains a
   let slots := reads.readSlots.toList.filter fun k => !shown.slots.contains k
   match checkReads known accounts slots with
   | .ok () =>
-    some { accounts := accounts.foldl (fun s a => s.insert a) shown.accounts,
-           slots := slots.foldl (fun s k => s.insert k) shown.slots }
-  | .error _ => none
+    .ok { accounts := accounts.foldl (fun s a => s.insert a) shown.accounts,
+          slots := slots.foldl (fun s k => s.insert k) shown.slots }
+  | .error (.lacking hash what) => .error (if what == "" then s!"a node of the witness, {hash}" else what)
+  | .error _ => .error "the witness does not read"
+
+/-- What became of one transaction proposed: not part of a response, for whoever is making requests. -/
+structure Note where
+  place : Nat
+  went : Bool
+  /-- For one that went in, the gas the block had used once it had run; otherwise why it was left out. -/
+  said : String
 
 /-- The transactions that go in, run one after another. One that Jaune rejects, or that read what the
 witness does not prove, leaves the state and the block as they were before it. -/
 def fill (known : Known) (gasCap : Nat) :
-    List Candidate → Benv → BlockOutput → Shown → Array Nat → Except TransitionError (Benv × BlockOutput × Array Nat)
-  | [], benv, bout, _, included => .ok (benv, bout, included)
-  | c :: rest, benv, bout, shown, included =>
-    if bout.blockGasUsed + c.tx.gasLimit > gasCap then fill known gasCap rest benv bout shown included
+    List Candidate → Benv → BlockOutput → Shown → Array Nat → Array Note →
+      Except TransitionError (Benv × BlockOutput × Array Nat × Array Note)
+  | [], benv, bout, _, included, notes => .ok (benv, bout, included, notes)
+  | c :: rest, benv, bout, shown, included, notes =>
+    if bout.blockGasUsed + c.tx.gasLimit > gasCap then
+      fill known gasCap rest benv bout shown included (notes.push ⟨c.place, false, "would pass the gas asked for"⟩)
     else
       match processTransaction benv bout c.tx included.size with
       | .ok (state, bout') =>
         match showReads known shown bout'.blockAccessListBuilder with
-        | some shown' => fill known gasCap rest (benv.withState state) bout' shown' (included.push c.place)
-        | none => fill known gasCap rest benv bout shown included
+        | .ok shown' =>
+          fill known gasCap rest (benv.withState state) bout' shown' (included.push c.place)
+            (notes.push ⟨c.place, true, s!"{bout'.blockGasUsed}"⟩)
+        | .error what =>
+          fill known gasCap rest benv bout shown included (notes.push ⟨c.place, false, s!"read {what}"⟩)
       | .error (.internal e) => .error (.internal e)
-      | .error _ => fill known gasCap rest benv bout shown included
+      | .error e =>
+        fill known gasCap rest benv bout shown included (notes.push ⟨c.place, false, s!"rejected: {e.render}"⟩)
 
-def build (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) :
-    M Response := do
+def buildWithNotes (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) :
+    M (Response × Array Note) := do
   let rules := fork.ruleSet
   let known ← materialise r.witness parent.stateRoot
   let chain : BlockChain :=
     { blocks := ancestors.map fun h => ⟨h, [], [], []⟩, state := known.state, chainId := r.witness.chainId }
-  -- The template is a header the parent allows, with no gas used yet.
-  let blank := { template.header with gasUsed := 0 }
-  if (validateHeader rules chain blank).isOk == false || !template.ommers.isEmpty then return { status := 3 }
+  -- What the parent alone fixes is worked out from it; then the template has to be a header the parent
+  -- allows, with no gas used yet.
+  let asked := { template.header with gasUsed := 0 }
+  let baseFee ← match expectedBaseFee { asked with baseFeePerGas := if rules.header.baseFee then some 0 else none } parent with
+    | .ok fee => pure fee
+    | .error _ => return ({ status := 3 }, #[])
+  let blank := { asked with
+    baseFeePerGas := baseFee,
+    excessBlobGas := if rules.header.blobGas then some (calcExcessBlobGas rules.blob parent) else none }
+  if (validateHeader rules chain blank).isOk == false || !template.ommers.isEmpty then
+    return ({ status := 3 }, #[])
   let benv := initBenv fork chain blank
-  let run : Except TransitionError (Benv × BlockOutput × Array Nat × State × BlockOutput × Nat) := do
+  let run : Except TransitionError (Array Note × Array Nat × State × BlockOutput × Nat) := do
     let (stBeacon, bal) ← beaconRootsCall rules benv
     let benvBeacon := benv.withState stBeacon
     let (stHistory, bal) ← historyStorageCall rules benvBeacon bal
@@ -222,15 +251,15 @@ def build (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header
     let ordered := if r.rule == 0 then proposed else (byTip proposed).toList
     let cap := min r.gasCap blank.gasLimit
     let paidBefore := (start.state.bal benv.stat.coinbase).toNat
-    let (filled, bout, included) ←
-      fill known cap ordered start { BlockOutput.init with blockAccessListBuilder := bal } {} #[]
+    let (filled, bout, included, notes) ←
+      fill known cap ordered start { BlockOutput.init with blockAccessListBuilder := bal } {} #[] #[]
     let value := (filled.state.bal benv.stat.coinbase).toNat - paidBefore
     let (stWds, boutWds) := withdrawalsPass rules filled bout template.withdrawals
     let (stReq, boutReq) ← requestsPass rules (filled.withState stWds) boutWds
-    pure (filled, bout, included, stReq, boutReq, value)
+    pure (notes, included, stReq, boutReq, value)
   match run with
-  | .error _ => return { status := 4 }
-  | .ok (_, _, included, after, out, value) =>
+  | .error _ => return ({ status := 4 }, #[])
+  | .ok (notes, included, after, out, value) =>
     -- As for a block that is checked: everything read was shown, and everything made was not there.
     let reads := out.blockAccessListBuilder
     let made := after.keys.filter fun address => !known.leaves.contains address
@@ -249,12 +278,16 @@ def build (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header
     -- Jaune's own checks of a header against what running the block gave, on the header just made.
     let agrees := stateTransitionChecks out header header.transactionsRoot stateRoot header.receiptsRoot
       header.logsBloom (getWithdrawalsRoot out) header.requestsHash
-    if !agrees.isOk then return { status := 4 }
-    return { status := 0, built := some ⟨header, header.hash, included.toList, value⟩ }
+    if !agrees.isOk then return ({ status := 4 }, notes)
+    return ({ status := 0, built := some ⟨header, header.hash, included.toList, value, out.requests⟩ }, notes)
 
-def run (r : Request) : Response :=
+def build (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) :
+    M Response := (·.1) <$> buildWithNotes r fork parent ancestors template
+
+def runWithNotes (r : Request) : Response × Array Note × String :=
+  let only (response : Response) (why : String := "") : Response × Array Note × String := (response, #[], why)
   match rlpToBlockE r.witness.block.toList with
-  | .error _ => { status := 5 }
+  | .error _ => only { status := 5 } "the block does not decode"
   | .ok (template, _) =>
     let fork := match r.witness.fork with
       | some fork => some fork
@@ -264,20 +297,22 @@ def run (r : Request) : Response :=
         | .ok fork => if (Stateless.forkCode fork).isSome then some fork else none
         | .error _ => none
     match fork, r.witness.headers.mapM Stateless.header with
-    | none, _ | _, none => { status := 5 }
+    | none, _ | _, none => only { status := 5 } "no fork, or a header that does not decode"
     | some fork, some ancestors =>
       let linked := (ancestors.zip (ancestors.drop 1)).all fun (a, b) => a.hash == b.parentHash
       match ancestors.getLast? with
-      | none => { status := 6 }
+      | none => only { status := 6 } "no headers"
       | some parent =>
-        if !linked || parent.hash != template.header.parentHash then { status := 5 }
-        else if ancestors.length != min 255 template.header.number then { status := 6 }
+        if !linked || parent.hash != template.header.parentHash then only { status := 5 } "the headers are not a chain to the parent"
+        else if ancestors.length != min 255 template.header.number then only { status := 6 } "too few headers"
         else
-          match build r fork parent ancestors template with
-          | .ok response => response
-          | .error (.lacking hash _) => { status := 6, lacking := hash }
-          | .error .malformed => { status := 7 }
-          | .error .failure => { status := 4 }
+          match buildWithNotes r fork parent ancestors template with
+          | .ok (response, notes) => (response, notes, "")
+          | .error (.lacking hash what) => only { status := 6, lacking := hash } what
+          | .error .malformed => only { status := 7 }
+          | .error .failure => only { status := 4 }
+
+def run (r : Request) : Response := (runWithNotes r).1
 
 def serve (input : ByteArray) : ByteArray :=
   match (request input).run 0 with

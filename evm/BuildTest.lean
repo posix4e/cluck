@@ -22,6 +22,9 @@ header as the template and the transactions as what is proposed.
                                             to build by the rule and the response it must get)
     .lake/build/bin/build-test DIR         (every NAME.req in DIR as well, built again as given and by
                                             the rule; for blocks of mainnet made by witness/fetch)
+    .lake/build/bin/build-test real DIR [STEP]
+                                           (every NAME.req in DIR built by the rule with every STEPth
+                                            address, by default every tenth, left out of its witness)
 
 Run on Lean's own runtime. -/
 open Jaune Evm
@@ -74,6 +77,19 @@ def one (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (wr
         (reply == again.encode && reply.size > 100 && reply.extract 1 33 == Trie.wordBytes hash)
     | none => tally ← tally.expect s!"{name}: the request has no encoding" false
   | none => tally ← tally.expect s!"{name}: nothing built from the block's own transactions, status {again.status}" false
+  -- What the parent fixes is worked out here, whatever the sender put.
+  let h := template.header
+  let wrongHeader : Header :=
+    { h with
+      baseFeePerGas := h.baseFeePerGas.map fun fee => fee + 7
+      excessBlobGas := h.excessBlobGas.map fun excess => excess + 131072
+      stateRoot := 5
+      gasUsed := 9 }
+  let wrong : Block := { template with header := wrongHeader }
+  let righted := Build.run
+    { witness := { witness with block := wrong.toRlpItem.toBytes.toByteArray }, rule := 0, gasCap := limit }
+  tally ← tally.expect s!"{name}: a wrong base fee and excess blob gas in the template were not put right"
+    ((righted.built.map fun b => b.hash == hash) == some true)
   -- A transaction that cannot go in.
   if let first :: _ := template.transactions then
     let doubled := { template with transactions := template.transactions ++ [first] }
@@ -128,10 +144,50 @@ def one (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (wr
       smaller block"
   pure tally
 
+/-- A block of the real chain built by the rule with every `step`th address left out of the witness in
+turn: nothing built, or a block the checker accepts with the whole witness. -/
+def real (name : String) (bytes : ByteArray) (step : Nat) (tally : Tally) : IO Tally := do
+  let mut tally := tally
+  let some (witness, _) := (Stateless.request bytes).run 0
+    | tally.expect s!"{name}: not a stateless request" false
+  let .ok (template, _) := rlpToBlockE witness.block.toList
+    | tally.expect s!"{name}: the block does not decode" false
+  let addresses := (witness.keys.filter (·.size == 20)).toArray
+  let whole := (Build.run { witness, rule := 1, gasCap := template.header.gasLimit }).built.map (·.included.length)
+  let mut smaller := 0
+  let mut nothing := 0
+  let mut tried := 0
+  for turn in [0 : (addresses.size + step) / (step + 1)] do
+    let left := addresses[turn * (step + 1)]!
+    let short := { witness with keys := witness.keys.filter (· != left) }
+    let answer := Build.run { witness := short, rule := 1, gasCap := template.header.gasLimit }
+    tried := tried + 1
+    match answer.built with
+    | some b =>
+      if some b.included.length != whole then smaller := smaller + 1
+      tally ← tally.expect s!"{name}: without the address {Stateless.hexOf left.toList} a block was built \
+        that the checker does not accept" (accepted witness template b)
+    | none =>
+      nothing := nothing + 1
+      tally ← tally.expect s!"{name}: without the address {Stateless.hexOf left.toList}, status {answer.status}"
+        (answer.status == 4 || answer.status == 6 || answer.status == 7)
+  IO.println s!"{name}: {tried} of {addresses.size} addresses left out in turn; {nothing} built nothing, \
+    {smaller} built a different block, each one the checker accepts"
+  pure tally
+
 def main (args : List String) : IO UInt32 := do
   let mut tally : Tally := {}
   for name in ["highGasUsage-11", "wallet2outOf3txsRevokeAndConfirmAgain-8", "DelegateCallSpam-1"] do
     tally ← one name (← IO.FS.readBinFile s!"fixtures/stateless/{name}.req") true tally (args == ["write"])
+  -- `build-test real DIR [STEP]`: only the blocks of the real chain in DIR, with addresses left out.
+  if let "real" :: dir :: rest := args then
+    let step := (rest.head?.bind String.toNat?).getD 10 - 1
+    let entries := (← System.FilePath.readDir dir).filter (·.fileName.endsWith ".req")
+    for entry in entries.qsort (·.fileName < ·.fileName) do
+      tally ← real ((entry.fileName.splitOn ".req").headD entry.fileName) (← IO.FS.readBinFile entry.path) step tally
+    if tally.failures == 0 then IO.println s!"build-test: all {tally.checks} checks passed"
+    else IO.println s!"build-test: {tally.failures} of {tally.checks} FAILED"
+    return if tally.failures == 0 then 0 else 1
   if let [dir] := args.filter (· != "write") then
     let entries := (← System.FilePath.readDir dir).filter (·.fileName.endsWith ".req")
     for entry in entries.qsort (·.fileName < ·.fileName) do

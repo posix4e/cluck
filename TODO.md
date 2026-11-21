@@ -249,8 +249,26 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   those `JauneConsensus` makes with the key as a number. The key's part of a signature takes 8 ms as a
   process on Lean's runtime; hashing the message to a point, which is public and still Jaune's, takes 29.
   What is and is not known about its timing is in `THREAT_MODEL.md`.
-- Not done: nothing has been built from pending transactions; no key is made or held and nothing is
-  signed; nothing has been sent to a relay; building has not been timed against a slot.
+- **A hole in the checker, found by the builder, and closed.** The first blocks built from pending
+  transactions were put to reth's own validator (below), and it refused one: the guest had run a
+  transaction for less gas than the node did. The cause was in the checker as much as the builder. Before
+  Amsterdam, Jaune records nothing of the account a contract calls, so an account the witness left out
+  and that only a contract's call reached was taken for empty, unnoticed. One mainnet block (26456381)
+  with each of 77 addresses left out of its witness in turn: the code as it stood answered "invalid" 32
+  times, for a valid block. What was written above on 2026-11-20, that no shortened witness was answered
+  wrongly, was true of the test chains it was run on and false of mainnet. Both reads are now recorded
+  (`posix4e/jaune`, in the compiled form of `accessDelegation`, unproved and said to be), and
+  `stateless-test real` and `build-test real` leave addresses out of real blocks' witnesses: 225 witnesses
+  of three mainnet blocks, none answered wrongly, 216 with no verdict; 114 for the builder, every block
+  built one the checker accepts with the whole witness.
+- Building from pending transactions, in shadow (`evm/builder/shadow`): each slot the host takes pending
+  transactions from reth's pool, has reth trace them and prove the state they touch at the parent block,
+  puts them to the guest, and hands what is built to `flashbots_validateBuilderSubmissionV5` on the same
+  node, which is the code relays run. Nothing is signed or sent. First runs, as a process: of 25 slots, 21
+  built a block the node judged valid, each ready 6.6 to 9.7 seconds before its slot, and the randomness
+  and withdrawals guessed for the slot were the next block's every time; the rest were slots lost to the
+  host (the head moving under it) or a witness too short for the block as a whole.
+- Not done: no key is made or held and nothing is signed; nothing has been sent to a relay.
 
 What is next, in order:
 

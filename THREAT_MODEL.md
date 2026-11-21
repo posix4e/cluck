@@ -122,8 +122,22 @@ into "no verdict", and never into "invalid".
 What that rests on is the read record being complete, and nothing proves it is. It was written by Jaune's
 author for another purpose (the access list Amsterdam puts in a block) and extended here to the forks
 before it. `stateless-test` leaves every piece of every witness out in turn and found three reads that
-went unrecorded, which were then closed; that it now finds none is evidence about the fixtures it runs,
-which hold no EIP-7702 authorization, no blob and no withdrawal. An answer of "valid" also says nothing of
+went unrecorded, which were then closed; that it then found none was evidence about the fixtures it runs,
+which hold no EIP-7702 authorization, no blob and no withdrawal, **and it was not enough**. On 2026-11-21 a
+fourth was found, by the node refusing a block the guest had built: before Amsterdam, Jaune records
+nothing of the account a contract calls. For as long as stateless requests had been accepted, a witness
+that left out an account only ever reached by a call from a contract got that account taken for empty and
+the block run on a state that never was. Put to one block of mainnet with each of 77 addresses left out
+of its witness in turn, the code as it stood answered "invalid" 32 times for a block that is valid. So the
+sentence above, that a short witness is answered with no verdict, was false of every image built before
+that day, and every "invalid" one of them gave is worth only what the witness it was given was worth.
+
+It is closed the way the others were, by recording the read: the account called and the account whose
+code runs for it, at the point every call instruction prices the call. `stateless-test real` and
+`build-test real` now leave addresses out of the witnesses of real blocks, where contracts call contracts
+that nothing else names: 225 witnesses of three mainnet blocks, none answered wrongly; and no block built
+from 114 that the checker refuses. What this shows is that four holes were found by looking and one by
+accident, not that there is no fifth. An answer of "valid" also says nothing of
 the parent: it is about this block on that parent, whatever chain the parent is or is not part of.
 
 **The makings of a block.** A request that begins `JBLD1` carries a header to be filled in, transactions
@@ -170,10 +184,13 @@ running guest. The OS's checker covers the two functions of `Mini/Secret.lean`, 
 them; the Lean and C compilers are between this source and the machine. And the host can time the guest as
 finely as it likes. So "constant time" here means written to be and read to be in one build, not proved.
 
-**A branch of Jaune.** The image now holds `posix4e/jaune`, eleven commits ahead of the upstream commit
+**A branch of Jaune.** The image now holds `posix4e/jaune`, twelve commits ahead of the upstream commit
 this section was written about. Four of them change how something is computed and prove the result the
 same (how EVM memory grows, a polynomial division, and what holds the machine's state while an instruction
-runs, the last through four theorems that the compiler is told to use). Three put code in the image that
+runs, the last through four theorems that the compiler is told to use). One makes the compiled code differ
+from the definition on purpose: `accessDelegation` as compiled records two more reads than as defined (the
+fix above), because writing them into the definitions of the four call instructions means carrying their
+gas and canonicity proofs across, which is owed. Three put code in the image that
 nothing proves equal to what Jaune defines, so compiled code and specification can differ in three places, each of which decides whether a
 block is valid:
 

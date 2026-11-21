@@ -14,6 +14,10 @@ is for: nothing left out of a witness can turn into a wrong answer.
 
     .lake/build/bin/stateless-test          (from evm/; add `all` for the fixture that takes a minute,
                                              `write` to make fixtures/stateless/ again)
+    .lake/build/bin/stateless-test real DIR [STEP]
+                                            (every NAME.req in DIR, a block of the real chain made by
+                                             witness/fetch, with every STEPth address, by default every
+                                             tenth, left out of its witness in turn)
 
 Run on Lean's own runtime. -/
 open Jaune Evm
@@ -126,8 +130,45 @@ def fixture (name : String) (shorten : Bool) (tally : Tally) (write : Bool := fa
     chain := next
   pure tally
 
+/-- A block of the real chain with its witness (a request made by `witness/fetch`), with every `step`th
+address left out of the witness's keys in turn. The fixtures above are small chains whose contracts call
+little; a block of mainnet is where one contract calls another that nothing else in the block names, and
+leaving such an account out is what went unnoticed until 2026-11-21: the call was not recorded as a read,
+the account was taken to be empty, and a valid block was answered invalid. -/
+def real (path : System.FilePath) (step : Nat) (tally : Tally) : IO Tally := do
+  let mut tally := tally
+  let name := path.fileName.getD ""
+  let some (request, _) := (Stateless.request (← IO.FS.readBinFile path)).run 0
+    | do IO.println s!"{name}: not a stateless request"; pure { tally with failures := tally.failures + 1 }
+  let wanted := Stateless.run request
+  if wanted.status != 0 then
+    IO.println s!"{name}: status {wanted.status} with its whole witness"
+    return { tally with failures := tally.failures + 1 }
+  let addresses := (request.keys.filter (·.size == 20)).toArray
+  let mut tried := 0
+  let mut noticed := 0
+  for turn in [0 : (addresses.size + step) / (step + 1)] do
+    let left := addresses[turn * (step + 1)]!
+    let got := Stateless.run { request with keys := request.keys.filter (· != left) }
+    tried := tried + 1
+    if noVerdict got then noticed := noticed + 1
+    else if !same got wanted then
+      IO.println s!"{name}: without the address {Stateless.hexOf left.toList}, status {got.status}"
+      tally := { tally with failures := tally.failures + 1 }
+  IO.println s!"{name}: {tried} of {addresses.size} addresses left out in turn, {noticed} answered with no verdict"
+  pure { tally with blocks := tally.blocks + 1, shortened := tally.shortened + tried, noticed := tally.noticed + noticed }
+
 def main (args : List String) : IO UInt32 := do
   let mut tally : Tally := {}
+  -- `stateless-test real DIR [STEP]`: only the blocks of the real chain in DIR.
+  if let "real" :: dir :: rest := args then
+    let step := (rest.head?.bind String.toNat?).getD 10 - 1
+    let entries := (← System.FilePath.readDir dir).filter (·.fileName.endsWith ".req")
+    for entry in entries.qsort (·.fileName < ·.fileName) do
+      tally ← real entry.path step tally
+    IO.println s!"blocks of the real chain: {tally.blocks} blocks, {tally.shortened} witnesses with an address \
+      left out, {tally.noticed} answered with no verdict, {tally.failures} answered wrongly"
+    return if tally.failures == 0 then 0 else 1
   for name in ["highGasUsage", "wallet2outOf3txsRevokeAndConfirmAgain", "DelegateCallSpam"] do
     tally ← fixture name true tally (args.contains "write")
   IO.println s!"three fixtures, witness whole and then one piece short: {tally.blocks} blocks, \

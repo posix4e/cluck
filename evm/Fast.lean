@@ -1,3 +1,5 @@
+import Fast.Bytes
+import Fast.Keccak
 import Fast.Spike
 
 /-! An execution engine written for speed, to take Jaune's place in what runs. So far only the trial that

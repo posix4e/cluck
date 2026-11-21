@@ -48,6 +48,14 @@ With it come a handful of compiled functions from Lean's library and from mathli
 linker takes because Jaune's compiled code calls them. Jaune is not what a node beside the guest would run,
 so "one flaw is not enough" is not obviously lost, but nothing here has been checked against that section.
 
+**Code of this project's in Jaune's place.** `evm/Fast/` is the start of an engine written for speed, to
+take Jaune's place piece by piece in what runs. The first piece in use is Keccak-256 (`Fast/Keccak.lean`):
+the witness trie now names and checks every node by it (`Evm.Trie.hashOf`), so a state root, and whether a
+witness node is the one its hash names, rest on it. Nothing proves it equal to Jaune's or to the standard.
+`evm-test` holds it to Jaune's on 614 inputs, every length from none to 300 bytes and some of many blocks,
+and the tests and saved blocks that compare roots with a node's would fail if it differed where they look.
+The EVM's own KECCAK256 and Jaune's tries are still Jaune's.
+
 **Start-up routines that do nothing.** `evm/rt/start.c` stands in for seven of mathlib's. If any code the
 service reaches reads a constant one of them would have built, it reads memory nothing has written. This is
 the rule "nothing that is not there may pass for something that is" broken on purpose, and the fixtures

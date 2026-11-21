@@ -2,6 +2,7 @@ import Jaune.Precompiles
 import Jaune.MessageCall.Exec
 import Evm
 import Fast.Spike
+import Fast.Keccak
 import Platform
 
 /-! Times Jaune's hashing, curve arithmetic and interpreter, on whichever runtime this is linked against.
@@ -82,6 +83,27 @@ def loopRun (n : Nat) : String :=
   | .ok d => s!"ok gasLeft {d.gasLeft} stack {d.stack.length}"
   | .error (_, d) => s!"error gasLeft {d.gasLeft}"
 
+def fastKeccakChain (n : Nat) (x : U256) : String := Id.run do
+  let mut b := Evm.Trie.wordBytes x
+  for _ in [0:n] do b := (Fast.Keccak.hash b 0 32).bytes
+  return (Evm.Trie.word b 0).toHex
+
+def jauneKeccakBytes (n : Nat) (size : Nat) : String := Id.run do
+  let mut b : ByteArray := ⟨Array.replicate size 0x5a⟩
+  let mut x : U256 := 0
+  for _ in [0:n] do
+    x := ByteArray.keccak 0 size b
+    b := b.set! 0 x.2.2.toUInt8
+  return x.toHex
+
+def fastKeccakBytes (n : Nat) (size : Nat) : String := Id.run do
+  let mut b : ByteArray := ⟨Array.replicate size 0x5a⟩
+  let mut d : Fast.Keccak.Digest := ⟨0, 0, 0, 0⟩
+  for _ in [0:n] do
+    d := Fast.Keccak.hash b 0 size
+    b := b.set! 0 (d.w3 >>> 56).toUInt8
+  return (Evm.Trie.word d.bytes 0).toHex
+
 def fastLoop (n : Nat) : String :=
   let out := Fast.Spike.bytesRun (loopCode n) 1000000000
   s!"halt {out.halt} gasLeft {out.gas} stack {out.depth}"
@@ -99,6 +121,11 @@ def main : IO UInt32 := do
   timed "bn254 pairing, one pair" fun _ => pairingOnce seed
   timed "modexp 2048-bit" fun _ => (powModOnce x).toHex
   timed "EVM loop, 200000 rounds of 8 opcodes" fun _ => loopRun (200000 * seed)
+  timed "fast keccak256 of 32 bytes x 5000" fun _ => fastKeccakChain 5000 x
+  timed "keccak256 of 32 bytes x 200000" fun _ => (keccakChain 200000 x).toHex
+  timed "fast keccak256 of 32 bytes x 200000" fun _ => fastKeccakChain 200000 x
+  timed "keccak256 of 532 bytes x 50000" fun _ => jauneKeccakBytes 50000 (532 * seed)
+  timed "fast keccak256 of 532 bytes x 50000" fun _ => fastKeccakBytes 50000 (532 * seed)
   timed "fast loop, stack as bytes, 200000 rounds of 8 opcodes" fun _ => fastLoop (200000 * seed)
   timed "fast loop, stack as bytes, 10000000 rounds of 8 opcodes" fun _ => fastLoop (10000000 * seed)
   timed "fast loop, stack as limbs, 10000000 rounds of 8 opcodes" fun _ => fastLimbs (10000000 * seed)

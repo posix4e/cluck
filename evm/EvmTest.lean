@@ -1,4 +1,5 @@
 import Evm
+import Fast.Keccak
 
 /-! Pure tests: `Evm.powMod` against Lean's own `Nat.powMod`, and the request format against itself and
 against input that is not a request, the attested answer's hash and framing, and the two things this
@@ -85,6 +86,20 @@ def main : IO UInt32 := do
       "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0" then
     failures := failures + 1
     IO.println "SHA-256 of a million bytes is not the standard's"
+  -- The fast engine's Keccak-256 against Jaune's, at every length from nothing to past two blocks, at a
+  -- few lengths of many blocks, and from a start that is not the array's.
+  let mut hashed := 0
+  for n in List.range 301 ++ [407, 408, 409, 1000, 4096, 5000] do
+    for start in [0, 7] do
+      let sample : ByteArray := ⟨(List.range (start + n)).map (fun i => (i * 197 + n * 13 + 5).toUInt8) |>.toArray⟩
+      let d := Fast.Keccak.hash sample start n
+      let u := ByteArray.keccak start n sample
+      hashed := hashed + 1
+      if (Fast.swap d.w0, Fast.swap d.w1, Fast.swap d.w2, Fast.swap d.w3) != (u.1.1, u.1.2, u.2.1, u.2.2)
+          || d.bytes != Evm.Trie.wordBytes u then
+        failures := failures + 1
+        IO.println s!"Keccak-256 of {n} bytes from {start} is not Jaune's"
+  IO.println s!"fast Keccak-256: {hashed} inputs against Jaune's"
   let challenge : ByteArray := ⟨(List.range 32).map (·.toUInt8) |>.toArray⟩
   let attested := Evm.Attest.tag ++ challenge ++ bytes
   if (Evm.Attest.asked? attested).map Evm.Attest.request != some bytes then

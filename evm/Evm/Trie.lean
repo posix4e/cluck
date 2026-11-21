@@ -1,4 +1,5 @@
 import Jaune.Transaction
+import Fast.Keccak
 
 /-! # A Merkle-Patricia trie that can be known in part
 
@@ -41,7 +42,9 @@ inductive Fault where
   /-- A key that is a prefix of another, or longer than the trie is deep: not a trie of equal-length keys. -/
   | shape
 
-def hashOf (bytes : ByteArray) : U256 := ByteArray.keccak 0 bytes.size bytes
+def hashOf (bytes : ByteArray) : U256 :=
+  let d := Fast.Keccak.hash bytes 0 bytes.size
+  ⟨⟨Fast.swap d.w0, Fast.swap d.w1⟩, ⟨Fast.swap d.w2, Fast.swap d.w3⟩⟩
 
 /-- The 32 bytes of a word, highest first. Written from its four 64-bit parts, with no list between. -/
 def wordBytes (w : U256) : ByteArray := Id.run do

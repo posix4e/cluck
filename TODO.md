@@ -425,6 +425,14 @@ The faster engine (`evm/Fast/`), step by step:
   runtime with no function added. What this is not: an engine. Eight instructions, one frame, no memory,
   no state, and an instruction is only a small part of what a block costs. Bounds are still checked
   through `Nat`, which costs a little and can go.
+- **Keccak-256 on 25 machine words in variables** (`evm/Fast/Keccak.lean`), the permutation and the sponge
+  as one loop reading the input where it lies. Against Jaune's on the minimal runtime: 200,000 hashes of
+  32 bytes in 0.11 seconds for 0.42 (3.7 times), 50,000 of 532 bytes in 0.10 for 0.29 (2.9 times). The mark
+  set for it was 5 times and it was not reached: Jaune's was less slow than supposed, and at about half a
+  microsecond a block this is near what the processor does in C. `evm-test` holds it to Jaune's on 614
+  inputs. The witness trie uses it now (`Evm.Trie.hashOf`): `trie-test`, `stateless-test`, `build-test`
+  pass, and the 21 saved blocks as a process on the minimal runtime give the same 21 answers in 61.6
+  seconds for 65.0 (two runs each), about 5% less. Not rebuilt or run: the TDX image, and the guest.
 
 The relay's own checks, hostile input and a week of validating delivered blocks, which were next before
 the aim changed, are set aside, not done.

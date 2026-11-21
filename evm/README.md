@@ -61,7 +61,7 @@ it, and continuous integration does not build it. What has been run and what it 
   `builder/standin-relay` is a relay's stand-in on this machine, which takes that SSZ apart again;
   `builder/shadow --guest-sends` runs slots through the two. `Evm/Seal.lean` is the key transactions
   are sealed to and the few that are kept; `Tls/Hpke.lean` is the sealing, as RFC 9180 has it;
-  `demo/seal.js` and `demo/seal.html` seal in a browser; `builder/shadow --sealed` hands one in and
+  `demo/seal.js` and `demo/seal.html` seal in a browser (`scripts/seal-check`, `demo/test-seal.mjs`); `builder/shadow --sealed` hands one in and
   looks for it afterwards in everything the host saw. `EfiMain.lean` is the machine with the four
   real relays (`evm-os`); `EfiShadow.lean` is the machine with a stand-in on the host whose key everyone
   knows (`evm-os-shadow`, `scripts/standin.py`). `scripts/run-ask dev|tdx [--live]` has the guest ask,

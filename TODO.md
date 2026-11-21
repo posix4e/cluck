@@ -577,6 +577,12 @@ times, and the block from the relay. Six stages:
   - `scripts/run-ask`: what is sealed to the guest's key is kept; sealed to another key, changed,
     too short, or empty, it is not; a 59th transaction of 9,000 bytes is refused; in TDX the key
     comes with a report whose 64 bytes are the hashes of the request and of the key.
+  - `demo/test-seal.mjs` does what the page does, against the running demo: the key's quote passes
+    every step, is for this key and this request and not for another, and the measurements are the
+    recorded ones.
+  - The image built from `2d7a74f` with a clean tree is `a6fbc0d4…d3fc67e` (the shadow image
+    `df9fa571…c8ebdaf5`), RTMR1 `00df554e…061a142a`; `run-fixtures tdx --limits --key`, `run-ask tdx`
+    and `check-secret-code tdx` pass on it, and the demo runs it since, with the page at `/seal`.
   - What is not hidden, and was not meant to be: the accounts and slots (above); the length of the
     transaction; that a block has a sealed transaction in it, and how many; when it was handed in.
     What is not done: a transaction is tried again in every block until its slot passes, and the

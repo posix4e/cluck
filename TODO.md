@@ -319,6 +319,22 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   What a win would cost, again, over the 189 of these slots whose winning bid the relays' public data
   still gave: the winning bid 0.0099 ETH at the median, the guest's 0.0002; short by 0.0067 or less in a
   quarter of slots, 0.0097 at the median, 0.2746 at the most.
+- **A second run, 789 slots, and the line again not reached** (2026-11-21, TDX, image `346c4ffd…61df038a`,
+  with the time limit and the host following headers by parent hash; stopped by hand at 789 of 1,300 once
+  it could no longer reach the line). 765 slots built a block: all 765 judged valid by the node's
+  validator, all signed, none late (the closest was ready 3.1 seconds before its slot, the median 8.9),
+  the slot's randomness and withdrawals right 764 times of 764. The guest took 0.24 seconds at the median
+  and 2.51 at the most, over 2 seconds in 8 slots, whose requests are kept. 24 slots built nothing, and
+  the longest run of good slots was 109: a transaction that stayed in the pool touches one contract
+  (`0x06450dee…599a6fb8`) at more than 1,024 storage slots, the node proves at most 1,024 slots of an
+  account in one call, and the host gave the slot up. The fault was the host's again; it now asks in
+  pieces and joins them (`SHADOW_PROOF_KEYS`), checked by forcing pieces of 8 for eight slots in TDX, all
+  valid. So in two runs 1,810 blocks were built, none wrong, and every break of the line but one late
+  block was a slot with no block. **1,000 in a row has not been shown**, and it was decided on 2026-11-21
+  to go to the relays without a third run: a slot with no block sends nothing, and no block is sent that
+  the node's validator has not judged valid. What a win would cost, over 283 of these slots that one of
+  the four relays delivered: the winning bid 0.0076 ETH at the median; a top-up of 0.01 ETH would have
+  beaten it in 66% of them, 0.015 in 81%, 0.02 in 87%, 0.03 in 91%, 0.05 in 95%.
 - **Sending bids is written and has been sent to no relay.** `builder/shadow --live --relays …` posts each
   bid to the relays named, and only a block the node's validator judged valid, signed, before its slot, to
   relays that hold the registration it was built for; it asks the guest for a report with each answer
@@ -335,8 +351,7 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   low-priority, fully simulated); bloXroute wants a paid plan; a bid below a relay's floor is skipped, not
   refused, and Flashbots drops an empty block without saying so.
 - Not done: no relay has been sent anything, so no relay has said whether it accepts a block or a
-  signature from here; 1,000 slots in a row with a valid block ready in time (a second run, with the time
-  limit and the host's fix, image `346c4ffd…61df038a`, was started on 2026-11-21 and is not finished); the
+  signature from here; 1,000 slots in a row with a valid block ready in time (two runs fell short, above); the
   report that ties the key to the image has not been fetched and checked by anything outside; the order privacy a builder in a trust domain is for:
   transactions still reach the guest in the clear, through the host.
 

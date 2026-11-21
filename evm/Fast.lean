@@ -8,6 +8,7 @@ import Fast.Machine
 import Fast.Interp
 import Fast.Tx
 import Fast.Block
+import Fast.Bn254
 
 /-! An execution engine written for speed, to take Jaune's place in what runs: the 256-bit word and its
 arithmetic (`Word`, `Wide`), Keccak-256, the world as accounts and storage fetched when touched with a

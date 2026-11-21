@@ -1,5 +1,6 @@
 import Evm.Stateless
 import Fast.Block
+import Fast.Bn254
 
 /-! Between Jaune's types and the fast engine's, for as long as both are here: a block as Jaune decodes it
 made into what `Fast.runBlock` takes, the state a witness gave made into what stands behind the engine's
@@ -26,8 +27,9 @@ def precompiles (fork : Fork) : Array Fast.Word :=
   let upTo17 := (List.range 17).toArray.map fun i => Fast.Word.ofUInt64 (i + 1).toUInt64
   if osaka fork then upTo17.push (Fast.Word.ofUInt64 0x100) else upTo17
 
-/-- Jaune's precompiled contracts as the engine's host. Each call goes through lists of bytes both ways. -/
-def host (fork : Fork) : Fast.Host :=
+/-- Jaune's precompiled contracts as a host: every one of them, each call going through lists of bytes both
+ways. What the engine's own are held to. -/
+def jauneHost (fork : Fork) : Fast.Host :=
   let known := precompiles fork
   { isPrecompile := fun a => a.small && known.any (· == a)
     precompile := fun a input gas =>
@@ -38,6 +40,36 @@ def host (fork : Fork) : Fast.Host :=
       | .ok cost output =>
         if cost ≤ gas.toNat then ⟨true, gas - cost.toUInt64, ⟨output.toArray⟩⟩ else ⟨false, 0, ByteArray.empty⟩
       | .error _ _ => ⟨false, 0, ByteArray.empty⟩ }
+
+/-- The engine's host: the precompiled contracts the engine has of its own (the three on bn254), at the
+prices the fork's rules give, and Jaune's for the rest. A contract that is given too little gas, or input
+that is not what it takes, fails and keeps all it was given. -/
+def host (fork : Fork) : Fast.Host :=
+  let jaune := jauneHost fork
+  let prices := fork.ruleSet.bn254
+  let failed : Fast.Precompiled := ⟨false, 0, ByteArray.empty⟩
+  let word (b : Bool) : ByteArray := (ByteArray.mk (Array.replicate 31 0)).push (if b then 1 else 0)
+  { isPrecompile := jaune.isPrecompile
+    precompile := fun a input gas =>
+      if a.w0 == 6 then
+        let cost := prices.add.toUInt64
+        if gas < cost then failed else
+        match Fast.Bn254.addPoints input with
+        | some out => ⟨true, gas - cost, out⟩
+        | none => failed
+      else if a.w0 == 7 then
+        let cost := prices.mul.toUInt64
+        if gas < cost then failed else
+        match Fast.Bn254.mulPoint input with
+        | some out => ⟨true, gas - cost, out⟩
+        | none => failed
+      else if a.w0 == 8 then
+        let cost := (prices.pairingPerPair * (input.size / 192) + prices.pairingBase).toUInt64
+        if gas < cost then failed else
+        match Fast.Bn254.pairingCheck input with
+        | some holds => ⟨true, gas - cost, word holds⟩
+        | none => failed
+      else jaune.precompile a input gas }
 
 /-- What a witness gave, as what stands behind the engine's world. An account or slot the witness did not
 give is answered as not there: whether that was right is `Evm.Stateless.checkReads`'s to say afterwards. -/

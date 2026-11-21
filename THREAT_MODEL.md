@@ -77,6 +77,14 @@ have to match what the block's maker claimed; a flaw that makes a right block di
 "invalid", which is the likelier kind. Both paths are in the image; nothing but the first five bytes of a
 request chooses between them, and the builder still uses Jaune.
 
+On that second way in, three precompiled contracts are this project's too: addition and multiplication on
+bn254 and the pairing check (`Fast/Bn254.lean`), which is what zero-knowledge verifiers on the chain call.
+A pairing check that said yes to a false proof would let a block that accepts the proof look valid only if
+the block's maker had claimed the same; one that said no to a true proof makes a valid block look invalid.
+`bn254-test` holds the three to Jaune's on some twelve hundred inputs, among them every way of being
+malformed it could make but one: a point on the twisted curve outside the pairing's subgroup, which the
+code refuses by multiplying by the group's order and which no test here has shown it refusing.
+
 **Start-up routines that do nothing.** `evm/rt/start.c` stands in for seven of mathlib's. If any code the
 service reaches reads a constant one of them would have built, it reads memory nothing has written. This is
 the rule "nothing that is not there may pass for something that is" broken on purpose, and the fixtures

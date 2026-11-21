@@ -515,6 +515,21 @@ The faster engine (`evm/Fast/`), step by step:
   - Not run: the engine in the guest (the image has not been rebuilt since it could not answer `JWIF1`);
     Ethereum's test suites; the 100 further blocks on the minimal runtime. The builder does not use the
     engine.
+- **bn254 on machine words** (2026-11-21; `evm/Fast/Bn254.lean`): the field in Montgomery form on four
+  words, the tower above it, both groups, and the optimal ate pairing, for the three precompiled contracts
+  that use the curve. Its constants were worked out from the curve's prime, order and parameter, not
+  copied. `bn254-test`: the field against `Nat` on 3,000 pairs, and the three contracts against Jaune's on
+  760 additions, 413 multiplications and 42 pairing checks (points at infinity, points not on the curve,
+  numbers not under the prime, inputs short and long, gas one short of enough): the same success, gas and
+  bytes every time. All 121 blocks still come out as their headers have them. **On the minimal runtime
+  the 21 blocks through the service now take 27.5 seconds by the engine for 64.9 by Jaune, 2.4 times, the
+  same 21 answers; the median block 1.25 seconds for 2.61.** Running the blocks fell from 30.3 seconds
+  to 10.2. What the 26 seconds are now: running the blocks 10.2 (the other precompiled contracts are
+  still Jaune's: ecrecover, the KZG check on BLS12-381, modexp), recovering senders 4.7, reading the
+  witness 2.8, the state root 2.5, the receipts root by Jaune's trie 2.3. Not tested: a point of the
+  twist that is on its curve and not in the pairing's subgroup (making one needs a square root the test
+  does not have; the check is there, by multiplying by the order). Nothing is proved, and none of it is
+  constant time, which nothing here needs.
 
 What is known to be left in the time: the minimal runtime's allocator (issue #1), the stack held as a
 list whose length is counted at every push (3%), extension fields held as lists of big numbers (13%, in

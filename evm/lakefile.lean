@@ -95,6 +95,11 @@ lean_exe «engine-time» where
   root := `EngineTime
   moreLinkObjs := #[platformHosted, clockHosted]
 
+/-- The engine's bn254 against `Nat` and against Jaune's three precompiled contracts. -/
+@[default_target]
+lean_exe «bn254-test» where
+  root := `Bn254Test
+
 /-- Times the hashing, the curves and the interpreter, on whichever runtime it is linked against. -/
 @[default_target]
 lean_exe «evm-bench» where

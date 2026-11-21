@@ -31,7 +31,8 @@ it, and continuous integration does not build it. What has been run and what it 
 - `Fast/`: an execution engine written for speed, to take Jaune's place in what runs; it imports nothing of
   Jaune. `Word.lean` and `Wide.lean` are the 256-bit word; `Keccak.lean` the hash; `State.lean` the world
   as accounts and storage fetched when touched, with a journal; `Machine.lean` and `Interp.lean` the
-  interpreter; `Tx.lean` and `Block.lean` a transaction and a block. `Evm/Bridge.lean` is where Jaune's
+  interpreter; `Tx.lean` and `Block.lean` a transaction and a block; `Bn254.lean` the curve three
+  precompiled contracts use (`Bn254Test.lean` holds it to Jaune's). `Evm/Bridge.lean` is where Jaune's
   types and the engine's meet, and `Evm/Engine.lean` is a stateless request judged by the engine: the
   same request with `JWIF1` for its first five bytes, the same answer. `FastWordTest.lean`,
   `FastOpTest.lean` and `FastReplay.lean` hold the engine to `Nat`, to Jaune's interpreter and to the

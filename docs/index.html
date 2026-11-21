@@ -91,7 +91,7 @@
   <div class="top">
     <span class="name">cluck</span>
     <nav>
-      <a href="#guest">The guest</a><a href="#proof">Attestation</a><a href="#evm">Block validation</a>
+      <a href="#guest">The guest</a><a href="#proof">Attestation</a><a href="#evm">Ethereum blocks</a>
       <a href="https://github.com/posix4e/cluck">GitHub</a>
     </nav>
   </div>
@@ -180,12 +180,13 @@
 
   <section id="evm">
     <div class="eyebrow">An experiment on top</div>
-    <h2>Ethereum block validation as the service</h2>
+    <h2>Ethereum blocks as the service: checked, and now built</h2>
     <p class="wide">The service in <code>evm/</code> is <a href="https://github.com/skbaek/jaune">Jaune</a>, an
       executable specification of the EVM written in Lean by someone else, for proofs. Linked against this
       runtime it becomes a machine that takes blocks, re-executes every transaction, and refuses a block
-      unless the state root comes out as its header claims. The aim is the check a relay runs on a builder's
-      block, done in a trust domain by an implementation that shares nothing with the node beside it.</p>
+      unless the state root comes out as its header claims. The aim is a block builder: the one piece of
+      Ethereum's block market that is run in trust domains today, there on a Linux virtual machine, here
+      with no Linux under it.</p>
 
     <div class="two">
       <div>
@@ -221,11 +222,28 @@
       </div>
     </div>
 
-    <div class="note"><strong>What this is not, yet:</strong> it is only just fast enough for a relay, and
-      one block in a hundred still takes 19 seconds; it checks no bid and no payment to a proposer; it is connected to no relay or builder; a hostile block can
-      still hold the machine for a long time; and three of the fast paths it now runs are tested against
-      the specification, not proved equal to it. Those are the pieces of work in progress. The shortcuts
-      already taken are listed in the repository, not here.</div>
+    <h3 id="builder">Building blocks, in shadow</h3>
+    <p class="wide">Since 21 November 2026 the guest also builds. Each slot, a program on the host hands it
+      the transactions pending in public and proofs of the state they touch. The guest orders them by what
+      they pay the proposer, runs them, throws out any that read something the proofs do not cover, and
+      answers with a block header and a bid for it, signed with a key it drew when it started and that
+      never leaves it. It is told how long it has, and ends the block with what is in it when that is up.
+      Nothing is sent to a relay yet. Each block goes instead to the node's own validator, which is the
+      code relays run on a builder's block.</p>
+    <p class="wide">Over 1,300 consecutive mainnet slots in the TDX guest, 1,045 blocks were built. The
+      validator judged all 1,045 valid and every signature checked from outside. The other 255 slots were
+      lost in one stretch to a fault in the host program after the chain replaced a block, and one block
+      came back after its slot had begun; both have been dealt with and the run is being repeated. The
+      line set for going further is 1,000 slots in a row, each with a valid block two seconds early.</p>
+
+    <div class="note"><strong>What this is not, yet:</strong> no block built here has been sent to a
+      relay, so none is on the chain. The builder sees only transactions that are already public, and they
+      reach it in the clear through the host, so it keeps nobody's orders private. Its blocks are small and
+      would win a slot only with a payment added on top. Its signing is written to take the same time
+      whatever the key and was checked in the places looked at, not proved. As a checker, one block in a
+      hundred still takes 19 seconds and a hostile block can hold the machine for a long time. Three fast
+      paths and one correction in the EVM it runs are tested against the specification, not proved equal
+      to it. The shortcuts already taken are listed in the repository, not here.</div>
   </section>
 
   <section id="build">

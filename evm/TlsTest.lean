@@ -1,4 +1,5 @@
 import Tls
+import Evm.Relays
 import Platform
 import Std.Data.HashMap
 
@@ -193,6 +194,11 @@ def main : IO UInt32 := do
   if refused != tried then
     failures := failures + 1
     say s!"a sealed message with something changed opened {tried - refused} times of {tried}"
+  -- The roots written into the images are certificates this reads, every one.
+  for table in [Evm.Relays.live, Evm.Relays.standIn] do
+    if table.anchors.size != table.roots.size || table.roots.isEmpty then
+      failures := failures + 1
+      say s!"the roots of {table.what}: {table.anchors.size} of {table.roots.size} can be read"
   say s!"the standards' examples: {printed.length + 2}; a sealed message changed in {tried} ways, refused {refused} times"
   if failures == 0 then say "tls-test: all checks passed" else say s!"tls-test: {failures} FAILED"
   return if failures == 0 then 0 else 1

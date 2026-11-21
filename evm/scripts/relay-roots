@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Writes `Evm/Roots.lean`: the certificates of the roots an image trusts, as bytes in its text.
+
+    scripts/relay-roots > Evm/Roots.lean        (from evm/)
+
+For the image that talks to real relays, four roots out of this machine's own store (/etc/ssl/certs, which
+Ubuntu's ca-certificates package fills from Mozilla's list): Let's Encrypt's two and two of Google's, which
+are what the four relays' certificates lead to. Each is written with its SHA-256, to be compared with what
+its owner publishes. For the shadow image, the one root of `scripts/standin.py`, whose key everyone knows;
+its bytes are kept from the file as it is when there is one, because making it again signs it again.
+
+The day this is run is written too: an image judges no certificate at a time earlier than that."""
+import datetime, hashlib, os, re, ssl, sys
+here = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True
+sys.path.insert(0, here)
+import standin
+
+STORE = [("isrgX1", "ISRG Root X1 (Let's Encrypt, RSA)", "/etc/ssl/certs/ISRG_Root_X1.pem"),
+         ("isrgX2", "ISRG Root X2 (Let's Encrypt, P-384)", "/etc/ssl/certs/ISRG_Root_X2.pem"),
+         ("gtsR1", "GTS Root R1 (Google, RSA)", "/etc/ssl/certs/GTS_Root_R1.pem"),
+         ("gtsR4", "GTS Root R4 (Google, P-384)", "/etc/ssl/certs/GTS_Root_R4.pem")]
+target = os.path.join(os.path.dirname(here), "Evm/Roots.lean")
+kept = re.search(r'def standIn : ByteArray := unhex\s*"([0-9a-f]+)"', open(target).read() if os.path.exists(target) else "")
+stand_in = bytes.fromhex(kept.group(1)) if kept else standin.root_certificate()
+today = datetime.datetime.now(datetime.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+def literal(der):
+    text = der.hex()
+    return "unhex (\n  " + " ++\n  ".join(f'"{text[i:i + 100]}"' for i in range(0, len(text), 100)) + ")"
+
+print('''/-! The certificates of the roots an image trusts. Written by `scripts/relay-roots`, which says where each
+comes from; do not edit. `Evm/Relays.lean` says which image trusts which. -/
+
+namespace Evm.Roots
+
+/-- Bytes from their hexadecimal digits. -/
+def unhex (s : String) : ByteArray :=
+  let digit (c : UInt8) : UInt8 := if c ≤ 0x39 then c - 0x30 else c - 0x57
+  let b := s.toUTF8
+  (List.range (b.size / 2)).foldl (fun out i => out.push (digit b[2 * i]! * 16 + digit b[2 * i + 1]!)) ByteArray.empty
+''')
+print(f"/-- The day this file was written, in seconds since 1970 ({today.date()}): no certificate is judged at an")
+print("earlier time, whatever time is named. -/")
+print(f"def written : Nat := {int(today.timestamp())}\n")
+for name, what, path in STORE:
+    der = ssl.PEM_cert_to_DER_cert(open(path).read())
+    print(f"/-- {what}, from {path}.\nSHA-256 {hashlib.sha256(der).hexdigest()}. -/")
+    print(f"def {name} : ByteArray := {literal(der)}\n")
+print("/-- The stand-in's root (`scripts/standin.py`): its key is known to everyone. For the shadow image alone. -/")
+text = stand_in.hex()
+print(f'def standIn : ByteArray := unhex\n  "{text}"\n')
+print("end Evm.Roots")

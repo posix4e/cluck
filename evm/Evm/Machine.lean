@@ -1,6 +1,8 @@
 import Evm
 import Evm.Bid
 import Evm.Ask
+import Evm.Send
+import Evm.Seal
 import Evm.Outbound
 import Kernel.Efi
 import Kernel.Net.Tcp
@@ -102,24 +104,46 @@ structure Client where
   leaving : Bool := false
   deriving Inhabited
 
-/-- A question on its way to a relay, and whom the answer is for. -/
+/-- A call on its way to a relay, and whom its outcome is for: a client that asked a question, or a
+block being sent to several relays at once. -/
 structure Job where
   call : Outbound.Call
   client : Tcp.Key
   /-- The challenge and request, when the answer is to carry a report (`Evm/Attest.lean`). -/
   asked : Option ByteArray
   started : Nat
+  /-- The relay's place in the image's list. -/
+  place : Nat := 0
+  /-- The sending this is part of, when it carries a block. -/
+  sending : Option Nat := none
   told : Bool := false
 
-/-- An answer from a relay, or none, ready to go to the client that asked. -/
+/-- A block on its way to several relays: what each has said so far, and how many are still to say. -/
+structure Sending where
+  id : Nat
+  client : Tcp.Key
+  asked : Option ByteArray
+  started : Nat
+  /-- The answer to the request to build and bid, or what stands in its place. -/
+  bid : ByteArray
+  /-- What the witness lacked for transactions left out. -/
+  wanted : Array Fast.Lack := #[]
+  left : Nat
+  told : Array (Nat × Outbound.Outcome) := #[]
+
+/-- An answer ready to go to the client that waits for it, and a line about it for the console. -/
 structure Finished where
   client : Tcp.Key
   asked : Option ByteArray
   started : Nat
-  outcome : Outbound.Outcome
+  reply : ByteArray
+  said : String
 
 structure State where
   key : Evm.Bid.Key
+  /-- The key transactions are sealed to, and those that have been (`Evm/Seal.lean`). -/
+  sealing : Seal.Key
+  pool : Seal.Pool := {}
   relays : Relays.Table
   anchors : Array Tls.X509.Anchor
   wire : Outbound.Wire
@@ -127,6 +151,8 @@ structure State where
   nextIpId : UInt32 := 0
   clients : Array Client := #[]
   jobs : Array Job := #[]
+  sendings : Array Sending := #[]
+  nextSending : Nat := 0
   finished : Array Finished := #[]
   lastTick : Nat := 0
 
@@ -134,6 +160,37 @@ namespace State
 
 def removeClient (s : State) (key : Tcp.Key) : State :=
   { s with clients := s.clients.filter (·.key != key) }
+
+def words (outcome : Outbound.Outcome) : String :=
+  match outcome with
+  | .answered status body => s!"status {status}, {body.size} bytes"
+  | .failed why => s!"no answer: {why}"
+
+/-- A call has its outcome. A question's goes to the client that asked. A block's is kept with those of
+the other relays it went to, and when the last is in they go to the client together. -/
+def heard (s : State) (job : Job) (outcome : Outbound.Outcome) : State :=
+  match job.sending with
+  | none =>
+    let reply := match outcome with
+      | .answered status body => Ask.answered status body
+      | .failed why => Ask.unanswered why
+    let done : Finished :=
+      { client := job.client, asked := job.asked, started := job.started, reply, said := s!"a relay asked: {words outcome}" }
+    { s with finished := s.finished.push done }
+  | some id =>
+    match s.sendings.findIdx? (·.id == id), s.sendings.find? (·.id == id) with
+    | some i, some sending =>
+      let sending := { sending with left := sending.left - 1, told := sending.told.push (job.place, outcome) }
+      if sending.left > 0 then { s with sendings := s.sendings.set! i sending }
+      else
+        -- In the order of the image's list, whatever order they answered in.
+        let told := sending.told.qsort (fun a b => a.1 < b.1)
+        let said := ", ".intercalate (told.toList.map fun (place, outcome) => s!"relay {place}: {words outcome}")
+        let done : Finished :=
+          { client := sending.client, asked := sending.asked, started := sending.started,
+            reply := Send.answer sending.bid told sending.wanted, said := s!"a block sent: {said}" }
+        { s with sendings := s.sendings.eraseIdxIfInBounds i, finished := s.finished.push done }
+    | _, _ => s
 
 /-- One of the calls out is told something, and what it wants sent is collected. A call that has its
 outcome hands it over once; one that is over is forgotten. -/
@@ -144,9 +201,7 @@ def stepJob (s : State) (now : Nat) (i : Nat) (input : Outbound.Input) (out : Ar
     let (call, wire, frames) := job.call.step now s.wire input
     let s := { s with wire }
     let (job, s) := match call.outcome?, job.told with
-      | some outcome, false =>
-        ({ job with call, told := true },
-         { s with finished := s.finished.push { client := job.client, asked := job.asked, started := job.started, outcome } })
+      | some outcome, false => ({ job with call, told := true }, s.heard job outcome)
       | _, _ => ({ job with call }, s)
     let jobs := if call.over then s.jobs.eraseIdxIfInBounds i else s.jobs.set! i job
     ({ s with jobs }, out ++ frames)
@@ -277,6 +332,21 @@ def begin (s : State) (now : Nat) (key : Tcp.Key) (asked : Option ByteArray) (ca
   let (s, out) := s.stepJob now (s.jobs.size - 1) .tick #[]
   (out, s)
 
+/-- A block begun on its way to relays for a client, which waits for all of them. Each call is paired
+with its relay's place in the list. -/
+def beginSending (s : State) (now : Nat) (key : Tcp.Key) (asked : Option ByteArray) (bid : ByteArray)
+    (wanted : Array Fast.Lack) (calls : Array (Nat × Outbound.Call)) : Array ByteArray × State :=
+  let id := s.nextSending
+  let first := s.jobs.size
+  let s := { s with
+    nextSending := id + 1
+    clients := s.clients.map fun (c : Client) => if c.key == key then { c with waiting := true } else c
+    sendings := s.sendings.push { id, client := key, asked, started := now, bid, wanted, left := calls.size }
+    jobs := calls.foldl (fun jobs (place, call) => jobs.push { call, client := key, asked, started := now, place, sending := some id }) s.jobs }
+  -- From the last to the first, as in `stepJobs`: one that fails at once is forgotten at once.
+  let (s, out) := (List.range calls.size).reverse.foldl (fun (s, out) i => s.stepJob now (first + i) .tick out) (s, #[])
+  (out, s)
+
 end State
 
 abbrev M := StateT State IO
@@ -309,11 +379,8 @@ def deliver : M Unit := do
   let finished ← modifyGet fun s => (s.finished, { s with finished := #[] })
   for done in finished do
     let now := (← Efi.millis).toNat
-    let (reply, said) := match done.outcome with
-      | .answered status body => (Ask.answered status body, s!"status {status}, {body.size} bytes")
-      | .failed why => (Ask.unanswered why, s!"no answer: {why}")
-    Platform.write s!"evm: a relay asked: {said}, {now - done.started} ms\n".toUTF8
-    let reply ← attested done.asked reply
+    Platform.write s!"evm: {done.said}, {now - done.started} ms\n".toUTF8
+    let reply ← attested done.asked done.reply
     transmit (← modifyGet (·.reply now done.client (frame reply) true))
 
 /-- One look at the network: a frame read if there is one and acted on, the timers every 20 ms, and
@@ -337,15 +404,51 @@ def pump : M Bool := do
 of the others. A request for a bid may name the milliseconds it allows for transactions, counted from
 here, where the whole request has arrived; this machine's clock is what says they have run out. Between
 transactions it also looks at the network. -/
-def serveWith (request : ByteArray) : M ByteArray := do
-  if !Evm.Bid.mine request then return ← IO.lazyPure fun _ => Evm.serve request
+def buildWith (request : ByteArray) (more : Array ByteArray := #[]) : M Evm.Bid.Outcome := do
+  if !Evm.Bid.mine request then return { reply := ← IO.lazyPure fun _ => Evm.serve request }
   let key := (← get).key
   let allowed := Evm.Bid.allowed request
   let stopAt := (← Efi.millis).toNat + allowed
   let over : M Bool := do
     let _ ← pump
     if allowed == 0 then pure false else return (← Efi.millis).toNat ≥ stopAt
-  Evm.Bid.serveWith over key request
+  Evm.Bid.buildWith over key request more
+
+def serveWith (request : ByteArray) : M ByteArray := do return (← buildWith request).reply
+
+/-- A block built, bid for, and sent to relays: a call out to each relay asked for, or the answer at once
+when there is nothing to send. The transactions sealed to this machine that are good for the slot are
+tried with those the request proposes; if any goes in, the request's sender is not shown the block. -/
+def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Unit := do
+  let started := (← Efi.millis).toNat
+  let finish (bid : ByteArray) (wanted : Array Fast.Lack) (why : String) : M Unit := do
+    Platform.write s!"evm: a block not sent: {why}\n".toUTF8
+    let reply ← attested asked (Send.answer bid #[] wanted)
+    transmit (← modifyGet (·.reply (← Efi.millis).toNat key (frame reply)))
+  let refused := ({ status := 5 } : Evm.Build.Response).encode
+  let some r := Send.request? request | finish refused #[] "a request that cannot be read"
+  if r.seconds < Relays.earliest then return ← finish refused #[] "a time before this image's roots were written down"
+  -- The sealed transactions still good for this slot; those whose time is up are dropped here.
+  let slot := Evm.Bid.slotOf r.bid
+  let more ← modifyGet fun s => let (pool, more) := s.pool.forSlot slot; (more, { s with pool })
+  let built ← buildWith r.bid more
+  let now := (← Efi.millis).toNat
+  let sealed := if built.added.isEmpty then "" else s!", {built.added.size} sealed transactions in it"
+  Platform.write s!"evm: status {built.reply[0]!}, {now - started} ms{sealed}\n".toUTF8
+  let bid := if built.added.isEmpty then built.reply else Send.hidden built.added.size
+  let some submission := built.submission | finish bid built.wanted "no block was built"
+  let relays := (← get).relays
+  let anchors := (← get).anchors
+  let mut calls : Array (Nat × Outbound.Call) := #[]
+  for place in [0:relays.relays.size] do
+    if (r.relays >>> place) % 2 == 1 then
+      let some relay := relays.relays[place]? | continue
+      let random ← try Platform.random Outbound.randomSize.toUSize catch _ => pure .empty
+      calls := calls.push (place, { Outbound.Call.start now relay.name relay.port relay.address anchors r.seconds
+                                      (Send.question relay.name submission) random r.allowed with limit := 65536 })
+  if calls.isEmpty then return ← finish bid built.wanted "no relay of this image was named"
+  Platform.write s!"evm: sending {submission.size} bytes to {calls.size} relays\n".toUTF8
+  transmit (← modifyGet (·.beginSending now key asked bid built.wanted calls))
 
 /-- A question for a relay: a call out begun, or the reason there can be none. -/
 def ask (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Unit := do
@@ -380,6 +483,14 @@ partial def work : M Unit := do
       | some asked => (some asked, Evm.Attest.request asked)
       | none => (none, request)
     if Ask.mine inner then ask key asked inner
+    else if Send.mine inner then send key asked inner
+    else if Seal.mine inner then
+      -- The sealing key asked for, or a sealed transaction handed in: answered at once, and nothing
+      -- said on the console of what was in it.
+      let answer ← modifyGet fun s => let (pool, answer) := Seal.serve s.sealing s.pool inner; (answer, { s with pool })
+      let reply ← attested asked answer
+      Platform.write s!"evm: status {answer[0]!}, 0 ms\n".toUTF8
+      transmit (← modifyGet (·.reply (← Efi.millis).toNat key (frame reply)))
     else
       let reply ← attested asked (← serveWith inner)
       let ended ← Efi.millis
@@ -405,8 +516,14 @@ def run (relays : Relays.Table) : IO UInt32 := do
     return 2
   if let some announcement := Internet.solicit cfg cfg.ipv4 then Efi.send announcement
   let key ← drawKey
+  -- The key transactions are sealed to: 32 bytes from the same source, which X25519 takes as they are.
+  let drawn ← Platform.random 32
+  if drawn.size != 32 then
+    Platform.write "evm: no key for sealing could be drawn\n".toUTF8
+    return 2
+  let sealing := Seal.Key.of drawn
   Platform.write s!"evm: connects out only to {relays.what}\n".toUTF8
   Platform.write "evm: Ethernet ready, serving TCP 5005\n".toUTF8
-  serve { key, relays, anchors, wire := { cfg, tcp := { listenPort := servicePort } } }
+  serve { key, sealing, relays, anchors, wire := { cfg, tcp := { listenPort := servicePort } } }
 
 end Evm.Machine

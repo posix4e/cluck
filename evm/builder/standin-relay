@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""A stand-in for a relay, on this machine: it takes a block and bid posted to it over TLS, takes the SSZ
+apart, and writes down what it found.
+
+    builder/standin-relay --out DIR [--port 5443]        (from evm/)
+
+It is `relay.test`: its certificate is signed by the stand-in's root, whose key everyone knows
+(`scripts/standin.py`), and the shadow image (`EfiShadow.lean`) is the only image that believes it. It
+listens on loopback, which is where QEMU takes the guest's connections to 10.0.2.2.
+
+POST /relay/v1/builder/blocks with `Content-Type: application/octet-stream` and `Eth-Consensus-Version:
+fulu` is read as the builder API's request to submit a block, in SSZ (the layout of go-builder-client's
+`fulu.SubmitBlockRequest`). What it holds is written to DIR/BLOCKHASH.json in the JSON form of the same
+request, which is what `builder/shadow` makes of a block when it puts one together itself, so the two can
+be laid side by side; the bytes as they came go to DIR/BLOCKHASH.ssz. The answer is 200 with nothing in
+it, as a relay's is. Bytes that are not such a request, or have something left over, get 400 and the
+reason. GET of any path gets `[]`.
+
+It checks nothing about the block or the signature: `builder/shadow` has the node's validator do that.
+This is a decoder by the same hand as the encoder it reads (`Evm/Submit.lean`), so it shows the two agree
+and that the pieces survive the trip, not that a real relay would take the bytes."""
+import http.server, json, os, ssl, struct, sys, tempfile
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.join(here, "scripts"))
+import standin
+
+hexed = lambda b: "0x" + b.hex()
+number = lambda b: str(int.from_bytes(b, "little"))
+
+class Malformed(Exception): pass
+def need(condition, why):
+    if not condition: raise Malformed(why)
+
+def offsets(b, at, count, fixed):
+    """`count` four-byte places where the parts of varying length begin, which must begin where the fixed
+    part ends, run in order, and end with the bytes."""
+    found = list(struct.unpack_from(f"<{count}I", b, at)) + [len(b)]
+    need(found[0] == fixed and all(a <= c for a, c in zip(found, found[1:])), "parts of varying length out of place")
+    return [b[a:c] for a, c in zip(found, found[1:])]
+
+def each(b, size, what):
+    need(len(b) % size == 0, f"{what} of the wrong length")
+    return [b[i:i + size] for i in range(0, len(b), size)]
+
+def decode(b):
+    """The JSON form of an SSZ `SubmitBlockRequest` of Fulu."""
+    # The bid is 236 bytes; then three places, then the signature's 96: 344 before anything of varying length.
+    need(len(b) >= 344, "too short to be a submission")
+    payload, blobs, requests = offsets(b, 236, 3, 344)
+    t = b[:236]
+    message = {"slot": number(t[0:8]), "parent_hash": hexed(t[8:40]), "block_hash": hexed(t[40:72]),
+               "builder_pubkey": hexed(t[72:120]), "proposer_pubkey": hexed(t[120:168]),
+               "proposer_fee_recipient": hexed(t[168:188]), "gas_limit": number(t[188:196]),
+               "gas_used": number(t[196:204]), "value": number(t[204:236])}
+    need(len(payload) >= 528, "a payload too short")
+    p = payload
+    places = [struct.unpack_from("<I", p, at)[0] for at in (436, 504, 508)] + [len(p)]
+    need(places[0] == 528 and all(a <= c for a, c in zip(places, places[1:])), "the payload's parts of varying length out of place")
+    extra, listed, withdrawn = (p[a:c] for a, c in zip(places, places[1:]))
+    transactions = []
+    if listed:
+        count = struct.unpack_from("<I", listed)[0] // 4
+        need(count >= 1 and 4 * count <= len(listed), "a list of transactions that cannot be read")
+        transactions = offsets(listed, 0, count, 4 * count)
+    execution_payload = {
+        "parent_hash": hexed(p[0:32]), "fee_recipient": hexed(p[32:52]), "state_root": hexed(p[52:84]),
+        "receipts_root": hexed(p[84:116]), "logs_bloom": hexed(p[116:372]), "prev_randao": hexed(p[372:404]),
+        "block_number": number(p[404:412]), "gas_limit": number(p[412:420]), "gas_used": number(p[420:428]),
+        "timestamp": number(p[428:436]), "extra_data": hexed(extra), "base_fee_per_gas": number(p[440:472]),
+        "block_hash": hexed(p[472:504]), "transactions": [hexed(t) for t in transactions],
+        "withdrawals": [{"index": number(w[0:8]), "validator_index": number(w[8:16]), "address": hexed(w[16:36]),
+                         "amount": number(w[36:44])} for w in each(withdrawn, 44, "withdrawals")],
+        "blob_gas_used": number(p[512:520]), "excess_blob_gas": number(p[520:528])}
+    need(len(blobs) >= 12, "a bundle of blobs too short")
+    commitments, proofs, blob_list = offsets(blobs, 0, 3, 12)
+    need(len(requests) >= 12, "requests too short")
+    deposits, withdrawals, consolidations = offsets(requests, 0, 3, 12)
+    return {
+        "message": message, "execution_payload": execution_payload,
+        "blobs_bundle": {"commitments": [hexed(c) for c in each(commitments, 48, "commitments")],
+                         "proofs": [hexed(c) for c in each(proofs, 48, "proofs")],
+                         "blobs": [hexed(c) for c in each(blob_list, 131072, "blobs")]},
+        "execution_requests": {
+            "deposits": [{"pubkey": hexed(d[:48]), "withdrawal_credentials": hexed(d[48:80]), "amount": number(d[80:88]),
+                          "signature": hexed(d[88:184]), "index": number(d[184:192])} for d in each(deposits, 192, "deposits")],
+            "withdrawals": [{"source_address": hexed(d[:20]), "validator_pubkey": hexed(d[20:68]), "amount": number(d[68:76])}
+                            for d in each(withdrawals, 76, "withdrawal requests")],
+            "consolidations": [{"source_address": hexed(d[:20]), "source_pubkey": hexed(d[20:68]), "target_pubkey": hexed(d[68:116])}
+                               for d in each(consolidations, 116, "consolidations")]},
+        "signature": hexed(b[248:344])}
+
+def main():
+    args = sys.argv[1:]
+    out = args[args.index("--out") + 1] if "--out" in args else sys.exit(__doc__)
+    port = int(args[args.index("--port") + 1]) if "--port" in args else standin.PORT
+    os.makedirs(out, exist_ok=True)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+        def answer(self, status, body=b""):
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(body)
+            self.close_connection = True
+        def do_GET(self): self.answer(200, b"[]")
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            try:
+                need(self.path.split("?")[0] == "/relay/v1/builder/blocks", "no such path")
+                need(self.headers.get("Content-Type") == "application/octet-stream", "not said to be SSZ")
+                need(self.headers.get("Eth-Consensus-Version") == "fulu", "not said to be Fulu's")
+                found = decode(body)
+            except (Malformed, struct.error) as error:
+                return self.answer(400, json.dumps({"code": 400, "message": str(error)}).encode())
+            stem = os.path.join(out, found["message"]["block_hash"])
+            with open(stem + ".ssz", "wb") as f: f.write(body)
+            with open(stem + ".json.part", "w") as f: json.dump(found, f)
+            os.replace(stem + ".json.part", stem + ".json")
+            self.answer(200)
+        def log_message(self, *a): pass
+
+    with tempfile.TemporaryDirectory() as scratch:
+        key, certificate = standin.server()
+        for name, data in (("leaf.key", key), ("leaf.pem", certificate)):
+            with open(os.path.join(scratch, name), "wb") as f: f.write(data)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_3
+        context.load_cert_chain(os.path.join(scratch, "leaf.pem"), os.path.join(scratch, "leaf.key"))
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        print(f"standin-relay: listening on 127.0.0.1:{port}, writing to {out}", flush=True)
+        try: server.serve_forever()
+        except KeyboardInterrupt: pass
+
+if __name__ == "__main__":
+    main()

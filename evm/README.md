@@ -56,7 +56,13 @@ it, and continuous integration does not build it. What has been run and what it 
   5005 over the OS's own Ethernet, IP and TCP, and opening connections of its own to relays.
   `Evm/Outbound.lean` is one such connection, from a name to an answer over TLS; `Evm/Relays.lean` and
   `Evm/Roots.lean` (written by `scripts/relay-roots`) say which relays and which roots; `Evm/Ask.lean`
-  is the request that has the guest ask a relay for a page. `EfiMain.lean` is the machine with the four
+  is the request that has the guest ask a relay for a page; `Evm/Send.lean` is the request that has it
+  build a block, bid for it and post both to relays itself, in the SSZ that `Evm/Submit.lean` makes.
+  `builder/standin-relay` is a relay's stand-in on this machine, which takes that SSZ apart again;
+  `builder/shadow --guest-sends` runs slots through the two. `Evm/Seal.lean` is the key transactions
+  are sealed to and the few that are kept; `Tls/Hpke.lean` is the sealing, as RFC 9180 has it;
+  `demo/seal.js` and `demo/seal.html` seal in a browser; `builder/shadow --sealed` hands one in and
+  looks for it afterwards in everything the host saw. `EfiMain.lean` is the machine with the four
   real relays (`evm-os`); `EfiShadow.lean` is the machine with a stand-in on the host whose key everyone
   knows (`evm-os-shadow`, `scripts/standin.py`). `scripts/run-ask dev|tdx [--live]` has the guest ask,
   and checks every frame that crossed its network.

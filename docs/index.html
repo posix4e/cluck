@@ -264,8 +264,13 @@
     <div class="note"><strong>What this is not, yet:</strong> one block is one block, and it was paid
       for: the builder cannot win a slot on what its blocks earn. The payment was signed on the host, so
       money and the key that moves it sit outside the trust domain. The request, reply and quote for the
-      block are kept but not published here yet. The builder sees only transactions that are already
-      public, and they reach it in the clear through the host, so it keeps nobody's orders private. Its signing is written to take the same time
+      block are kept but not published here yet. The block that landed was built from transactions that were already public and reached the
+      builder in the clear through the host. Since then the guest has learned to keep a transaction to
+      itself: one sealed to a key only the measured machine holds goes into a block that the guest
+      posts to the relay itself, over TLS written here in Lean, and the host carries only sealed bytes.
+      That has been tried against a stand-in relay on the same machine and against no real one, and the
+      host still learns which accounts such a transaction touches, because it is the host that proves
+      the state. Its signing is written to take the same time
       whatever the key and was checked in the places looked at, not proved. As a checker, one block in a
       hundred still takes 19 seconds and a hostile block can hold the machine for a long time. Three fast
       paths and one correction in the EVM it runs are tested against the specification, not proved equal

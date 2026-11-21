@@ -393,8 +393,9 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   published); the order privacy a builder in a trust domain is for: transactions still reach the guest in
   the clear, through the host.
 
-**Order privacy** (begun 2026-11-21; three stages of six done, and the image can now reach a relay by
-itself; no transaction is hidden from anyone yet). The aim: a
+**Order privacy** (begun 2026-11-21; five stages of six done: against a stand-in relay on this
+machine, a transaction sealed to the guest goes into a block only the guest and the relay see. Nothing
+of it has been tried on a real relay). The aim: a
 transaction sealed to a key only the attested guest holds, built into a block the guest sends to the
 relays itself over TLS, so that the host carries only ciphertext. What it will not hide, by its design:
 which accounts and storage slots such a transaction touches (the host supplies the proofs), sizes and
@@ -508,8 +509,84 @@ times, and the block from the relay. Six stages:
     block that is most of it; a question cannot begin while another request runs; nothing is sent to
     a relay but GET for a page; at most eight connections, in and out together; the date is the
     sender's word (see `THREAT_MODEL.md`).
-- [ ] The guest putting a submission together itself and posting it over TLS, to a stand-in first.
-- [ ] Sealed transactions in, kept in the guest and built into its blocks; a page that seals one.
+- [x] **The guest sends its blocks itself**, 2026-11-21, to a stand-in so far.
+  - `Evm/Submit.lean` puts a built block and its bid into the builder API's request to submit a block,
+    in SSZ, for Fulu: the layout of go-builder-client's `fulu.SubmitBlockRequest`, read from that
+    library's source. It works on bytes (the built header as RLP, the proposed block as RLP, the
+    places of what went in), with a reader of RLP of its own; no JSON is in the image.
+  - `Evm/Send.lean`, a request `JSND1`: a request to build and bid, with which relays of the image's
+    list to send to. The guest builds, signs, and posts to each over TLS
+    (`POST /relay/v1/builder/blocks`, `application/octet-stream`, `Eth-Consensus-Version: fulu`), and
+    answers when all have answered or been given up, with the bid's answer and what each relay said.
+  - `builder/standin-relay`: a relay's stand-in, HTTPS on this machine under the stand-in's root, which
+    takes the SSZ apart again and writes down what it found in the JSON form of the same request.
+  - `builder/shadow --guest-sends`: each slot the guest (the shadow image, in TDX) posts its block to
+    the stand-in, and what the stand-in took is laid beside the submission this program makes of the
+    guest's answer, which is what was sent to real relays on 2026-11-21, and which the node's validator
+    judges. 100 slots in a row (blocks 26465104 to 26465203): 100 built, 100 the same field for field,
+    100 valid, 100 signed, the relay's answer 200 each time; submissions of 1.6 to 52 KB, sent and
+    answered in 42 ms at the median and 59 at most; up to 4.7M gas and 90 transactions. That run was
+    on the code before sealed transactions were added to it; on the code as it now is, 30 more
+    (26465344 to 26465373): 30 the same, valid and signed.
+  - `scripts/run-ask` has the same without a node: a block from a fixture built, bid for and posted,
+    and what the stand-in took compared with what the guest's answer describes; a relay the image does
+    not have, a time before the roots, and no relay listening.
+  - Not shown: that a real relay takes these bytes. The decoder they were tried on is by the same hand
+    as the encoder, from the same reading of the layout. A relay's own answer to one is the first real
+    test, and that is a submission to a relay, which waits to be asked for. Blocks with blobs are not
+    built, so the bundle of blobs is always empty. Sending is one segment at a time, as all of this
+    TCP is; over QEMU's network that is not felt, and over a real one a large block would be slow.
+- [x] **Sealed transactions**, 2026-11-21, against the stand-in.
+  - `Tls/Hpke.lean`: HPKE (RFC 9180), base mode, X25519 with HKDF-SHA-256 and ChaCha20-Poly1305, as
+    the standard has it so that anything that speaks it can seal to the guest. `tls-test` opens 37
+    messages that OpenSSL's HPKE sealed (`scripts/hpke-vectors` calls `OSSL_HPKE_*` in libcrypto) and
+    refuses 184 with a byte of something changed.
+  - `Evm/Seal.lean`: the guest draws an X25519 key when it starts. `JSEK1` gives its public half, with
+    a report when asked that way. `JSEA1` hands in a transaction sealed to it, with the last slot it
+    may go in a block for; the answer is one byte. Up to 64 are kept, and half a megabyte, in memory,
+    until their slot has passed.
+  - A block built to be sent (`JSND1`, the fast engine's builder) tries them after the transactions
+    the request proposes. If one goes in, the request's sender is not shown the block at all: with
+    the chain's state in hand, a header or even the block's hash would let a guess at the hidden
+    transaction be checked. It is told how many went in and what the relays said.
+  - The witness: the sender of the request proves the state its own transactions read and cannot
+    know what a sealed one reads. The engine now remembers everything a transaction lacked
+    (`World.lacks`), the builder passes it out, and the answer lists it: accounts, and slots of their
+    storage. The host proves those too and asks again. This is the leak that was said beforehand:
+    which accounts and slots a sealed transaction touches, and nothing else of it.
+  - `demo/seal.js` seals in a browser: X25519, HMAC and SHA-256 are the browser's, ChaCha20-Poly1305
+    is written out. `scripts/seal-check` holds its cipher to node's (52 of 52) and has OpenSSL's HPKE
+    open what it seals (5 of 5). `demo/seal.html`, served at `/seal`, asks the machine for its sealing
+    key with a report, checks the quote as the first page does, and seals a transaction pasted into
+    it; it sends nothing anywhere.
+  - `builder/shadow --sealed`, the check, in TDX: this program, as somebody with a transaction, signs
+    a transfer of nothing from the test wallet to itself, seals it with the page's script and hands
+    it in; as the host it then asks for blocks as before. 40 slots in a row (26465305 to 26465344): in each,
+    a block with the sealed transaction in it reached the stand-in, was judged valid by the node from
+    the stand-in's copy, and carried a bid whose signature verifies from the bytes posted
+    (`bid-verify --submission`). Ten transactions were sealed and handed in over the run, each kept;
+    once the guest said it lacked the sender's account, and the block was asked for again with it
+    proven. The transaction's bytes and the two numbers of its signature were looked for in every
+    request and answer as it went, and found in none. Over 12 more slots (26465374 to 26465385) with
+    three transactions, all three were looked for as well in every frame that crossed the guest's
+    network (10.5 MB) and in its console, and found in none, where the sender's address, which the
+    host is told, was found 12 times. (In the 40-slot run that last search was made for the last of
+    the ten only.)
+    The transaction was signed and went to the stand-in on this machine; it was never broadcast, and
+    the stand-in's copy is deleted once read.
+  - `scripts/run-ask`: what is sealed to the guest's key is kept; sealed to another key, changed,
+    too short, or empty, it is not; a 59th transaction of 9,000 bytes is refused; in TDX the key
+    comes with a report whose 64 bytes are the hashes of the request and of the key.
+  - What is not hidden, and was not meant to be: the accounts and slots (above); the length of the
+    transaction; that a block has a sealed transaction in it, and how many; when it was handed in.
+    What is not done: a transaction is tried again in every block until its slot passes, and the
+    guest does not know whether one of its blocks was taken; nothing of the transaction is checked
+    when it is handed in, so rubbish fills the pool as well as transactions do; whoever asks for
+    blocks decides which slots, up to the last one named, a sealed transaction is tried in, and can
+    leave it out by never proving what it needs; Jaune's builder does not take sealed transactions;
+    only one round of asking again happens per missing thing, so a transaction that reads much state
+    takes several; nobody but this program has sealed to the guest; the real image has all of this
+    and has sent nothing to a real relay.
 - [ ] Live, and only when asked for with the cost named.
 
 What is next, in order:

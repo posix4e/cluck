@@ -1,0 +1,97 @@
+import Evm.Outbound
+import Fast.State
+
+/-! A request to build a block, bid for it, and hand both to relays: the machine that built the block
+posts it itself, over TLS, so nobody between it and the relay needs to be shown the block.
+
+    "JSND1"
+    1    which relays: a bit for each place in this image's list (`Evm/Relays.lean`), the lowest the first
+    8    the time, in seconds since 1970, at which the relays' certificates are to be judged
+    4    milliseconds the relays are given to answer, counted from when the block is ready; 0 for 3000
+    then a request to build and bid, from its "JBID2" on (`Evm/Bid.lean`)
+
+is answered, once every relay has answered or been given up, with
+
+    4    the length of the answer to the request to build and bid, then that answer, as it would have
+         been alone
+    1    how many relays the block was sent to: none when no block was built
+    then for each, in the order of the list:
+         1    its place in the list
+         1    0 when it answered, 1 when it did not
+         2    its status (200 when it took the block), or zeros
+         2    a length, then that many bytes: the start of what it said, or the reason there was no answer
+    1    how many things the witness lacked for transactions that were left out because of it, then each:
+         1    0 an account, 1 a slot of an account's storage, 2 a code
+         32   the account's address as a 32-byte number; or the code's hash
+         32   the slot's number; or zeros
+
+What is sent to a relay is the builder API's request to submit a block (`Evm/Submit.lean`), as SSZ.
+
+## Transactions the sender has not seen
+
+A block built for this request also tries the transactions that were sealed to this machine and are
+still good for the slot (`Evm/Seal.lean`), when the request asks for the fast engine's builder. The
+request's sender proposed its own and supplied the witness, and has never seen these.
+
+If none of them goes in, the answer is as above, and the sender has the whole block as with any request
+to build. If one does, the answer to the request to build and bid is, in place of the usual one, five
+bytes: 8, and how many sealed transactions went in. The header, the block's hash, what it pays and which
+transactions went in are not said: with the state of the chain in hand, as the sender has, any of them
+would let a guess at a hidden transaction be checked. The relays are sent the block and say what they
+say; the sender is told that.
+
+A sealed transaction reads state the sender's witness may not prove, since the sender did not know to
+prove it. It is then left out, like any transaction the witness falls short for, and the last part of
+the answer says what was lacking, so that the sender can prove that too and ask again. This is how the
+sender comes to know which accounts and slots a sealed transaction touches, and it is all it comes to
+know of it. -/
+
+namespace Evm.Send
+
+def magic : ByteArray := "JSND1".toUTF8
+
+def mine (input : ByteArray) : Bool := input.size ≥ magic.size && input.extract 0 magic.size == magic
+
+structure Request where
+  /-- A bit for each relay of the image's list. -/
+  relays : Nat
+  seconds : Nat
+  /-- Milliseconds the relays have to answer. -/
+  allowed : Nat
+  /-- The request to build and bid. -/
+  bid : ByteArray
+
+def request? (input : ByteArray) : Option Request :=
+  if !mine input || input.size < magic.size + 13 then none else
+  let number (start size : Nat) : Nat := (input.extract (magic.size + start) (magic.size + start + size)).foldl (fun n b => n * 256 + b.toNat) 0
+  let allowed := number 9 4
+  some { relays := number 0 1, seconds := number 1 8, allowed := if allowed == 0 then 3000 else allowed,
+         bid := input.extract (magic.size + 13) input.size }
+
+/-- What is sent to a relay: the block and bid, posted. The connection is for this one block. -/
+def question (host : String) (submission : ByteArray) : ByteArray :=
+  Tls.Http.request "POST" host.toUTF8 "/relay/v1/builder/blocks"
+    #[("Content-Type", "application/octet-stream"), ("Eth-Consensus-Version", "fulu"), ("User-Agent", "builder"),
+      ("Accept", "*/*"), ("Connection", "close")] submission
+
+/-- The most that is kept of what a relay said. -/
+def kept : Nat := 300
+
+def two (n : Nat) : ByteArray := ByteArray.mk #[(n >>> 8).toUInt8, n.toUInt8]
+
+def four (n : Nat) : ByteArray := ByteArray.mk #[(n >>> 24).toUInt8, (n >>> 16).toUInt8, (n >>> 8).toUInt8, n.toUInt8]
+
+/-- What stands in place of the bid's answer when sealed transactions went into the block. -/
+def hidden (count : Nat) : ByteArray := ByteArray.mk #[8] ++ four count
+
+/-- The answer: the bid's, then what each relay said, then what the witness lacked. -/
+def answer (bid : ByteArray) (told : Array (Nat × Outbound.Outcome)) (wanted : Array Fast.Lack := #[]) : ByteArray :=
+  let out := told.foldl (fun out (place, outcome) =>
+    let (failed, status, text) : UInt8 × Nat × ByteArray := match outcome with
+      | .answered status body => (0, status, body.extract 0 kept)
+      | .failed why => (1, 0, why.toUTF8.extract 0 kept)
+    out ++ ByteArray.mk #[place.toUInt8, failed] ++ two status ++ two text.size ++ text) ((four bid.size ++ bid).push told.size.toUInt8)
+  let wanted := wanted.extract 0 255
+  wanted.foldl (fun out lack => (out.push lack.kind) ++ lack.what.bytes ++ lack.key.bytes) (out.push wanted.size.toUInt8)
+
+end Evm.Send

@@ -13,8 +13,17 @@ space in it, a time at which the certificate has run out, a server whose certifi
 one whose certificate is under another root, and no server at all.
 
 With --during=FILE, where FILE holds a request to build a block and bid for it, a question is put just
-before the block is begun, and must be answered while the block is being built, not after. `tdx` needs SILO_TDVF naming the firmware, as the OS's TDX.md says. With --live the guest is asked for each relay's list of coming proposers, which is public and is what
+before the block is begun, and must be answered while the block is being built, not after. `tdx` needs SILO_TDVF naming the firmware, as the OS's TDX.md says. Then the stand-in is `builder/standin-relay`, and the guest is asked to build a block from a fixture, bid
+for it and post it there itself (`Evm/Send.lean`): what the stand-in takes apart must be the block the
+guest's answer describes.
+
+With --live the guest is asked for each relay's list of coming proposers, which is public and is what
 `scripts/tls-get` fetched from the host. It sends the relay nothing but the request for that page.
+
+Then the guest's key for sealed transactions is asked for, and things are handed in sealed
+(`Evm/Seal.lean`), by the page's own script under node: what is sealed to the guest's key must be kept,
+and what is sealed to another key, changed, or empty must not be; and no more may be kept than the guest
+says it keeps. (`builder/shadow --sealed` is where a sealed transaction goes into a block.)
 
 Either way QEMU writes down every Ethernet frame the guest sent or was sent, and afterwards each one must
 be something expected: the host's own conversation with the guest's service (port 5005), a question about
@@ -148,8 +157,96 @@ try:
         stand_in()
         status, http, body = ask(0, PATH)
         check("the stand-in again, after all that", status == 0 and body == expected)
+    if not live:
+        # A block built from a fixture, bid for, and posted by the guest itself to a stand-in that takes
+        # the SSZ apart (builder/standin-relay): what arrived must be the block the guest says it built.
+        for process in servers: process.kill(); process.wait()
+        servers.clear()
+        took_dir = os.path.join(scratch, "took")
+        relay = subprocess.Popen([os.path.join(here, "builder/standin-relay"), "--out", took_dir], stdout=subprocess.PIPE, text=True)
+        servers.append(relay)
+        relay.stdout.readline()
+        build = open(os.path.join(here, "fixtures/build/DelegateCallSpam-1.req"), "rb").read()
+        proposer = bytes(range(48))
+        bid = b"JBID2" + struct.pack(">Q", 15700576) + proposer + bytes(4) + bytes(4) + build
+        def send(relays, seconds=None):
+            """The answer to the bid, and what each relay said: (answered, status, text)."""
+            got = exchange(b"JSND1" + bytes([relays]) + struct.pack(">QI", seconds or int(time.time()), 3000) + bid, 600)
+            size = struct.unpack(">I", got[:4])[0]
+            answer, rest, said, at = got[4:4 + size], got[4 + size:], [], 1
+            for _ in range(rest[0]):
+                length = struct.unpack(">H", rest[at + 4:at + 6])[0]
+                said.append((rest[at + 1] == 0, struct.unpack(">H", rest[at + 2:at + 4])[0], rest[at + 6:at + 6 + length]))
+                at += 6 + length
+            return answer, said
+        began = time.time()
+        answer, said = send(1)
+        count = struct.unpack(">I", answer[105:109])[0]
+        at = 109 + 4 * count
+        header_size = struct.unpack(">I", answer[at:at + 4])[0]
+        header = answer[at + 4:at + 4 + header_size]
+        def fields(b):
+            """The items of an RLP list of strings."""
+            at = 1 + (b[0] - 0xf7 if b[0] > 0xf7 else 0); found = []
+            while at < len(b):
+                if b[at] < 0x80: found.append(b[at:at + 1]); at += 1
+                elif b[at] <= 0xb7: n = b[at] - 0x80; found.append(b[at + 1:at + 1 + n]); at += 1 + n
+                else: k = b[at] - 0xb7; n = int.from_bytes(b[at + 1:at + 1 + k], "big"); found.append(b[at + 1 + k:at + 1 + k + n]); at += 1 + k + n
+            return found
+        h = fields(header)
+        key, signature = answer[-144:-96], answer[-96:]
+        try: took = json.load(open(os.path.join(took_dir, "0x" + answer[1:33].hex() + ".json")))
+        except OSError: took = None
+        n = lambda b: str(int.from_bytes(b, "big"))
+        x = lambda b: "0x" + b.hex()
+        wanted = took and {
+            "slot": "15700576", "parent_hash": x(h[0]), "block_hash": x(answer[1:33]), "builder_pubkey": x(key),
+            "proposer_pubkey": x(proposer), "proposer_fee_recipient": x(h[2]), "gas_limit": n(h[9]), "gas_used": n(h[10]),
+            "value": n(answer[65:97])} == took["message"] and {
+            "parent_hash": x(h[0]), "fee_recipient": x(h[2]), "state_root": x(h[3]), "receipts_root": x(h[5]), "logs_bloom": x(h[6]),
+            "prev_randao": x(h[13]), "block_number": n(h[8]), "gas_limit": n(h[9]), "gas_used": n(h[10]), "timestamp": n(h[11]),
+            "extra_data": x(h[12]), "base_fee_per_gas": n(h[15]), "block_hash": x(answer[1:33]), "blob_gas_used": n(h[17]),
+            "excess_blob_gas": n(h[18])}.items() <= took["execution_payload"].items() \
+            and len(took["execution_payload"]["transactions"]) == count and took["signature"] == x(signature)
+        check("a block built, bid for and posted by the guest; the stand-in took apart what the guest says it built",
+              answer[:1] == b"\0" and said == [(True, 200, b"")] and bool(wanted),
+              f"{count} transactions, {time.time() - began:.2f} s" if wanted else f"relay said {said}, took {took and took['message']}")
+        answer, said = send(2)
+        check("the same for a relay this image does not have: built, and sent nowhere", answer[:1] == b"\0" and said == [])
+        answer, said = send(1, 1700000000)
+        check("the same at a time before the roots were written: not built", answer[:1] == b"\x05" and said == [])
+        relay.kill(); relay.wait()
+        answer, said = send(1)
+        check("the same with no relay listening: built, and the relay's silence reported",
+              answer[:1] == b"\0" and len(said) == 1 and not said[0][0], said[0][2].decode(errors="replace") if said else "")
+        stand_in()
+    # The key transactions are sealed to, and sealed transactions handed in (Evm/Seal.lean). The page's own
+    # script does the sealing, under node.
+    sealing_key = exchange(b"JSEK1")
+    def sealed(key, last, transaction):
+        script = ('require(process.argv[1]); cluckSeal.sealTransaction(Buffer.from(process.argv[2], "hex"), BigInt(process.argv[3]), '
+                  'Buffer.from(process.argv[4], "hex")).then((e) => console.log(Buffer.from(e).toString("hex")))')
+        done = subprocess.run(["node", "-e", script, os.path.join(here, "demo/seal.js"), key.hex(), str(last), transaction.hex()],
+                              capture_output=True, text=True, check=True)
+        return bytes.fromhex(done.stdout.strip())
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    another = X25519PrivateKey.generate().public_key().public_bytes_raw()
+    envelope = sealed(sealing_key, 2**40, os.urandom(110))
+    said = [exchange(b"JSEA1" + envelope), exchange(b"JSEA1" + sealed(another, 2**40, os.urandom(110))),
+            exchange(b"JSEA1" + envelope[:-1] + bytes([envelope[-1] ^ 1])), exchange(b"JSEA1" + os.urandom(20)),
+            exchange(b"JSEA1" + sealed(sealing_key, 2**40, b""))]
+    check("a transaction sealed to the guest's key is kept; one sealed to another key, one with a bit changed, one too "
+          "short to be sealed, and one that opens to nothing are not", len(sealing_key) == 32 and said == [b"\0", b"\1", b"\1", b"\1", b"\2"],
+          " ".join(a.hex() for a in said))
+    filled = [exchange(b"JSEA1" + sealed(sealing_key, 2**40, os.urandom(9000)))[:1] for _ in range(66)]
+    # Half a megabyte is 524,288 bytes; 110 are kept already, and 58 more of 9,000 fit where 59 do not.
+    check("the guest keeps no more than half a megabyte of sealed transactions", filled == [b"\0"] * 58 + [b"\3"] * 8,
+          f"{filled.count(bytes(1))} of 9,000 bytes more kept, then refused")
     if mode == "tdx":
         challenge = os.urandom(32)
+        got = exchange(b"JATT1" + challenge + b"JSEK1")
+        bound = hashlib.sha256(challenge + b"JSEK1").digest() + hashlib.sha256(got[:32]).digest()
+        check("the sealing key asked for with a report", got[:32] == sealing_key and got[32:][128:192] == bound and len(got) == 32 + 1024)
         request = b"JASK1" + bytes([0]) + struct.pack(">Q", int(time.time())) + PATH.encode()
         got = exchange(b"JATT1" + challenge + request)
         reply, report = got[:-1024], got[-1024:]

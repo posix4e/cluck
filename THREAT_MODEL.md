@@ -124,6 +124,41 @@ why it was dropped; a key that is dropped is not wiped from memory; the lengths 
 roughly of what is said, are plain to the carrier, and it pads nothing. It is tested against OpenSSL's
 server and against one written here, and is neither proved nor reviewed.
 
+**A second secret, and other people's.** The machine now holds a key that opens what is sealed to it
+(`Evm/Seal.lean`: X25519, drawn from `RDRAND` when it starts, never written anywhere), and, for a few
+slots each, transactions that were sealed to it and that nobody else on this side of the relay is meant
+to read. What that rests on, and where it gives:
+
+- *The key's arithmetic* is the X25519 of `Tls/`, with what was said of it above: no secret through
+  `Nat`, no branch on a key's bit that reading the compiled code found, nothing measured, nothing proved.
+  Opening is HPKE as RFC 9180 has it (`Tls/Hpke.lean`), held to OpenSSL's on messages OpenSSL sealed.
+  Unlike a connection's key this one lasts as long as the machine runs and is used on bytes anyone can
+  send as often as they like, which is what an attack by timing needs; the tag is checked in constant
+  time and a failed opening says one byte, the same whatever went wrong inside the sealing.
+- *An opened transaction is ordinary data* to everything after it: Jaune decodes it, the engine runs
+  it. None of that code was written to keep its input secret, and its time and memory depend on the
+  transaction. The host sees how long a block took.
+- *What the host is told on purpose.* Which accounts and which slots of storage a sealed transaction
+  touched and the witness did not prove: the guest has no state and must ask. That a block has sealed
+  transactions in it, and how many. Not the block: when a sealed transaction is in it the answer
+  carries no header, no hash and no value, because the host has the chain's state and could check a
+  guess against any of them.
+- *What the host can do anyway.* Not hand a sealed transaction in; not prove what it needs, so that it
+  is never built; choose, among the slots up to the last the sender named, which blocks it is tried in.
+  It cannot have it built after that slot, cannot read it, and cannot change it. It can hand the same
+  sealed bytes in again, which gains it nothing: the second copy fails where the first has gone in.
+  It can fill the pool (64 transactions, half a megabyte) with rubbish, since nothing is checked at the
+  door, and keep honest ones out until the rubbish's slots pass.
+- *What the relay sees*: the whole block, as from any builder. *What the console says*: how many sealed
+  transactions went into a block, never anything of one. `builder/shadow --sealed` searches the
+  console and every frame for the transaction's bytes and its signature's numbers.
+- *The page that seals* (`demo/seal.html`, `demo/seal.js`) runs in the sender's browser and is served by
+  the host, which could serve a different script: a sender who means it checks the script, or seals
+  with a tool of their own, which the standard format allows. The page checks the quote for the key as
+  the first page checks one, with the same limits (no revocation, no TCB status).
+- *Not live.* The image that is meant has all of this, and no sealed transaction has been built into a
+  block that went to a real relay.
+
 **Connections out.** The machine now speaks first: it opens TCP connections of its own, to the relays
 its image names (`Evm/Relays.lean`), and until now it only ever answered. What that adds:
 
@@ -153,6 +188,16 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   characters with no space, so it cannot carry a second request. The sender learns nothing it could not
   fetch itself, except, with a report, that this image got that answer from the server its roots vouch
   for. A sender can keep the guest's eight connections busy this way, as it can by other means.
+- *A request that makes the guest send a block.* `JSND1` is a request to build and bid with the sending
+  added: the block is put into the builder API's SSZ in the guest (`Evm/Submit.lean`) and posted to the
+  relays of the image's list that the sender names. It signs nothing a request to build and bid would
+  not sign, and sends a relay nothing but that block and bid; the sender could have posted the same
+  itself from the answer, which it still gets. So today this hides nothing: it is the path a hidden
+  transaction will need, tried first on blocks that have none. What is new in it to go wrong: a second
+  reader of RLP (`Submit.item?`, over a block Jaune has already decoded once), with every length
+  checked; and the SSZ itself, which so far only a decoder written here has read. The real image has
+  this request as the shadow image has, and will send to real relays when asked: whether it is asked is
+  the host's choice, as sending always was.
 - *The loop was rewritten for it* (`Evm/Machine.lean`). Requests are run in the order they came on each
   connection, one at a time over all; a client waiting on a relay holds up only itself. While a block is
   built for a bid the network is looked at before each transaction, so frames are now read in the
@@ -397,9 +442,11 @@ None of that is a proof, and a block made to find the difference has not been lo
 **A plain answer still proves nothing.** A request without the `JATT1` prefix is answered over cleartext
 TCP with no report, and that response is worth what the network between is worth.
 
-**One secret is held**, the signing key above, and nothing else. Everything but the key's own arithmetic
-is on `Nat` or on code that branches on its values, takes time that depends on them, and must never be
-given a secret: that is the reason the key's arithmetic was written apart from Jaune's.
+**Two keys are held**, the signing key above and the sealing key, and for a few slots the transactions
+sealed to the second. Everything but the keys' own arithmetic is on `Nat` or on code that branches on its
+values, takes time that depends on them, and must never be given a key: that is the reason the keys'
+arithmetic was written apart from Jaune's. The sealed transactions do go through that code, as any
+transaction does, and what that can give away of them is said under "A second secret".
 ## What is being protected
 
 | Asset | When | Why it matters |

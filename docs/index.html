@@ -246,6 +246,18 @@
       a valid block two seconds early, was not reached: in 1,810 blocks none was wrong, and every break
       but the one late block was a slot with no block.</p>
 
+    <p class="wide"><strong>A second engine, written for speed.</strong> Jaune was written to be proved
+      about, and it is slow. Beside it in the image there is now an engine of this project's own, in Lean,
+      that holds a 256-bit number in four machine words and undoes a failed call from a journal. It is
+      held to Jaune, not proved: on 121 blocks of mainnet it reproduces every commitment in the block's
+      own header, the state root among them; it passes the same tests of short and wrong witnesses; and
+      over 150 slots in the TDX guest the block it built and signed was, byte for byte, the block Jaune
+      built. Checking a mainnet block takes it 1.1 seconds at the median where Jaune takes 2.6 (as a
+      process on the guest's runtime), and building a slot's block in the guest takes at most a third of
+      the time on the slots that were slowest. With its gas cap raised from 8M to 30M it still had every
+      block ready 3.6 seconds early, and the blocks were no bigger for it: what is pending in public is
+      small.</p>
+
     <div class="note"><strong>What this is not, yet:</strong> one block is one block, and it was paid
       for: the builder cannot win a slot on what its blocks earn. The payment was signed on the host, so
       money and the key that moves it sit outside the trust domain. The request, reply and quote for the

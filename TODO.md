@@ -558,6 +558,16 @@ The faster engine (`evm/Fast/`), step by step:
     slots: the five slowest for Jaune (3.72, 2.25, 1.78, 1.54, 1.39 seconds) took it 1.68, 0.40, 0.84,
     0.32 and 0.40. And the blocks are small because what is pending in public is small: 1.2M gas at the
     median, 7.3M at the most, under a cap of 8M.
+  - **With the cap at 30M, the engine alone** (`--engine fast --gas 30000000`, the same image, the usual
+    limit of time): 100 slots, 100 blocks, all judged valid and signed, every one ready at least 3.6
+    seconds before its slot (8.8 at the median). The guest took 0.24 seconds at the median, 0.36 at the
+    ninetieth percentile and 1.13 at the most, and that slowest was a block of 279 transactions and
+    14.6M gas. Gas used was 0.77M at the median and 3.6M at the ninetieth percentile; what the blocks
+    were worth to a proposer was 0.0002 ETH at the median and 0.0013 at the most. So the cap no longer
+    decides anything: the builder puts in everything pending in public that can go in and is early, and
+    what it builds is small because that is all there is in public. A faster engine does not make these
+    blocks worth more. `builder/shadow` still asks Jaune's builder with a cap of 8M unless told
+    otherwise, and nothing has been sent to a relay from the engine.
 - **bn254 on machine words** (2026-11-21; `evm/Fast/Bn254.lean`): the field in Montgomery form on four
   words, the tower above it, both groups, and the optimal ate pairing, for the three precompiled contracts
   that use the curve. Its constants were worked out from the curve's prime, order and parameter, not

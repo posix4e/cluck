@@ -174,11 +174,26 @@ structure Shown where
   accounts : AdrSet := {}
   slots : KeySet := {}
 
-/-- Whether everything in `reads` that is not yet in `shown` is supplied or proven absent. An error, saying
-what, when something was read that the witness does not account for. -/
-def showReads (known : Known) (shown : Shown) (reads : BlockAccessListBuilder) : Except String Shown :=
-  let accounts := reads.readAccounts.toList.filter fun a => !shown.accounts.contains a
-  let slots := reads.readSlots.toList.filter fun k => !shown.slots.contains k
+/-- The accounts and slots that are in the state after a transaction and were not before it. A transaction
+that makes an account or a slot has to be shown that it was not there, as a block that is checked has to
+be; told apart here by counting, so that a transaction that makes nothing costs one pass over the accounts
+and no more. One that makes as many as it removes is not noticed here, and is by the check of the whole
+block at the end. -/
+def madeBy (before after : State) : List Address × List (Address × U256) :=
+  let accounts := if after.size == before.size then [] else after.keys.filter fun a => !before.contains a
+  let slots := after.foldl (fun out address account =>
+    let old := (before.get address).storage
+    if account.storage.size == old.size then out
+    else (account.storage.keys.filter fun slot => (old.get? slot).isNone).foldl
+      (fun out slot => (address, slot) :: out) out) []
+  (accounts, slots)
+
+/-- Whether everything in `reads` that is not yet in `shown`, and everything a transaction made, is supplied
+or proven absent. An error, saying what, when something was read that the witness does not account for. -/
+def showReads (known : Known) (shown : Shown) (reads : BlockAccessListBuilder)
+    (made : List Address × List (Address × U256)) : Except String Shown :=
+  let accounts := (reads.readAccounts.toList.filter fun a => !shown.accounts.contains a) ++ made.1
+  let slots := (reads.readSlots.toList.filter fun k => !shown.slots.contains k) ++ made.2
   match checkReads known accounts slots with
   | .ok () =>
     .ok { accounts := accounts.foldl (fun s a => s.insert a) shown.accounts,
@@ -205,7 +220,7 @@ def fill (known : Known) (gasCap : Nat) :
     else
       match processTransaction benv bout c.tx included.size with
       | .ok (state, bout') =>
-        match showReads known shown bout'.blockAccessListBuilder with
+        match showReads known shown bout'.blockAccessListBuilder (madeBy benv.state state) with
         | .ok shown' =>
           fill known gasCap rest (benv.withState state) bout' shown' (included.push c.place)
             (notes.push ⟨c.place, true, s!"{bout'.blockGasUsed}"⟩)

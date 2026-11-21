@@ -7,8 +7,9 @@ import Evm.Bridge
 
 A header commits to the gas its block used, to the root of its receipts (each transaction's success, the
 gas used up to it and its logs), to the bloom of those logs, to the hash of its requests, and to the root
-of the state after it. The engine runs the block on the state the request's witness gives, everything it
-fetched must have been supplied or proven absent, and all five must come out as the header has them. Runs
+of the state after it. The engine runs the block on the request's witness, asking it for each account and
+slot as it comes to them, nothing may be asked that the witness cannot prove an answer to, and all five
+must come out as the header has them. Runs
 on Lean's runtime; the receipts root and the bloom are made by Jaune's functions, the state root by this
 package's trie. -/
 open Jaune Evm
@@ -25,7 +26,8 @@ def judge (path : String) : IO Bool := do
   let some ancestors := r.headers.mapM Stateless.header | do IO.println s!"{name}: a header does not decode"; return false
   let some parent := ancestors.getLast? | do IO.println s!"{name}: no headers"; return false
   let t0 ← IO.monoMsNow
-  let .ok known := Stateless.materialise r parent.stateRoot | do IO.println s!"{name}: the witness does not read"; return false
+  let witness ← IO.lazyPure fun _ => Bridge.Witness.of r parent.stateRoot
+  let indexed := witness.codes.size
   let t1 ← IO.monoMsNow
   let .ok decoded := block.transactions.mapM (decodeTransaction fork.ruleSet)
     | do IO.println s!"{name}: a transaction does not decode"; return false
@@ -33,7 +35,7 @@ def judge (path : String) : IO Bool := do
   let t2 ← IO.monoMsNow
   let blk := Bridge.environment fork r.chainId block.header ancestors
   let result ← IO.lazyPure fun _ =>
-    Fast.runBlock blk (Bridge.host fork) body ByteArray.empty (Fast.World.new (Bridge.backing known))
+    Fast.runBlock blk (Bridge.host fork) body ByteArray.empty (Fast.World.new witness.backing)
   let t3 ← IO.monoMsNow
   match result with
   | .error (why, _) => IO.println s!"{name}: REFUSED: {why}"; return false
@@ -46,14 +48,14 @@ def judge (path : String) : IO Bool := do
     if root != header.receiptsRoot then wrong := "receipts root" :: wrong
     if bloom != header.logsBloom then wrong := "logs bloom" :: wrong
     if header.requestsHash.isSome && header.requestsHash != some requests then wrong := "requests hash" :: wrong
-    if out.world.missing then wrong := "something was asked for that the witness did not have" :: wrong
-    let stateRoot ← IO.lazyPure fun _ => Bridge.rootAfter known out.world
+    if out.world.missing then wrong := s!"the witness lacks what was asked of {(Bridge.u256 out.world.lacking).toHex}" :: wrong
+    let stateRoot ← IO.lazyPure fun _ => Bridge.rootAfter witness out.world
     let t4 ← IO.monoMsNow
     match stateRoot with
     | .ok stateRoot => if stateRoot != header.stateRoot then wrong := "state root" :: wrong
     | .error (.lacking _ what) => wrong := s!"the witness lacks {what}" :: wrong
     | .error _ => wrong := "the state root could not be worked out" :: wrong
-    let times := s!"witness {t1 - t0} ms, senders {t2 - t1} ms, block {t3 - t2} ms, state root {t4 - t3} ms"
+    let times := s!"witness {t1 - t0} ms ({indexed} codes), senders {t2 - t1} ms, block {t3 - t2} ms, state root {t4 - t3} ms"
     if wrong.isEmpty then
       IO.println s!"{name}: block {header.number}, {out.receipts.size} transactions, {header.gasUsed} gas: as the header has it ({times})"
       return true
@@ -73,26 +75,25 @@ def whereFetched (path : String) (hexAddress : String) : IO Unit := do
     | none => (mainnetChainConfig.forkAt block.header.number block.header.timestamp).toOption) | IO.println "no fork"
   let some ancestors := r.headers.mapM Stateless.header | IO.println "a header does not decode"
   let some parent := ancestors.getLast? | IO.println "no headers"
-  let .ok known := Stateless.materialise r parent.stateRoot | IO.println "the witness does not read"
+  let witness := Bridge.Witness.of r parent.stateRoot
   let .ok decoded := block.transactions.mapM (decodeTransaction fork.ruleSet) | IO.println "a transaction does not decode"
   let some body := Bridge.body fork r.chainId block decoded | IO.println "a transaction has no sender"
   let blk := Bridge.environment fork r.chainId block.header ancestors
   let wanted := Fast.Word.ofHex hexAddress
-  -- What the witness has for the account, whether or not the request names it.
-  match Trie.get known.store (.sealed known.root) (Bridge.pathOf wanted.addressBytes) with
+  -- What the witness has for the account.
+  match Trie.get witness.store (.sealed witness.root) (Bridge.pathOf wanted.addressBytes) with
   | .ok (some bytes) =>
     match Stateless.Leaf.read bytes with
     | some leaf =>
       IO.println s!"in the witness's trie: nonce {leaf.nonce.toNat}, balance {leaf.balance.toNat}, code hash {leaf.codeHash.toHex}, \
-        storage root {leaf.storageRoot.toHex}; named by the request with its code: {known.leaves.contains (Bridge.address wanted)}; \
-        a code with that hash is in the request: {r.codes.any fun code => Trie.hashOf code == leaf.codeHash}; \
-        its address is among the keys: {r.keys.any fun key => key == wanted.addressBytes}"
+        storage root {leaf.storageRoot.toHex}; a code with that hash is in the request: \
+        {witness.codes.contains (Bridge.word leaf.codeHash)}"
     | none => IO.println "in the witness's trie, and its entry does not read"
   | .ok none => IO.println "proven by the witness not to be in the state"
   | .error _ => IO.println "the witness does not reach it"
   for count in [0:body.transactions.size + 1] do
     let part := { body with transactions := body.transactions.extract 0 count }
-    match Fast.runBlock blk (Bridge.host fork) part ByteArray.empty (Fast.World.new (Bridge.backing known)) with
+    match Fast.runBlock blk (Bridge.host fork) part ByteArray.empty (Fast.World.new witness.backing) with
     | .error (why, _) => IO.println s!"with {count} transactions: {why}"; return
     | .ok out =>
       if out.world.accounts.contains wanted then

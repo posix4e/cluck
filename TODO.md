@@ -515,6 +515,17 @@ The faster engine (`evm/Fast/`), step by step:
   - Not run: the engine in the guest (the image has not been rebuilt since it could not answer `JWIF1`);
     Ethereum's test suites; the 100 further blocks on the minimal runtime. The builder does not use the
     engine.
+- **The engine reads the witness as it goes** (2026-11-21; `Witness` in `evm/Evm/Bridge.lean`). An account
+  or slot is looked up in the witness's trie when the engine comes to it, by the hash of what it has in
+  hand, and the answer is found, proven absent, or not said, which marks the world and ends in "witness
+  short". Nothing is made into a state beforehand, and the addresses and slot numbers in a request are
+  not used. All 121 blocks agree with their headers as before. In `stateless-test`, of the 1,143
+  witnesses with a piece left out the engine now answers 734 rightly and 409 with no verdict, where
+  Jaune's path answers 564 with no verdict; neither ever answers otherwise. It is not faster for it on
+  Lean's runtime (each lookup walks down from the root, decoding the same upper nodes again: reading the
+  witness and running the block took 236 ms at the median before and take 244 now) and a little faster
+  on the minimal one, where the 21 blocks through the service take 25.9 seconds for 27.5. Keeping the
+  nodes it has opened would be the next thing here.
 - **bn254 on machine words** (2026-11-21; `evm/Fast/Bn254.lean`): the field in Montgomery form on four
   words, the tower above it, both groups, and the optimal ate pairing, for the three precompiled contracts
   that use the curve. Its constants were worked out from the curve's prime, order and parameter, not

@@ -71,23 +71,54 @@ def host (fork : Fork) : Fast.Host :=
         | none => failed
       else jaune.precompile a input gas }
 
-/-- What a witness gave, as what stands behind the engine's world. An account or slot the witness did not
-give is answered as not there: whether that was right is `Evm.Stateless.checkReads`'s to say afterwards. -/
-def backing (known : Stateless.Known) : Fast.Backing :=
-  let codes : Std.HashMap Fast.Word ByteArray :=
-    known.state.toList.foldl (fun codes (a, account) =>
-      match known.leaves.get? a with
-      | some leaf => codes.insert (word leaf.codeHash) account.code
-      | none => codes) {}
+/-- A witness as the engine reads it: the nodes by their hashes, the root they hang from, and the codes by
+theirs. No address and no slot number has to be supplied with it: the engine knows what it is asking for,
+and hashes that. -/
+structure Witness where
+  store : Trie.Store
+  root : U256
+  codes : Std.HashMap Fast.Word ByteArray
+
+/-- Where an address or a slot's number lies in a trie: the nibbles of its hash. -/
+def pathOf (bytes : ByteArray) : Trie.Path := Trie.nibbles (Fast.Keccak.hash bytes 0 bytes.size).bytes
+
+def Witness.of (r : Stateless.Request) (root : U256) : Witness :=
+  { store := Trie.Store.ofNodes r.nodes, root,
+    codes := r.codes.foldl (fun codes code => codes.insert (Fast.keccak code) code) {} }
+
+/-- A witness as what stands behind the engine's world. Each question is answered from the trie when it is
+asked: an account or a slot is found, or proven not to be there, or the witness does not reach it (or what
+it holds there does not read), which is `missing`. Nothing is answered by default. -/
+def Witness.backing (w : Witness) : Fast.Backing :=
   { account := fun a =>
-      match known.leaves.get? (address a) with
-      | some leaf => .found ⟨leaf.nonce, word leaf.balance, word leaf.codeHash, leaf.storageRoot == Trie.emptyRoot⟩
-      | none => .absent
-    slot := fun a key =>
-      match (known.state.get (address a)).storage.get? (u256 key) with
-      | some value => .found (word value)
-      | none => .absent
-    code := fun hash => codes[hash]? }
+      match Trie.get w.store (.sealed w.root) (pathOf a.addressBytes) with
+      | .ok (some bytes) =>
+        match Stateless.Leaf.read bytes with
+        | some leaf =>
+          .found ⟨leaf.nonce, word leaf.balance, word leaf.codeHash, leaf.storageRoot == Trie.emptyRoot,
+                  word leaf.storageRoot⟩
+        | none => .missing
+      | .ok none => .absent
+      | .error _ => .missing
+    slot := fun storageRoot key =>
+      match Trie.get w.store (.sealed (u256 storageRoot)) (pathOf key.bytes) with
+      | .ok (some bytes) =>
+        match Trie.string bytes with
+        | some value =>
+          if value.size == 0 || value.size > 32 || value[0]! == 0 then .missing
+          else .found (Fast.wordAt ((ByteArray.mk (Array.replicate (32 - value.size) 0)) ++ value) Fast.Word.zero)
+        | none => .missing
+      | .ok none => .absent
+      | .error _ => .missing
+    code := fun hash => w.codes[hash]? }
+
+/-- Why the engine could not go on: what the witness lacks at the address or code hash the engine's world
+names. The lookup is done again here, for the trie's own account of what is missing. -/
+def Witness.shortfall (w : Witness) (world : Fast.World) : Stateless.Shortfall :=
+  match Trie.get w.store (.sealed w.root) (pathOf world.lacking.addressBytes) with
+  | .error (.missing hash) => .lacking hash s!"account {(u256 world.lacking).toHex}, which the block read"
+  | .error _ => .malformed
+  | .ok _ => .lacking 0 s!"a code or a slot of storage under {(u256 world.lacking).toHex}, which the block read"
 
 def accessList (list : AccessList) : Array (Fast.Word × Array Fast.Word) :=
   list.toArray.map fun (a, keys) => (addressWord a, keys.toArray.map word)
@@ -171,39 +202,34 @@ def receiptsRootAndBloom (receipts : Array Fast.Receipt) : U256 × Bytes :=
     (key.toNibbles, r.kind.toNat.toBytes ++ receipt.toRlpItem.toBytes)
   (trie (Std.TreeMap.ofList entries _), logsBloom (receipts.toList.flatMap fun r => r.logs.toList.map log))
 
-/-- Where an address or a slot's number lies in a trie: the nibbles of its hash. -/
-def pathOf (bytes : ByteArray) : Trie.Path := Trie.nibbles (Fast.Keccak.hash bytes 0 bytes.size).bytes
-
-/-- The state root after the engine has run a block on what a witness gave: first that everything the
-engine fetched was supplied or is proven not to be there (what it fetched is exactly what its world holds),
-then the parent's trie with every account that changed written back. -/
-def rootAfter (known : Stateless.Known) (world : Fast.World) : Stateless.M U256 := do
-  Stateless.checkReads known (world.accounts.fold (fun all a _ => address a :: all) [])
-    (world.slots.fold (fun all name _ => (address name.address, u256 name.key) :: all) [])
+/-- The state root after the engine has run a block on a witness: the parent's trie with every account
+that changed written back. Everything the engine fetched was proven when it was fetched, so there is
+nothing left to check about what it read; a world marked as having asked for what the witness lacks must
+not be brought here. -/
+def rootAfter (w : Witness) (world : Fast.World) : Stateless.M U256 := do
   -- The slots that hold something other than they did before the block, by whose they are.
   let changed : Std.HashMap Fast.Word (Array (Fast.Word × Fast.Word)) :=
     world.slots.fold (fun changed name slot =>
       if slot.value == slot.before then changed
       else changed.insert name.address ((changed.getD name.address #[]).push (name.key, slot.value))) {}
-  let mut trie : Trie.Node := .sealed known.root
+  let mut trie : Trie.Node := .sealed w.root
   for (a, account) in world.accounts.toList do
     let slots := changed.getD a #[]
     if !account.dirty && slots.isEmpty then continue
-    let leaf := known.leaves.get? (address a)
     let key := pathOf a.addressBytes
     if !account.present then
-      if leaf.isSome then trie ← Stateless.ofTrie (Trie.remove known.store trie key)
+      if account.existed then trie ← Stateless.ofTrie (Trie.remove w.store trie key)
       continue
     -- An account made in the block starts with no storage, whatever was at its address before.
     let mut storage : Trie.Node :=
-      .sealed (if account.fresh then Trie.emptyRoot else (leaf.map (·.storageRoot)).getD Trie.emptyRoot)
+      .sealed (if account.fresh || !account.existed then Trie.emptyRoot else u256 account.storage)
     for (slot, value) in slots do
       let path := pathOf slot.bytes
       storage ← Stateless.ofTrie <|
-        if value.isZero then Trie.remove known.store storage path
-        else Trie.put known.store storage path (Stateless.slotValue (u256 value))
+        if value.isZero then Trie.remove w.store storage path
+        else Trie.put w.store storage path (Stateless.slotValue (u256 value))
     let written : Stateless.Leaf := ⟨account.nonce, u256 account.balance, Trie.rootHash storage, u256 account.codeHash⟩
-    trie ← Stateless.ofTrie (Trie.put known.store trie key written.write)
+    trie ← Stateless.ofTrie (Trie.put w.store trie key written.write)
   pure (Trie.rootHash trie)
 
 end Evm.Bridge

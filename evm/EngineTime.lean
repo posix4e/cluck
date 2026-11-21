@@ -40,11 +40,10 @@ def main : IO UInt32 := do
   let _ ← part "the headers hashed into a chain" (fun _ =>
     (ancestors.zip (ancestors.drop 1)).all fun (a, b) => a.hash == b.parentHash) (fun x => if x then 1 else 0)
   let some parent := ancestors.getLast? | do say "no headers\n"; return 1
-  let .ok known ← part "the witness read (materialise)" (fun _ => Stateless.materialise r parent.stateRoot)
-      (fun x => match x with | .ok k => k.leaves.size | .error _ => 0)
-    | do say "the witness does not read\n"; return 1
+  let witness ← part "the witness's nodes and codes indexed" (fun _ => Bridge.Witness.of r parent.stateRoot)
+    (fun w => w.codes.size)
   let rules := fork.ruleSet
-  let chain : BlockChain := { blocks := ancestors.map fun h => ⟨h, [], [], []⟩, state := known.state, chainId := r.chainId }
+  let chain : BlockChain := { blocks := ancestors.map fun h => ⟨h, [], [], []⟩, state := State.ofPresentList [], chainId := r.chainId }
   let _ ← part "the header checked" (fun _ => validateHeader rules chain block.header) (fun x => if x.isOk then 1 else 0)
   let .ok decoded ← part "the transactions decoded" (fun _ => block.transactions.mapM (decodeTransaction rules))
       (fun x => match x with | .ok l => l.length | .error _ => 0)
@@ -54,7 +53,7 @@ def main : IO UInt32 := do
     | do say "a transaction has no sender\n"; return 1
   let blk ← part "the block's environment (the headers hashed again)" (fun _ => Bridge.environment fork r.chainId block.header ancestors)
     (fun e => (e.blockHash (e.number - 1)).w0.toNat % 2)
-  let backing ← part "the codes indexed" (fun _ => Bridge.backing known) (fun b => if (b.code Fast.emptyCodeHash).isSome then 1 else 0)
+  let backing := witness.backing
   let .ok out ← part "the block run" (fun _ => Fast.runBlock blk (Bridge.host fork) body ByteArray.empty (Fast.World.new backing))
       (fun x => match x with | .ok o => o.gasUsed.toNat | .error _ => 0)
     | do say "the block was refused\n"; return 1
@@ -71,7 +70,7 @@ def main : IO UInt32 := do
     let _ ← part s!"the block run again without {name}" (fun _ =>
       Fast.runBlock blk without body ByteArray.empty (Fast.World.new backing))
         (fun x => match x with | .ok o => o.gasUsed.toNat | .error _ => 0)
-  let _ ← part "the state root" (fun _ => Bridge.rootAfter known out.world) (fun x => match x with | .ok root => root.toNat % 2 | .error _ => 2)
+  let _ ← part "the state root" (fun _ => Bridge.rootAfter witness out.world) (fun x => match x with | .ok root => root.toNat % 2 | .error _ => 2)
   let _ ← part "the receipts root and the bloom" (fun _ => Bridge.receiptsRootAndBloom out.receipts) (fun x => x.1.toNat % 2)
   let kept : BlockOutput :=
     { BlockOutput.init with

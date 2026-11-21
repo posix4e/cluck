@@ -76,18 +76,21 @@ inductive Fetched (α : Type) where
   deriving Inhabited
 
 /-- An account as the state holds it, without its storage or its code's bytes. `storageEmpty` is whether its
-storage has nothing in it. -/
+storage has nothing in it. `storage` is whatever what stands behind needs to find the account's slots again
+(for a witness, the root of its storage); the world keeps it and hands it back, and does not look at it. -/
 structure Leaf where
   nonce : UInt64
   balance : Word
   codeHash : Word
   storageEmpty : Bool
+  storage : Word
 
 /-- Where what is not yet known comes from. Each is a question that may be asked once per account, slot or
 code; the answers are kept by the world. -/
 structure Backing where
   account : Word → Fetched Leaf
-  /-- A slot of an account that has storage; `absent` is a slot holding nothing. -/
+  /-- A slot, by what the account's leaf gave as `storage` and the slot's number; `absent` is a slot
+  holding nothing. -/
   slot : Word → Word → Fetched Word
   /-- Code by its hash. -/
   code : Word → Option ByteArray
@@ -112,6 +115,9 @@ structure Account where
   dirty : Bool
   /-- What its storage was when fetched: nothing in it. -/
   storageWasEmpty : Bool
+  /-- What its leaf gave for finding its slots, and whether it had a leaf at all: as fetched, never changed. -/
+  storage : Word
+  existed : Bool
   deriving Inhabited
 
 /-- Whether an account counts as nothing: no code, no nonce, no balance (EIP-161). One not in the state does. -/
@@ -186,7 +192,8 @@ def new (backing : Backing) : World :=
 /-- An account that is not in the state. -/
 def noAccount : Account :=
   { present := false, nonce := 0, balance := Word.zero, codeHash := emptyCodeHash, code := ByteArray.empty,
-    hasCode := true, fresh := true, createdAt := 0, dirty := false, storageWasEmpty := true }
+    hasCode := true, fresh := true, createdAt := 0, dirty := false, storageWasEmpty := true, storage := Word.zero,
+    existed := false }
 
 @[inline] def lack (w : World) (what : Word) : World :=
   if w.missing then w else { w with missing := true, lacking := what }
@@ -202,7 +209,8 @@ def account (w : World) (a : Word) : World × Account :=
       let entry : Account :=
         { present := true, nonce := leaf.nonce, balance := leaf.balance, codeHash := leaf.codeHash,
           code := ByteArray.empty, hasCode := leaf.codeHash == emptyCodeHash, fresh := false,
-          createdAt := 0, dirty := false, storageWasEmpty := leaf.storageEmpty }
+          createdAt := 0, dirty := false, storageWasEmpty := leaf.storageEmpty, storage := leaf.storage,
+          existed := true }
       ({ w with accounts := w.accounts.insert a entry }, entry)
     | .absent => ({ w with accounts := w.accounts.insert a noAccount }, noAccount)
     | .missing => (w.lack a, noAccount)
@@ -237,7 +245,8 @@ def slot (w : World) (a key : Word) : World × Slot :=
     | some entry => (w, entry)
     | none =>
       let (w, owner) := w.account a
-      let fetched : Fetched Word := if owner.fresh || owner.storageWasEmpty then .absent else w.backing.slot a key
+      let fetched : Fetched Word :=
+        if owner.fresh || owner.storageWasEmpty then .absent else w.backing.slot owner.storage key
       match fetched with
       | .found value =>
         let entry : Slot := { value, original := value, originalAt := 0, before := value }
@@ -360,7 +369,7 @@ def destruct (w : World) (a : Word) : World := { w with destructs := w.destructs
 /-- An account taken out of the state, with everything in its storage. -/
 def remove (w : World) (a : Word) : World :=
   let (w, entry) := w.account a
-  let w := w.setAccount a entry noAccount
+  let w := w.setAccount a entry { noAccount with storage := entry.storage, existed := entry.existed }
   -- Its slots that are known are emptied; the rest are never asked for again, the account being fresh.
   let names := w.slots.fold (fun names name _ => if name.address == a then names.push name else names) #[]
   names.foldl (fun w name =>

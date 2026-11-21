@@ -60,17 +60,20 @@ A second way in runs the rest of the engine. A request whose first five bytes ar
 request in every other byte and is judged by the engine (`Evm/Engine.lean`): this project's interpreter,
 state, transaction and block rules, with Jaune still deciding what needs no state (the header against its
 parent, the decoding of blocks and transactions, the recovery of senders), still running the precompiled
-contracts, and still making three of the roots. The answer says "valid" only when the gas used, the five
-roots and the requests hash the engine arrives at are the header's, by the same comparison Jaune's path
-ends with, and only after everything the engine fetched has been found supplied or proven absent; the
-engine cannot read what it holds no entry for, so what it fetched is what its world holds. A refusal by
-the engine is answered as a verdict (3) when all it had fetched by then was proven, where Jaune's path
+contracts, and still making three of the roots. The engine reads the witness itself, a question at a
+time: when it comes to an account or a slot it looks for it in the trie by the hash of the address or
+number it has in hand, and the answer is the entry found, or a proof that there is none, or that the
+witness does not say, which marks the engine's world and is never taken for "not there". So the addresses
+and slot numbers a stateless request carries are not used on this way in, and leaving them out changes
+nothing. The answer says "valid" only when the gas used, the five roots and the requests hash the engine
+arrives at are the header's, by the same comparison Jaune's path ends with, and only if its world is not
+marked. A refusal by an engine whose world is not marked is answered as a verdict (3), where Jaune's path
 answers 8, no verdict, because Jaune cannot say what it had read. What holds the engine: its arithmetic
 to `Nat` on 5.9 million cases; its interpreter to Jaune's on 170,000 programs that need no world; 121
 blocks of mainnet, whose headers it reproduces in every field compared; and `stateless-test`, where on 279
 blocks of test chains it gives Jaune's answers, on 1,143 witnesses with one node, key or code left out it
-gives the same answer or none, as Jaune does and in the same 564 cases, and a block that lies about its
-state root is refused. Nothing proves any of it, Ethereum's own test suites have not been run on it, and
+gives the right answer (734, the keys among them) or none (409), never another, and a block that lies
+about its state root is refused. Nothing proves any of it, Ethereum's own test suites have not been run on it, and
 no transaction or block that breaks a rule, other than that one lie, has been put to it: its refusals are
 written and all but untested. A flaw in it that made a block's wrong execution agree with a header would
 have to match what the block's maker claimed; a flaw that makes a right block disagree is a false

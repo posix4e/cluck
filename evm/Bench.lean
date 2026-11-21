@@ -1,6 +1,7 @@
 import Jaune.Precompiles
 import Jaune.MessageCall.Exec
 import Evm
+import Fast.Spike
 import Platform
 
 /-! Times Jaune's hashing, curve arithmetic and interpreter, on whichever runtime this is linked against.
@@ -81,6 +82,14 @@ def loopRun (n : Nat) : String :=
   | .ok d => s!"ok gasLeft {d.gasLeft} stack {d.stack.length}"
   | .error (_, d) => s!"error gasLeft {d.gasLeft}"
 
+def fastLoop (n : Nat) : String :=
+  let out := Fast.Spike.bytesRun (loopCode n) 1000000000
+  s!"halt {out.halt} gasLeft {out.gas} stack {out.depth}"
+
+def fastLimbs (n : Nat) : String :=
+  let out := Fast.Spike.limbsRun (loopCode n) 1000000000
+  s!"halt {out.halt} gasLeft {out.gas} stack {out.depth}"
+
 def main : IO UInt32 := do
   let seed := (← clockSeed).toNat
   let x := seed.toU256
@@ -90,4 +99,7 @@ def main : IO UInt32 := do
   timed "bn254 pairing, one pair" fun _ => pairingOnce seed
   timed "modexp 2048-bit" fun _ => (powModOnce x).toHex
   timed "EVM loop, 200000 rounds of 8 opcodes" fun _ => loopRun (200000 * seed)
+  timed "fast loop, stack as bytes, 200000 rounds of 8 opcodes" fun _ => fastLoop (200000 * seed)
+  timed "fast loop, stack as bytes, 10000000 rounds of 8 opcodes" fun _ => fastLoop (10000000 * seed)
+  timed "fast loop, stack as limbs, 10000000 rounds of 8 opcodes" fun _ => fastLimbs (10000000 * seed)
   return 0

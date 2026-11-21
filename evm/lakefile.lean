@@ -16,6 +16,10 @@ require jaune from git "https://github.com/posix4e/jaune" @ "3c2835998fe13be9bb6
 @[default_target]
 lean_lib Evm
 
+/-- An execution engine written for speed, to take Jaune's place in what runs. Imports no proofs. -/
+@[default_target]
+lean_lib Fast
+
 /-- The platform as an ordinary process, from the OS's own source. -/
 target platformHosted pkg : System.FilePath := do
   let src ← inputTextFile (pkg.dir / ".." / "rt" / "hosted" / "platform.c")

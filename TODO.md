@@ -413,6 +413,19 @@ reth takes 43 ms for a block at the median (28.6M gas, about 640M gas a second),
 percentile and 0.6 seconds at the most, outside a trust domain and with its caches warm. The guest takes
 3.0 seconds at the median for a block of the same chain, about seventy times as long.
 
+The faster engine (`evm/Fast/`), step by step:
+
+- **How it holds its stack is settled, by trial** (`evm/Fast/Spike.lean`, 2026-11-21). The benchmark's
+  loop of eight instructions (PUSH, ADD, DUP, GT, JUMPI) written as one loop whose stack, stack pointer,
+  program counter and gas are arguments of their own, in two layouts. On the minimal runtime, 80 million
+  instructions: the stack as bytes, 32 to a word, 0.85 seconds (94 million a second); as 32-bit limbs in
+  an array, 1.45 seconds (55 million a second). Jaune runs the same loop at 3.1 million a second, and
+  both layouts end with the gas and stack Jaune ends with. Bytes it is. The loop's generated C allocates
+  only when it halts, its dispatch is a jump table in the object code, and it links against the minimal
+  runtime with no function added. What this is not: an engine. Eight instructions, one frame, no memory,
+  no state, and an instruction is only a small part of what a block costs. Bounds are still checked
+  through `Nat`, which costs a little and can go.
+
 The relay's own checks, hostile input and a week of validating delivered blocks, which were next before
 the aim changed, are set aside, not done.
 

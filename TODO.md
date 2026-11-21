@@ -597,8 +597,9 @@ The faster engine (`evm/Fast/`), step by step:
     were worth to a proposer was 0.0002 ETH at the median and 0.0013 at the most. So the cap no longer
     decides anything: the builder puts in everything pending in public that can go in and is early, and
     what it builds is small because that is all there is in public. A faster engine does not make these
-    blocks worth more. `builder/shadow` still asks Jaune's builder with a cap of 8M unless told
-    otherwise, and nothing has been sent to a relay from the engine.
+    blocks worth more. Since the test suites passed, `builder/shadow` asks the engine's builder
+    unless told otherwise, with no cap but the block's own limit; a run that sends bids (`--live`)
+    still asks Jaune's unless told otherwise, and nothing built by the engine has been sent to a relay.
 - **bn254 on machine words** (2026-11-21; `evm/Fast/Bn254.lean`): the field in Montgomery form on four
   words, the tower above it, both groups, and the optimal ate pairing, for the three precompiled contracts
   that use the curve. Its constants were worked out from the curve's prime, order and parameter, not

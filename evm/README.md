@@ -235,6 +235,7 @@ a consensus node has to answer on its API):
 ```
 SILO_TDVF=/path/to/OVMF.fd builder/shadow --slots 100       # in a guest in a trust domain
 builder/shadow --process --engine both --slots 25            # both builders each slot, their answers compared
+                                                             # (without --engine: the fast one; with --live, Jaune's)
 builder/shadow --process --slots 100                         # or as a process, after scripts/build-min evm-serve
 .lake/build/bin/build-why /data/eth/shadow/unbuilt/N.req     # why a request built nothing
 ```

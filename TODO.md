@@ -290,10 +290,30 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   goes to the proposer as the block's fee recipient. Four slots as a process with 0.001 ETH: each bid was
   worth that much more, and the validator, which checks that the proposer is paid what the bid says,
   judged each block valid. Nothing was sent to a relay and the wallet's balance did not change.
+- **1,300 slots with the key in the guest, and the line not reached** (2026-11-21, TDX, image
+  `df9f34be…74dc64fe`, one key throughout, 8M gas asked for). 1,045 slots built a block; the node's
+  validator judged all 1,045 valid and none was refused, every one was signed and `bid-verify` found every
+  signature good, and the slot's randomness and withdrawals were guessed right 1,043 times of 1,043. The
+  longest run of valid, signed blocks each ready two seconds before its slot was 790, not 1,000, broken
+  twice, and neither time by a wrong block:
+  - One block (6.5M gas, 41 transactions) took the guest 9.3 seconds and came back 3.8 seconds after its
+    slot began; its parent had arrived 5.8 seconds into its own slot. The guest's time for a block was 0.29
+    seconds at the median, and over 2 seconds in 20 slots. Since then a request for a bid names the time it
+    allows, and the guest ends the block with what is in it when that is up (`JBID2`; `Stage.finishWith`
+    in `evm/Evm/Build.lean`): a slow block becomes a smaller one. The request that was slow was not kept,
+    so what in it was slow is not known; the host now keeps any request that takes over 2 seconds.
+  - For 255 slots in a row the guest built nothing, rightly: the chain replaced block 26461713 with
+    another, the host went on sending the header it had kept under that number, and the guest refused
+    headers that are no chain to the parent (status 5) until the stale one left the window of 255. The
+    fault was the host's (`builder/shadow`), which now follows headers back from the head by parent hash.
+    After it the last 188 slots were all valid, signed and in time.
+  What a win would cost, again, over the 189 of these slots whose winning bid the relays' public data
+  still gave: the winning bid 0.0099 ETH at the median, the guest's 0.0002; short by 0.0067 or less in a
+  quarter of slots, 0.0097 at the median, 0.2746 at the most.
 - Not done: no relay has been sent anything, so no relay has said whether it accepts a block or a
-  signature from here; 1,000 slots in a row with a valid block ready in time (a run with the key in the
-  guest was started on 2026-11-21 and is not finished); the report that ties the key to the image has not
-  been fetched and checked by anything outside; the order privacy a builder in a trust domain is for:
+  signature from here; 1,000 slots in a row with a valid block ready in time (a second run, with the time
+  limit and the host's fix, image `346c4ffd…61df038a`, was started on 2026-11-21 and is not finished); the
+  report that ties the key to the image has not been fetched and checked by anything outside; the order privacy a builder in a trust domain is for:
   transactions still reach the guest in the clear, through the host.
 
 What is next, in order:

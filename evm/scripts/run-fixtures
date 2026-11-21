@@ -149,7 +149,7 @@ try:
         print(f"the builder's key, asked for twice: {key.hex() if ok else 'NOT ONE KEY'}")
         with open(os.path.join(here, "fixtures/build/DelegateCallSpam-1.req"), "rb") as f:
             build = f.read()
-        asked = b"JBID1" + struct.pack(">Q", 15700576) + bytes(range(48)) + bytes(4) + build
+        asked = b"JBID2" + struct.pack(">Q", 15700576) + bytes(range(48)) + bytes(4) + bytes(4) + build
         sent = time.time()
         reply = exchange(asked, 600)[4:]
         took = time.time() - sent

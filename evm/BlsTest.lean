@@ -118,7 +118,7 @@ def bidChecks : IO (Nat × Nat) := do
     (Evm.Bid.serve builder Evm.Bid.keyMagic == builder.publicKey && builder.publicKey.size == 48) failures checks
   let request ← IO.FS.readBinFile "fixtures/build/DelegateCallSpam-1.req"
   let proposer := key
-  let asked := Evm.Bid.magic ++ Evm.Service.be 8 15700576 ++ proposer ++ Evm.Bid.zeros 4 ++ request
+  let asked := Evm.Bid.magic ++ Evm.Service.be 8 15700576 ++ proposer ++ Evm.Bid.zeros 4 ++ Evm.Service.be 4 0 ++ request
   let reply := Evm.Bid.serve builder asked
   let plain := Evm.Build.serve request
   (failures, checks) ← expect "the bid's reply does not begin with the reply to the request to build"
@@ -142,6 +142,13 @@ def bidChecks : IO (Nat × Nat) := do
         (!JauneConsensus.verify builder.publicKey.toList other signature.toList) failures checks
     | none => (failures, checks) ← expect "nothing built from the fixture" false failures checks
   | none => (failures, checks) ← expect "the fixture is not a request to build" false failures checks
+  -- A bid asked for with time allowed, when the time runs out before the first transaction: still a whole
+  -- block and a signed bid, with nothing in it; and the time allowed is read from where it is written.
+  let hurried := Evm.Bid.magic ++ Evm.Service.be 8 15700576 ++ proposer ++ Evm.Bid.zeros 4 ++ Evm.Service.be 4 1500 ++ request
+  let empty := Id.run (Evm.Bid.serveWith (pure true) builder hurried)
+  (failures, checks) ← expect "a bid cut short before its first transaction is not a signed, empty block"
+    (Evm.Bid.allowed hurried == 1500 && Evm.Bid.allowed asked == 0 && empty.size > 109 + 144 && empty[0]! == 0 &&
+      empty.extract 97 109 == Evm.Service.be 12 0 && Evm.Bid.serve builder hurried == reply) failures checks
   -- A key is usable exactly when it is in range.
   let unusable := [Evm.Bid.zeros 32, Evm.Bid.little 32 blsCurveOrder, Evm.Bid.little 32 (blsCurveOrder + 1)]
   (failures, checks) ← expect "a key that is zero or not below the order was taken"

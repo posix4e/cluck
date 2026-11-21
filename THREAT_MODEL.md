@@ -178,6 +178,23 @@ signed as given. No request signs a message of the sender's choosing, and the do
 builder's, so a bid cannot be made into a consensus message. The sender can have as many bids signed as it
 likes, for any slot and proposer it names.
 
+*How long it may take.* A request for a bid (`JBID2`) names the milliseconds it allows for transactions,
+and this is the first place the machine's clock decides anything about an answer. The time is counted from
+when the whole request has arrived; before each transaction the clock is read, and once the time is up
+everything still proposed is left out and the block is ended with what is in it. So the block is no longer
+a function of the request alone: which transactions went in can differ from one run to the next. What is
+said of the block is unchanged, because a block ended early goes through the same end as any other (the
+checks of what was read and made, the state root, Jaune's checks of the header) and the reply names what
+went in. The sender gains nothing it did not have: it could always get a smaller block by proposing less.
+Nor does whoever controls the clock, which is the processor's counter as the firmware's delay calibrated
+it at start, and which goes on counting while the host keeps the guest from running: they can make a block
+smaller or empty, as they can refuse to carry the request at all. The limit is looked at between
+transactions only, so one slow transaction still takes as long as it takes, and with no limit named the
+block takes as long as its transactions do. `build-test` ends blocks before their first transaction and
+half way through (three test chains, three blocks of mainnet) and puts each to the checker; `bls-test`
+does the same for a bid; in the TDX guest four slots' pending transactions with one millisecond allowed
+came back as four empty blocks, signed, that the node's validator judged valid.
+
 *Time.* The rule is the OS's: a secret never passes through `Nat` or `Int`, and decides no branch, no
 address and no division. Jaune's own BLS code is on `Nat` and is not used on the key. `evm/Evm/Sign/` holds
 field elements as fifteen 26-bit limbs in machine words; where a value decides something, both answers are

@@ -10,16 +10,23 @@ made out and signed, by a key that is held where this runs and is never a `Nat` 
 
 ## The requests
 
-    "JBID1"
+    "JBID2"
     8    the slot
     48   the proposer's public key
     4    the fork version the signature is for (the chain's genesis version: zeros for mainnet)
+    4    milliseconds allowed for transactions, or 0 for as long as they take
     then a request to build, from its own "JBLD1" on (Evm/Build.lean)
 
 is answered with the response to that request to build, and after it, if a block was built:
 
     48   this builder's public key
     96   its signature over the bid
+
+The time allowed is for a builder that has a slot to meet: counted from when the whole request has
+arrived, and once it is up everything still proposed is left out and the block is ended with what is in
+it, so the answer is a smaller block and not a late one. It is looked at between transactions, not within
+one. Only a machine with a clock can count it (`EfiMain.lean`); run as a process there is none, and the
+answer is the block with no limit.
 
     "JKEY1"
 
@@ -45,7 +52,7 @@ namespace Evm.Bid
 
 open Jaune Evm.Service
 
-def magic : ByteArray := "JBID1".toUTF8
+def magic : ByteArray := "JBID2".toUTF8
 def keyMagic : ByteArray := "JKEY1".toUTF8
 
 def sha (bytes : ByteArray) : ByteArray := (Bytes.sha256 bytes.toList).toBytes.toByteArray
@@ -129,31 +136,43 @@ def keyOf (random : ByteArray) : Option Key :=
 `EfiMain.lean` draws its own. -/
 def testKey : Option Key := keyOf (sha "a key for tests, known to everyone".toUTF8)
 
-/-- The response to a request to build and bid, or to a request for the key. -/
+/-- The milliseconds a request to build and bid allows for transactions; 0 when it names none or is not
+such a request. -/
+def allowed (input : ByteArray) : Nat :=
+  if input.size < magic.size + 64 || input.extract 0 magic.size != magic then 0
+  else (input.extract (magic.size + 60) (magic.size + 64)).foldl (fun n b => n * 256 + b.toNat) 0
+
+/-- The response to a request to build and bid, or to a request for the key. `over` is asked before each
+transaction whether the time allowed has run out (`Build.Stage.finishWith`); whoever has a clock supplies
+it. Whatever it says, what comes back is a whole block and a bid for that block. -/
+def serveWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input : ByteArray) : m ByteArray := do
+  if input == keyMagic then return key.publicKey
+  let refuse := ({ status := 5 } : Build.Response).encode
+  if input.size < magic.size + 64 || input.extract 0 magic.size != magic then return refuse
+  let start := magic.size
+  let slot := (input.extract start (start + 8)).foldl (fun n b => n * 256 + b.toNat) 0
+  let proposerKey := input.extract (start + 8) (start + 56)
+  let forkVersion := input.extract (start + 56) (start + 60)
+  match (Build.request (input.extract (start + 64) input.size)).run 0 with
+  | none => return refuse
+  | some (request, _) =>
+    let (response, _, _) ← Build.runWith over request
+    match response.built with
+    | none => return response.encode
+    | some built =>
+      let bid : Bid :=
+        { slot, parentHash := Trie.wordBytes built.header.parentHash, blockHash := Trie.wordBytes built.hash,
+          builderKey := key.publicKey, proposerKey,
+          feeRecipient := built.header.coinbase.toBytes.toByteArray, gasLimit := built.header.gasLimit,
+          gasUsed := built.header.gasUsed, value := built.value }
+      match Sign.sign key.secret (signingRoot bid.root (domain forkVersion)).toList with
+      | .ok signature => return response.encode ++ key.publicKey ++ signature.toByteArray
+      | .error _ => return ({ status := 4 } : Build.Response).encode
+
+/-- The same with no clock: the time allowed is not looked at, and the answer is a function of the request
+and the key. -/
 def serve (key : Key) (input : ByteArray) : ByteArray :=
-  if input == keyMagic then key.publicKey
-  else
-    let refuse := ({ status := 5 } : Build.Response).encode
-    if input.size < magic.size + 60 || input.extract 0 magic.size != magic then refuse else
-    let start := magic.size
-    let slot := (input.extract start (start + 8)).foldl (fun n b => n * 256 + b.toNat) 0
-    let proposerKey := input.extract (start + 8) (start + 56)
-    let forkVersion := input.extract (start + 56) (start + 60)
-    match (Build.request (input.extract (start + 60) input.size)).run 0 with
-    | none => refuse
-    | some (request, _) =>
-      let response := Build.run request
-      match response.built with
-      | none => response.encode
-      | some built =>
-        let bid : Bid :=
-          { slot, parentHash := Trie.wordBytes built.header.parentHash, blockHash := Trie.wordBytes built.hash,
-            builderKey := key.publicKey, proposerKey,
-            feeRecipient := built.header.coinbase.toBytes.toByteArray, gasLimit := built.header.gasLimit,
-            gasUsed := built.header.gasUsed, value := built.value }
-        match Sign.sign key.secret (signingRoot bid.root (domain forkVersion)).toList with
-        | .ok signature => response.encode ++ key.publicKey ++ signature.toByteArray
-        | .error _ => ({ status := 4 } : Build.Response).encode
+  Id.run (serveWith (pure false) key input)
 
 /-- Whether a request is one of the two this file answers. -/
 def mine (input : ByteArray) : Bool :=

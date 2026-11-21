@@ -100,17 +100,23 @@ private def drawKey : IO Evm.Bid.Key := do
     if let some key := Evm.Bid.keyOf (← Platform.random 32) then return key
   throw (IO.userError "no key could be drawn")
 
-/-- Any request: one for a bid or for the builder's key, which need the key, or one of the others. -/
-private def serveWith (key : Evm.Bid.Key) (request : ByteArray) : ByteArray :=
-  if Evm.Bid.mine request then Evm.Bid.serve key request else Evm.serve request
+/-- Any request: one for a bid or for the builder's key, which need the key, or one of the others. A
+request for a bid may name the milliseconds it allows for transactions, counted from here, where the whole
+request has arrived; this machine's clock is what says they have run out. -/
+private def serveWith (key : Evm.Bid.Key) (request : ByteArray) : IO ByteArray := do
+  if !Evm.Bid.mine request then return ← IO.lazyPure fun _ => Evm.serve request
+  let allowed := Evm.Bid.allowed request
+  let stopAt := (← Efi.millis).toNat + allowed
+  let over : IO Bool := if allowed == 0 then pure false else do return (← Efi.millis).toNat ≥ stopAt
+  Evm.Bid.serveWith over key request
 
 /-- The response to one frame, and after it the TDREPORT that binds it to the frame when the frame asked for
 one and this machine can make one (`Evm.Attest`). -/
 private def answer (key : Evm.Bid.Key) (request : ByteArray) : IO ByteArray := do
   match Evm.Attest.asked? request with
-  | none => IO.lazyPure fun _ => serveWith key request
+  | none => serveWith key request
   | some asked =>
-    let reply ← IO.lazyPure fun _ => serveWith key (Evm.Attest.request asked)
+    let reply ← serveWith key (Evm.Attest.request asked)
     let report ← Efi.report (Evm.Attest.reportData asked reply)
     return if report.size == 1024 then reply ++ report else reply
 

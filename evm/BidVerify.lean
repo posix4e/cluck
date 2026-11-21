@@ -17,7 +17,7 @@ def main (args : List String) : IO UInt32 := do
   let [requestPath, replyPath] := args | do IO.eprintln "usage: bid-verify REQUEST REPLY"; return 2
   let request ← IO.FS.readBinFile requestPath
   let reply ← IO.FS.readBinFile replyPath
-  if request.extract 0 5 != Evm.Bid.magic || request.size < 65 then IO.println "not a request for a bid"; return 1
+  if request.extract 0 5 != Evm.Bid.magic || request.size < 69 then IO.println "not a request for a bid"; return 1
   if reply.size < 109 + 144 || reply[0]! != 0 then IO.println s!"no block was built: status {reply[0]?.getD 255}"; return 1
   let slot := number (request.extract 5 13)
   let proposerKey := request.extract 13 61

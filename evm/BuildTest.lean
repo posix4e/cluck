@@ -110,6 +110,18 @@ def one (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (wr
   | none =>
     -- With the order changed the witness may not reach: that is an answer, and it is said.
     tally ← tally.expect s!"{name}: by the rule, status {ruled.status}" (ruled.status == 6)
+  -- Out of time before the first transaction, and half way through: what was in by then is a whole block,
+  -- one the checker accepts, and nothing after it went in. (`over` is asked before each transaction; here
+  -- it counts how often.) Ending early can need a node of the witness that the whole block did not, and
+  -- then the answer is that, said.
+  for k in [0, count / 2] do
+    let over : StateM Nat Bool := modifyGet fun asked => (asked ≥ k, asked + 1)
+    let ((cut, _, _), _) := (Build.runWith over { witness, rule := 0, gasCap := limit }).run 0
+    match cut.built with
+    | some b =>
+      tally ← tally.expect s!"{name}: out of time after {k} transactions, {b.included.length} went in, or the \
+        checker does not accept the block" (b.included == List.range k && accepted witness template b)
+    | none => tally ← tally.expect s!"{name}: out of time after {k} transactions, status {cut.status}" (cut.status == 6)
   if write then
     if let some encoded := Build.Request.encode { witness, rule := 1, gasCap := limit } then
       IO.FS.createDirAll "fixtures/build"

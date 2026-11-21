@@ -208,30 +208,62 @@ structure Note where
   /-- For one that went in, the gas the block had used once it had run; otherwise why it was left out. -/
   said : String
 
-/-- The transactions that go in, run one after another. One that Jaune rejects, or that read what the
+/-- A block part of the way through being filled: what is still proposed, in the order it will be tried,
+and the block as it stands. -/
+structure Filling where
+  rest : List Candidate
+  benv : Benv
+  bout : BlockOutput
+  shown : Shown := {}
+  included : Array Nat := #[]
+  notes : Array Note := #[]
+
+/-- The next proposed transaction, put in or left out. One that Jaune rejects, or that read what the
 witness does not prove, leaves the state and the block as they were before it. -/
-def fill (known : Known) (gasCap : Nat) :
-    List Candidate → Benv → BlockOutput → Shown → Array Nat → Array Note →
-      Except TransitionError (Benv × BlockOutput × Array Nat × Array Note)
-  | [], benv, bout, _, included, notes => .ok (benv, bout, included, notes)
-  | c :: rest, benv, bout, shown, included, notes =>
+def Filling.step (known : Known) (gasCap : Nat) : Filling → Except TransitionError Filling
+  | ⟨[], benv, bout, shown, included, notes⟩ => .ok ⟨[], benv, bout, shown, included, notes⟩
+  | ⟨c :: rest, benv, bout, shown, included, notes⟩ =>
     if bout.blockGasUsed + c.tx.gasLimit > gasCap then
-      fill known gasCap rest benv bout shown included (notes.push ⟨c.place, false, "would pass the gas asked for"⟩)
+      .ok ⟨rest, benv, bout, shown, included, notes.push ⟨c.place, false, "would pass the gas asked for"⟩⟩
     else
       match processTransaction benv bout c.tx included.size with
       | .ok (state, bout') =>
         match showReads known shown bout'.blockAccessListBuilder (madeBy benv.state state) with
         | .ok shown' =>
-          fill known gasCap rest (benv.withState state) bout' shown' (included.push c.place)
-            (notes.push ⟨c.place, true, s!"{bout'.blockGasUsed}"⟩)
-        | .error what =>
-          fill known gasCap rest benv bout shown included (notes.push ⟨c.place, false, s!"read {what}"⟩)
+          .ok ⟨rest, benv.withState state, bout', shown', included.push c.place,
+            notes.push ⟨c.place, true, s!"{bout'.blockGasUsed}"⟩⟩
+        | .error what => .ok ⟨rest, benv, bout, shown, included, notes.push ⟨c.place, false, s!"read {what}"⟩⟩
       | .error (.internal e) => .error (.internal e)
-      | .error e =>
-        fill known gasCap rest benv bout shown included (notes.push ⟨c.place, false, s!"rejected: {e.render}"⟩)
+      | .error e => .ok ⟨rest, benv, bout, shown, included, notes.push ⟨c.place, false, s!"rejected: {e.render}"⟩⟩
 
-def buildWithNotes (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) :
-    M (Response × Array Note) := do
+/-- A block being built: what was settled before its first transaction, and how far it has been filled. -/
+structure Job where
+  fork : Fork
+  known : Known
+  /-- The header with everything in it that does not come from running the block. -/
+  blank : Header
+  template : Block
+  gasCap : Nat
+  /-- The fee recipient's balance before the first transaction. -/
+  paidBefore : Nat
+  filling : Filling
+
+/-- How far a request to build has got: answered, or a block still being filled. -/
+inductive Stage where
+  | done (response : Response) (notes : Array Note) (why : String)
+  | going (job : Job)
+
+/-- An answer that came out of the witness's own monad. -/
+def answered : M (Response × Array Note) → Stage
+  | .ok (response, notes) => .done response notes ""
+  | .error (.lacking hash what) => .done { status := 6, lacking := hash } #[] what
+  | .error .malformed => .done { status := 7 } #[] ""
+  | .error .failure => .done { status := 4 } #[] ""
+
+/-- Everything before the first transaction: the witness checked, the template checked against the parent,
+the two system calls that open a block, and the proposed transactions in the order they will be tried. -/
+def start (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) :
+    M Stage := do
   let rules := fork.ruleSet
   let known ← materialise r.witness parent.stateRoot
   let chain : BlockChain :=
@@ -241,18 +273,21 @@ def buildWithNotes (r : Request) (fork : Fork) (parent : Header) (ancestors : Li
   let asked := { template.header with gasUsed := 0 }
   let baseFee ← match expectedBaseFee { asked with baseFeePerGas := if rules.header.baseFee then some 0 else none } parent with
     | .ok fee => pure fee
-    | .error _ => return ({ status := 3 }, #[])
+    | .error _ => return .done { status := 3 } #[] ""
   let blank := { asked with
     baseFeePerGas := baseFee,
     excessBlobGas := if rules.header.blobGas then some (calcExcessBlobGas rules.blob parent) else none }
   if (validateHeader rules chain blank).isOk == false || !template.ommers.isEmpty then
-    return ({ status := 3 }, #[])
+    return .done { status := 3 } #[] ""
   let benv := initBenv fork chain blank
-  let run : Except TransitionError (Array Note × Array Nat × State × BlockOutput × Nat) := do
+  let opened : Except TransitionError (Benv × BlockAccessListBuilder) := do
     let (stBeacon, bal) ← beaconRootsCall rules benv
     let benvBeacon := benv.withState stBeacon
     let (stHistory, bal) ← historyStorageCall rules benvBeacon bal
-    let start := benvBeacon.withState stHistory
+    pure (benvBeacon.withState stHistory, bal)
+  match opened with
+  | .error _ => return .done { status := 4 } #[] ""
+  | .ok (begun, bal) =>
     let baseFee := blank.baseFeePerGas.getD 0
     let proposed := template.transactions.zipIdx.filterMap fun (item, place) =>
       match decodeTransaction rules item with
@@ -264,17 +299,23 @@ def buildWithNotes (r : Request) (fork : Fork) (parent : Header) (ancestors : Li
           if r.rule == 0 then some { place, tx, sender, tip := 0 : Candidate }
           else (tip baseFee tx).map fun t => { place, tx, sender, tip := t }
     let ordered := if r.rule == 0 then proposed else (byTip proposed).toList
-    let cap := min r.gasCap blank.gasLimit
-    let paidBefore := (start.state.bal benv.stat.coinbase).toNat
-    let (filled, bout, included, notes) ←
-      fill known cap ordered start { BlockOutput.init with blockAccessListBuilder := bal } {} #[] #[]
-    let value := (filled.state.bal benv.stat.coinbase).toNat - paidBefore
-    let (stWds, boutWds) := withdrawalsPass rules filled bout template.withdrawals
-    let (stReq, boutReq) ← requestsPass rules (filled.withState stWds) boutWds
-    pure (notes, included, stReq, boutReq, value)
-  match run with
+    return .going
+      { fork, known, blank, template, gasCap := min r.gasCap blank.gasLimit,
+        paidBefore := (begun.state.bal benv.stat.coinbase).toNat,
+        filling := { rest := ordered, benv := begun, bout := { BlockOutput.init with blockAccessListBuilder := bal } } }
+
+/-- Everything after the last transaction: withdrawals, the block's requests, the checks that everything
+read was shown, the state root and the header. -/
+def Job.finish (job : Job) : M (Response × Array Note) := do
+  let rules := job.fork.ruleSet
+  let known := job.known
+  let filled := job.filling.benv
+  let notes := job.filling.notes
+  let value := (filled.state.bal filled.stat.coinbase).toNat - job.paidBefore
+  let (stWds, boutWds) := withdrawalsPass rules filled job.filling.bout job.template.withdrawals
+  match requestsPass rules (filled.withState stWds) boutWds with
   | .error _ => return ({ status := 4 }, #[])
-  | .ok (notes, included, after, out, value) =>
+  | .ok (after, out) =>
     -- As for a block that is checked: everything read was shown, and everything made was not there.
     let reads := out.blockAccessListBuilder
     let made := after.keys.filter fun address => !known.leaves.contains address
@@ -284,7 +325,7 @@ def buildWithNotes (r : Request) (fork : Fork) (parent : Header) (ancestors : Li
     checkReads known (reads.readAccounts.toList ++ made) (reads.readSlots.toList ++ madeSlots)
     let stateRoot ← rootAfter known after
     let header : Header :=
-      { blank with
+      { job.blank with
         stateRoot, transactionsRoot := getTransactionsRoot out, receiptsRoot := getReceiptRoot out,
         logsBloom := logsBloom out.blockLogs, gasUsed := max out.blockGasUsed out.blockStateGasUsed,
         withdrawalsRoot := if rules.header.withdrawalsRoot then some (getWithdrawalsRoot out) else none,
@@ -294,13 +335,11 @@ def buildWithNotes (r : Request) (fork : Fork) (parent : Header) (ancestors : Li
     let agrees := stateTransitionChecks out header header.transactionsRoot stateRoot header.receiptsRoot
       header.logsBloom (getWithdrawalsRoot out) header.requestsHash
     if !agrees.isOk then return ({ status := 4 }, notes)
-    return ({ status := 0, built := some ⟨header, header.hash, included.toList, value, out.requests⟩ }, notes)
+    return ({ status := 0, built := some ⟨header, header.hash, job.filling.included.toList, value, out.requests⟩ }, notes)
 
-def build (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) :
-    M Response := (·.1) <$> buildWithNotes r fork parent ancestors template
-
-def runWithNotes (r : Request) : Response × Array Note × String :=
-  let only (response : Response) (why : String := "") : Response × Array Note × String := (response, #[], why)
+/-- Where a request to build starts: refused, or a block with nothing in it yet. -/
+def begin (r : Request) : Stage :=
+  let only (response : Response) (why : String := "") : Stage := .done response #[] why
   match rlpToBlockE r.witness.block.toList with
   | .error _ => only { status := 5 } "the block does not decode"
   | .ok (template, _) =>
@@ -321,11 +360,60 @@ def runWithNotes (r : Request) : Response × Array Note × String :=
         if !linked || parent.hash != template.header.parentHash then only { status := 5 } "the headers are not a chain to the parent"
         else if ancestors.length != min 255 template.header.number then only { status := 6 } "too few headers"
         else
-          match buildWithNotes r fork parent ancestors template with
-          | .ok (response, notes) => (response, notes, "")
-          | .error (.lacking hash what) => only { status := 6, lacking := hash } what
-          | .error .malformed => only { status := 7 }
-          | .error .failure => only { status := 4 }
+          match start r fork parent ancestors template with
+          | .ok stage => stage
+          | .error shortfall => answered (.error shortfall)
+
+/-- One more piece of work: the next proposed transaction, or, when none is left, the end of the block. -/
+def Stage.step : Stage → Stage
+  | .done response notes why => .done response notes why
+  | .going job =>
+    if job.filling.rest.isEmpty then answered job.finish
+    else match job.filling.step job.known job.gasCap with
+      | .ok filling => .going { job with filling }
+      | .error _ => .done { status := 4 } #[] ""
+
+/-- Everything still proposed is left out, each noted as such; the block ends with what is in it. -/
+def Stage.cut : Stage → Stage
+  | .going job =>
+    let filling := job.filling
+    .going { job with filling := { filling with
+      rest := [],
+      notes := filling.rest.foldl (fun notes c => notes.push ⟨c.place, false, "out of time"⟩) filling.notes } }
+  | stage => stage
+
+/-- Whether anything is still proposed that has not been tried. -/
+def Stage.filling : Stage → Bool
+  | .going job => !job.filling.rest.isEmpty
+  | .done .. => false
+
+/-- How many more steps reach an answer when none is cut: one for each transaction still proposed, and one
+to end the block. -/
+def Stage.left : Stage → Nat
+  | .going job => job.filling.rest.length + 1
+  | .done .. => 0
+
+/-- A stage taken to its answer. Before each transaction `over` is asked whether to stop, and the first
+time it says so the block is ended with what is in it. `over` is the only thing here that is not a function
+of the request: on a machine with a clock it is "the time allowed has run out"; without one it never says
+stop, and the block is the same every time. -/
+def Stage.finishWith {m : Type → Type} [Monad m] (over : m Bool) : Nat → Stage → m Stage
+  | 0, stage => pure stage
+  | steps + 1, stage => do
+    let stage ← if stage.filling then (do if (← over) then pure stage.cut else pure stage) else pure stage
+    finishWith over steps stage.step
+
+def Stage.answer : Stage → Response × Array Note × String
+  | .done response notes why => (response, notes, why)
+  | .going _ => ({ status := 4 }, #[], "")
+
+/-- The answer to a request to build, when `over` is asked before each transaction whether to stop. -/
+def runWith {m : Type → Type} [Monad m] (over : m Bool) (r : Request) : m (Response × Array Note × String) := do
+  let stage := begin r
+  return (← stage.finishWith over stage.left).answer
+
+def runWithNotes (r : Request) : Response × Array Note × String :=
+  Id.run (runWith (pure false) r)
 
 def run (r : Request) : Response := (runWithNotes r).1
 

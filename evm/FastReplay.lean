@@ -3,12 +3,14 @@ import Evm.Bridge
 /-! Saved blocks of the real chain put through the fast engine, with each block's own header as the judge.
 
     .lake/build/bin/fast-replay REQUEST...       stateless requests, as `witness/fetch` writes them
+    .lake/build/bin/fast-replay --where ADDRESS REQUEST     which transaction first makes the engine fetch an account
 
 A header commits to the gas its block used, to the root of its receipts (each transaction's success, the
-gas used up to it and its logs), to the bloom of those logs and to the hash of its requests. The engine
-runs the block on the state the request's witness gives and all four must come out as the header has them.
-What this does not judge is the state after the block: the state root is not worked out here yet. Runs on
-Lean's runtime; the roots are made by Jaune's functions. -/
+gas used up to it and its logs), to the bloom of those logs, to the hash of its requests, and to the root
+of the state after it. The engine runs the block on the state the request's witness gives, everything it
+fetched must have been supplied or proven absent, and all five must come out as the header has them. Runs
+on Lean's runtime; the receipts root and the bloom are made by Jaune's functions, the state root by this
+package's trie. -/
 open Jaune Evm
 
 def judge (path : String) : IO Bool := do
@@ -34,7 +36,7 @@ def judge (path : String) : IO Bool := do
   match result with
   | .error why => IO.println s!"{name}: REFUSED: {why}"; return false
   | .ok out =>
-    let (root, bloom) := Bridge.receiptsRootAndBloom out.receipts
+    let (root, bloom) ← IO.lazyPure fun _ => Bridge.receiptsRootAndBloom out.receipts
     let requests := computeRequestsHash (out.requests.toList.map (·.toList))
     let header := block.header
     let mut wrong : List String := []
@@ -43,7 +45,13 @@ def judge (path : String) : IO Bool := do
     if bloom != header.logsBloom then wrong := "logs bloom" :: wrong
     if header.requestsHash.isSome && header.requestsHash != some requests then wrong := "requests hash" :: wrong
     if out.world.missing then wrong := "something was asked for that the witness did not have" :: wrong
-    let times := s!"witness {t1 - t0} ms, senders {t2 - t1} ms, block {t3 - t2} ms"
+    let stateRoot ← IO.lazyPure fun _ => Bridge.rootAfter known out.world
+    let t4 ← IO.monoMsNow
+    match stateRoot with
+    | .ok stateRoot => if stateRoot != header.stateRoot then wrong := "state root" :: wrong
+    | .error (.lacking _ what) => wrong := s!"the witness lacks {what}" :: wrong
+    | .error _ => wrong := "the state root could not be worked out" :: wrong
+    let times := s!"witness {t1 - t0} ms, senders {t2 - t1} ms, block {t3 - t2} ms, state root {t4 - t3} ms"
     if wrong.isEmpty then
       IO.println s!"{name}: block {header.number}, {out.receipts.size} transactions, {header.gasUsed} gas: as the header has it ({times})"
       return true
@@ -51,7 +59,52 @@ def judge (path : String) : IO Bool := do
       IO.println s!"{name}: block {header.number}, {out.receipts.size} transactions: WRONG: {", ".intercalate wrong.reverse} ({times})"
       return false
 
+/-- Which transaction of a block first makes the engine fetch an account: for finding out why a witness
+that was enough for Jaune is not enough for the engine. Runs the block again with one more transaction
+each time, so it is slow. -/
+def whereFetched (path : String) (hexAddress : String) : IO Unit := do
+  let input ← IO.FS.readBinFile path
+  let some (r, _) := (Stateless.request input).run 0 | IO.println "not a request"
+  let .ok (block, _) := rlpToBlockE r.block.toList | IO.println "the block does not decode"
+  let some fork := (match r.fork with
+    | some fork => some fork
+    | none => (mainnetChainConfig.forkAt block.header.number block.header.timestamp).toOption) | IO.println "no fork"
+  let some ancestors := r.headers.mapM Stateless.header | IO.println "a header does not decode"
+  let some parent := ancestors.getLast? | IO.println "no headers"
+  let .ok known := Stateless.materialise r parent.stateRoot | IO.println "the witness does not read"
+  let some body := Bridge.body fork r.chainId block | IO.println "a transaction does not decode"
+  let blk := Bridge.environment fork r.chainId block.header ancestors
+  let wanted := Fast.Word.ofHex hexAddress
+  -- What the witness has for the account, whether or not the request names it.
+  match Trie.get known.store (.sealed known.root) (Bridge.pathOf wanted.addressBytes) with
+  | .ok (some bytes) =>
+    match Stateless.Leaf.read bytes with
+    | some leaf =>
+      IO.println s!"in the witness's trie: nonce {leaf.nonce.toNat}, balance {leaf.balance.toNat}, code hash {leaf.codeHash.toHex}, \
+        storage root {leaf.storageRoot.toHex}; named by the request with its code: {known.leaves.contains (Bridge.address wanted)}; \
+        a code with that hash is in the request: {r.codes.any fun code => Trie.hashOf code == leaf.codeHash}; \
+        its address is among the keys: {r.keys.any fun key => key == wanted.addressBytes}"
+    | none => IO.println "in the witness's trie, and its entry does not read"
+  | .ok none => IO.println "proven by the witness not to be in the state"
+  | .error _ => IO.println "the witness does not reach it"
+  for count in [0:body.transactions.size + 1] do
+    let part := { body with transactions := body.transactions.extract 0 count }
+    match Fast.runBlock blk (Bridge.host fork) part ByteArray.empty (Fast.World.new (Bridge.backing known)) with
+    | .error why => IO.println s!"with {count} transactions: {why}"; return
+    | .ok out =>
+      if out.world.accounts.contains wanted then
+        if count == 0 then IO.println "fetched by the block's own calls, before any transaction"
+        else if let some tx := body.transactions[count - 1]? then
+          IO.println s!"first fetched in transaction {count - 1}: from {(Bridge.u256 tx.sender).toHex} to \
+            {(tx.callee.map fun a => (Bridge.u256 a).toHex).getD "(creation)"}, nonce {tx.nonce.toNat}, gas {tx.gasLimit.toNat}; \
+            it {if (out.receipts.back?.map (·.success)).getD false then "succeeded" else "failed"}"
+        return
+  IO.println "never fetched"
+
 def main (args : List String) : IO UInt32 := do
+  if let ["--where", address, path] := args then
+    whereFetched path address
+    return 0
   if args.isEmpty then
     IO.eprintln "usage: fast-replay REQUEST..."
     return 2

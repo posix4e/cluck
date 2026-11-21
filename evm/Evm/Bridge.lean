@@ -128,4 +128,39 @@ def receiptsRootAndBloom (receipts : Array Fast.Receipt) : U256 × Bytes :=
     (key.toNibbles, r.kind.toNat.toBytes ++ receipt.toRlpItem.toBytes)
   (trie (Std.TreeMap.ofList entries _), logsBloom (receipts.toList.flatMap fun r => r.logs.toList.map log))
 
+/-- Where an address or a slot's number lies in a trie: the nibbles of its hash. -/
+def pathOf (bytes : ByteArray) : Trie.Path := Trie.nibbles (Fast.Keccak.hash bytes 0 bytes.size).bytes
+
+/-- The state root after the engine has run a block on what a witness gave: first that everything the
+engine fetched was supplied or is proven not to be there (what it fetched is exactly what its world holds),
+then the parent's trie with every account that changed written back. -/
+def rootAfter (known : Stateless.Known) (world : Fast.World) : Stateless.M U256 := do
+  Stateless.checkReads known (world.accounts.fold (fun all a _ => address a :: all) [])
+    (world.slots.fold (fun all name _ => (address name.address, u256 name.key) :: all) [])
+  -- The slots that hold something other than they did before the block, by whose they are.
+  let changed : Std.HashMap Fast.Word (Array (Fast.Word × Fast.Word)) :=
+    world.slots.fold (fun changed name slot =>
+      if slot.value == slot.before then changed
+      else changed.insert name.address ((changed.getD name.address #[]).push (name.key, slot.value))) {}
+  let mut trie : Trie.Node := .sealed known.root
+  for (a, account) in world.accounts.toList do
+    let slots := changed.getD a #[]
+    if !account.dirty && slots.isEmpty then continue
+    let leaf := known.leaves.get? (address a)
+    let key := pathOf a.addressBytes
+    if !account.present then
+      if leaf.isSome then trie ← Stateless.ofTrie (Trie.remove known.store trie key)
+      continue
+    -- An account made in the block starts with no storage, whatever was at its address before.
+    let mut storage : Trie.Node :=
+      .sealed (if account.fresh then Trie.emptyRoot else (leaf.map (·.storageRoot)).getD Trie.emptyRoot)
+    for (slot, value) in slots do
+      let path := pathOf slot.bytes
+      storage ← Stateless.ofTrie <|
+        if value.isZero then Trie.remove known.store storage path
+        else Trie.put known.store storage path (Stateless.slotValue (u256 value))
+    let written : Stateless.Leaf := ⟨account.nonce, u256 account.balance, Trie.rootHash storage, u256 account.codeHash⟩
+    trie ← Stateless.ofTrie (Trie.put known.store trie key written.write)
+  pure (Trie.rootHash trie)
+
 end Evm.Bridge

@@ -90,10 +90,14 @@ a word would have to be built to be carried across; four numbers are carried as 
     let w := pushedSlow code n.toNat from_ 0 0 0 0
     k w.w0 w.w1 w.w2 w.w3
 
-/-- SLOAD: the world, the value, and what it cost. -/
-def sload (world : World) (address key : Word) : World × Word × UInt64 :=
-  let (world, entry, cold) := world.warmSlot address key
-  (world, entry.value, if cold then 2100 else 100)
+/-- SLOAD: the world, the value, and the gas left; `unpayable` gas left is not enough gas. The price is
+known from whether the slot is warm, before anything is fetched, and a slot that cannot be paid for is not
+fetched: what an instruction could not afford to read, it did not read, and a witness need not prove it. -/
+def sload (world : World) (address key : Word) (gas : UInt64) : World × Word × UInt64 :=
+  let cost : UInt64 := if world.slotIsWarm address key then 100 else 2100
+  if gas < cost then (world, Word.zero, unpayable) else
+  let (world, entry, _) := world.warmSlot address key
+  (world, entry.value, gas - cost)
 
 /-- SSTORE: the world, the gas left, and whether there was enough (EIP-2200, 2929, 3529). -/
 def sstore (world : World) (address key value : Word) (gas : UInt64) : World × UInt64 × Bool :=
@@ -121,11 +125,14 @@ def sstore (world : World) (address key value : Word) (gas : UInt64) : World × 
   (world.setSlot address key entry value, gas - cost, true)
 
 /-- An account looked at from outside (BALANCE, EXTCODESIZE, EXTCODEHASH, EXTCODECOPY): the world with it
-warm, the account, and what the look cost. -/
-def look (world : World) (address : Word) (code : Bool) : World × Account × UInt64 :=
+warm, the account, and the gas left after the look and `more` besides; `unpayable` gas left is not enough
+gas, and then the account was not fetched. -/
+def look (world : World) (address : Word) (code : Bool) (gas more : UInt64) : World × Account × UInt64 :=
   let (world, cold) := world.warm address
+  let cost := (if cold then 2600 else 100) + more
+  if gas < cost then (world, World.noAccount, unpayable) else
   let (world, entry) := if code then world.withCode address else world.account address
-  (world, entry, if cold then 2600 else 100)
+  (world, entry, gas - cost)
 
 /-- The bytes of memory from `off` for `len`, as an array of their own. -/
 def slice (mem : @& ByteArray) (off len : Word) : ByteArray :=
@@ -218,6 +225,9 @@ def prepareCall (kind : UInt8) (host : @& Host) (f : @& Frame)
   let gas := gas - memoryGas
   let mem := reach mem stop
   let (world, cold) := world.warm target
+  let access : UInt64 := if cold then 2600 else 100
+  -- An account that cannot be paid for is not fetched.
+  if gas < access then .failed stack mem world else
   let (world, account) := world.withCode target
   -- The code that runs: the account's own, or, when that is a delegation, the code of the account it
   -- names, which is looked at and paid for like any other. One step only.
@@ -225,10 +235,14 @@ def prepareCall (kind : UInt8) (host : @& Host) (f : @& Frame)
     match delegate? account.code with
     | some named =>
       let (world, namedCold) := world.warm named
-      let (world, namedAccount) := world.withCode named
-      (world, namedAccount.code, namedAccount.codeHash, if namedCold then 2600 else 100)
+      let namedAccess : UInt64 := if namedCold then 2600 else 100
+      if gas < access + namedAccess then (world, ByteArray.empty, emptyCodeHash, unpayable)
+      else
+        let (world, namedAccount) := world.withCode named
+        (world, namedAccount.code, namedAccount.codeHash, namedAccess)
     | none => (world, account.code, account.codeHash, 0)
-  let extra : UInt64 := (if cold then 2600 else 100) + delegation + (if value.isZero then 0 else 9000) +
+  if delegation == unpayable then .failed stack mem world else
+  let extra : UInt64 := access + delegation + (if value.isZero then 0 else 9000) +
     (if kind == 0xf1 && !value.isZero && account.empty then 25000 else 0)
   if gas < extra then .failed stack mem world else
   let gas := gas - extra
@@ -319,9 +333,11 @@ def prepareCreate (kind : UInt8) (f : @& Frame)
 /-- SELFDESTRUCT: the world, the gas left, and whether there was enough (EIP-6780). -/
 def selfDestruct (world : World) (address beneficiary : Word) (gas : UInt64) : World × UInt64 × Bool :=
   let (world, cold) := world.warm beneficiary
+  let access : UInt64 := 5000 + (if cold then 2600 else 0)
+  if gas < access then (world, 0, false) else
   let (world, self) := world.account address
   let (world, heir) := world.account beneficiary
-  let cost : UInt64 := 5000 + (if cold then 2600 else 0) + (if !self.balance.isZero && heir.empty then 25000 else 0)
+  let cost : UInt64 := access + (if !self.balance.isZero && heir.empty then 25000 else 0)
   if gas < cost then (world, 0, false) else
   let world :=
     if beneficiary == address then world
@@ -455,9 +471,9 @@ def run (blk : @& BlockEnv) (tx : @& TxEnv) (host : @& Host) (f : @& Frame) :
       | 0x31 =>
         -- BALANCE
         if depth < 1 then lost stack world else
-        let (world, account, cost) := look world (peek stack sp 1).address false
-        if gas < cost then lost stack world else
-        run blk tx host f fuel (wr stack (slot sp 1) account.balance) sp mem (pc + 1) (gas - cost) ret world
+        let (world, account, gas) := look world (peek stack sp 1).address false gas 0
+        if gas == unpayable then lost stack world else
+        run blk tx host f fuel (wr stack (slot sp 1) account.balance) sp mem (pc + 1) gas ret world
       | 0x32 =>
         if gas < 2 || depth ≥ stackLimit then lost stack world else
         run blk tx host f fuel (wr stack (sp <<< 5) tx.origin) (sp + 1) mem (pc + 1) (gas - 2) ret world
@@ -498,9 +514,9 @@ def run (blk : @& BlockEnv) (tx : @& TxEnv) (host : @& Host) (f : @& Frame) :
       | 0x3b =>
         -- EXTCODESIZE
         if depth < 1 then lost stack world else
-        let (world, account, cost) := look world (peek stack sp 1).address true
-        if gas < cost then lost stack world else
-        run blk tx host f fuel (wr stack (slot sp 1) (Word.ofUInt64 account.code.size.toUInt64)) sp mem (pc + 1) (gas - cost) ret world
+        let (world, account, gas) := look world (peek stack sp 1).address true gas 0
+        if gas == unpayable then lost stack world else
+        run blk tx host f fuel (wr stack (slot sp 1) (Word.ofUInt64 account.code.size.toUInt64)) sp mem (pc + 1) gas ret world
       | 0x3c =>
         -- EXTCODECOPY
         if depth < 4 then lost stack world else
@@ -509,20 +525,20 @@ def run (blk : @& BlockEnv) (tx : @& TxEnv) (host : @& Host) (f : @& Frame) :
         let len := peek stack sp 4
         let stop := rangeEnd dst len
         if stop == unpayable then lost stack world else
-        let (world, account, access) := look world (peek stack sp 1).address true
-        let cost := access + 3 * wordsOf len.w0 + expansionCost mem.size.toUInt64 stop
-        if gas < cost then lost stack world else
+        let (world, account, gas) := look world (peek stack sp 1).address true gas
+          (3 * wordsOf len.w0 + expansionCost mem.size.toUInt64 stop)
+        if gas == unpayable then lost stack world else
         let mem := copyIn (reach mem stop) dst.w0.toNat account.code from_ len.w0.toNat
-        run blk tx host f fuel stack (sp - 4) mem (pc + 1) (gas - cost) ret world
+        run blk tx host f fuel stack (sp - 4) mem (pc + 1) gas ret world
       | 0x3d =>
         if gas < 2 || depth ≥ stackLimit then lost stack world else
         run blk tx host f fuel (wr stack (sp <<< 5) (Word.ofUInt64 ret.size.toUInt64)) (sp + 1) mem (pc + 1) (gas - 2) ret world
       | 0x3f =>
         -- EXTCODEHASH: nothing for an account that is not there or counts as nothing
         if depth < 1 then lost stack world else
-        let (world, account, cost) := look world (peek stack sp 1).address false
-        if gas < cost then lost stack world else
-        run blk tx host f fuel (wr stack (slot sp 1) (if account.empty then Word.zero else account.codeHash)) sp mem (pc + 1) (gas - cost) ret world
+        let (world, account, gas) := look world (peek stack sp 1).address false gas 0
+        if gas == unpayable then lost stack world else
+        run blk tx host f fuel (wr stack (slot sp 1) (if account.empty then Word.zero else account.codeHash)) sp mem (pc + 1) gas ret world
       | 0x40 =>
         -- BLOCKHASH: of one of the 256 blocks before this one
         if gas < 20 || depth < 1 then lost stack world else
@@ -600,9 +616,9 @@ def run (blk : @& BlockEnv) (tx : @& TxEnv) (host : @& Host) (f : @& Frame) :
       | 0x54 =>
         -- SLOAD
         if depth < 1 then lost stack world else
-        let (world, value, cost) := sload world f.address (peek stack sp 1)
-        if gas < cost then lost stack world else
-        run blk tx host f fuel (wr stack (slot sp 1) value) sp mem (pc + 1) (gas - cost) ret world
+        let (world, value, gas) := sload world f.address (peek stack sp 1) gas
+        if gas == unpayable then lost stack world else
+        run blk tx host f fuel (wr stack (slot sp 1) value) sp mem (pc + 1) gas ret world
       | 0x55 =>
         -- SSTORE
         if depth < 2 || f.static then lost stack world else

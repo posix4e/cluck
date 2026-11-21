@@ -461,27 +461,38 @@ The faster engine (`evm/Fast/`), step by step:
   precompiles), jumps, running out of gas, and the stack's limits; nothing proves anything; and nothing
   uses it. An empty account that is touched is not removed (EIP-161), which mainnet no longer needs and
   some tests do.
-- **121 blocks of mainnet through the new engine, each as its header has it** (2026-11-21;
-  `evm/Fast/Tx.lean`, `Fast/Block.lean`, `Evm/Bridge.lean`, `fast-replay`). Transactions (what one may be
-  and what it pays, access lists, blobs, set-code authorizations, creation, refunds, the floor price) and
-  blocks (the two calls a block makes before its transactions, withdrawals, deposits read from logs, the
-  two request queues) are written on the engine. `fast-replay` runs a saved block on the state its
-  witness gives and compares four things with the block's own header: gas used, the root of the receipts
-  (every transaction's success, gas and logs), the bloom of the logs, and the hash of the requests. All
+- **121 blocks of mainnet through the new engine, each as its header has it, state root and all**
+  (2026-11-21; `evm/Fast/Tx.lean`, `Fast/Block.lean`, `Evm/Bridge.lean`, `fast-replay`). Transactions
+  (what one may be and what it pays, access lists, blobs, set-code authorizations, creation, refunds, the
+  floor price) and blocks (the two calls a block makes before its transactions, withdrawals, deposits read
+  from logs, the two request queues) are written on the engine. `fast-replay` runs a saved block on the
+  state its witness gives and compares five things with the block's own header: gas used, the root of
+  the receipts (every transaction's success, gas and logs), the bloom of the logs, the hash of the
+  requests, and the root of the state afterwards, which is worked out from the engine's world on this
+  package's trie after checking that everything the engine fetched was supplied or proven absent. All
   121 saved blocks (26456375 to 26456395 and 26458315 to 26458414, up to 625 transactions and 60M gas)
-  agree, the first time they were run. On Lean's runtime the block itself takes 261 ms at the median (48
-  ms to 4.2 seconds), reading the witness 114 ms and recovering senders 165 ms: 560 ms for the three,
-  where the whole of Jaune's check takes about 2.5 seconds at the median on the same runtime. **That
-  comparison is not like for like yet:** the engine's run leaves out the state root, the check that what
-  was read was proven, and decoding the request, all of which Jaune's figure includes. What this does
-  not show: that the state after a block is right (no state root is worked out from the engine's world
-  yet, so a wrong balance or slot that changed no gas and no log would pass); anything on the minimal
-  runtime or in the guest; anything about blocks that should be refused. The precompiled contracts, the
-  decoding of transactions, the recovery of senders and the roots are still Jaune's, reached through
-  `Evm/Bridge.lean`.
-
-The relay's own checks, hostile input and a week of validating delivered blocks, which were next before
-the aim changed, are set aside, not done.
+  agree on all five, on the witnesses as they were saved.
+  - The first four agreed the first time they were run. The state root was added after, and 29 blocks
+    then failed, not on the root but on the check of what was fetched: the engine had fetched accounts
+    for which the witness holds no proof at all. It fetched an account or slot before finding that the
+    instruction could not pay for it; a node, finding there is not the gas for a cold read, does not
+    read. The answer was the same either way (out of gas), but an engine that reads what it cannot pay
+    for asks a witness for more than a node will give. It now prices a read from whether the address or
+    slot is warm, which needs no fetch, and fetches only what it can pay for. `fast-replay --where
+    ADDRESS REQUEST` is what found it: it names the transaction that first fetches an account and what
+    the witness holds for it.
+  - Times, on Lean's runtime, at the median of the 121: reading the witness 105 ms, recovering senders
+    149 ms, the block 234 ms (48 ms to 3.8 seconds), the state root 132 ms; 651 ms for the four. As
+    whole processes on the 21 blocks: 16.6 seconds through the engine for 36.1 through Jaune
+    (`evm-serve`), 2.2 times. The process through the engine also does things the service will not need
+    it to (the receipts root by Jaune's slow trie) and still does by Jaune things that are slow there
+    (decoding, the headers' hashes, the precompiled contracts).
+  - What this does not show: anything on the minimal runtime or in the guest; anything about blocks that
+    should be refused, or witnesses that are short or wrong (the engine's own refusals are untested);
+    Ethereum's test suites. Nothing that serves requests uses the engine yet. The precompiled contracts,
+    the decoding of blocks and transactions, the recovery of senders and the receipts root are still
+    Jaune's, reached through `Evm/Bridge.lean`. A typed transaction's chain id is not checked by the
+    bridge. An empty account that is touched is not removed (EIP-161).
 
 What is known to be left in the time: the minimal runtime's allocator (issue #1), the stack held as a
 list whose length is counted at every push (3%), extension fields held as lists of big numbers (13%, in

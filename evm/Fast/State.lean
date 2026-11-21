@@ -264,6 +264,9 @@ def warmSlot (w : World) (a key : Word) : World × Slot × Bool :=
   else
     ({ w with warmSlots := w.warmSlots.insert name w.epoch, journal := w.journal.push (.warmSlot name old) }, entry, true)
 
+/-- Whether a slot is warm in this transaction, without fetching it. -/
+def slotIsWarm (w : World) (a key : Word) : Bool := w.warmSlots.getD ⟨a, key⟩ 0 == w.epoch
+
 /-- A slot made warm without being fetched: one a transaction's access list names. -/
 def warmSlotOnly (w : World) (a key : Word) : World :=
   let name : SlotKey := ⟨a, key⟩

@@ -50,13 +50,13 @@ target secretHosted pkg : System.FilePath := do
 @[default_target]
 lean_exe «evm-serve» where
   root := `ServeMain
-  moreLinkObjs := #[platformHosted]
+  moreLinkObjs := #[platformHosted, secretHosted]
 
 /-- The service as a whole machine: an EFI guest answering framed requests over TCP. -/
 @[default_target]
 lean_exe «evm-os» where
   root := `EfiMain
-  moreLinkObjs := #[platformHosted, efiHosted]
+  moreLinkObjs := #[platformHosted, efiHosted, secretHosted]
 
 /-- Turns one case of a blockchain-test fixture into a request and the response the fixture calls for.
 Runs on Lean's own runtime only: it reads JSON. -/
@@ -100,6 +100,12 @@ lean_exe «bls-test» where
 @[default_target]
 lean_exe «build-why» where
   root := `BuildWhy
+
+/-- Checks a signed bid from outside, with the reference's verification. For the host. -/
+@[default_target]
+lean_exe «bid-verify» where
+  root := `BidVerify
+  moreLinkObjs := #[secretHosted]
 
 /-- A stateless request's answer in words, with Jaune's reason for a rejection. For making witnesses. -/
 @[default_target]

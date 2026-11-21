@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Boots the service as an EFI guest, puts fixture requests to it over TCP, and checks each answer.
 
-    scripts/run-fixtures dev|tdx [--limits] [--from DIR] [name...]   (from evm/, after: scripts/build-efi dev|tdx)
+    scripts/run-fixtures dev|tdx [--limits] [--key] [--from DIR] [name...]   (from evm/, after: scripts/build-efi dev|tdx)
 
 `dev` is an emulated processor and OVMF, and runs anywhere QEMU does. `tdx` is an Intel TDX trust domain,
 and needs what the OS's TDX.md says a host needs, with SILO_TDVF naming the firmware built there. With no
@@ -13,6 +13,10 @@ done. Exit status 0 only if every answer is byte for byte the one expected.
 `--limits` then tries what the guest must refuse: a frame longer than it accepts, and two clients that
 between them hold more of unfinished requests than it keeps. Each must be closed, and a fixture must still
 get its answer afterwards. It sends some 60 MB, which an emulated processor takes minutes over.
+
+`--key` then asks the guest for its builder's key, twice, and for a bid on a block built from a fixture,
+and has `bid-verify` check the bid's signature under that key from outside (lake build bid-verify). The
+key is drawn when the guest starts, so no answer here can be a fixture.
 
 For each request it prints the time from the first byte sent to the answer, and how much of that the guest
 says it spent on the request; the rest is the request on its way in.
@@ -29,6 +33,9 @@ system = os.path.dirname(here)
 fixtures = os.path.join(here, "fixtures")
 limits = names[:1] == ["--limits"]
 if limits:
+    names = names[1:]
+keyed = names[:1] == ["--key"]
+if keyed:
     names = names[1:]
 if names[:1] == ["--from"] and len(names) > 1:
     fixtures, names = os.path.abspath(names[1]), names[2:]
@@ -134,6 +141,29 @@ try:
         ok = exchange(request, 600) == struct.pack(">I", len(expected)) + expected
         failed += not ok
         print(f"a fixture after that: {'the expected answer' if ok else 'WRONG'}")
+    if keyed:
+        key = exchange(b"JKEY1", 60)[4:]
+        again = exchange(b"JKEY1", 60)[4:]
+        ok = len(key) == 48 and key == again
+        failed += not ok
+        print(f"the builder's key, asked for twice: {key.hex() if ok else 'NOT ONE KEY'}")
+        with open(os.path.join(here, "fixtures/build/DelegateCallSpam-1.req"), "rb") as f:
+            build = f.read()
+        asked = b"JBID1" + struct.pack(">Q", 15700576) + bytes(range(48)) + bytes(4) + build
+        sent = time.time()
+        reply = exchange(asked, 600)[4:]
+        took = time.time() - sent
+        work = os.path.join(here, ".lake/build/efi", mode, "evm-os")
+        with open(os.path.join(work, "bid.req"), "wb") as f:
+            f.write(asked)
+        with open(os.path.join(work, "bid.reply"), "wb") as f:
+            f.write(reply)
+        checked = subprocess.run([os.path.join(here, ".lake/build/bin/bid-verify"), os.path.join(work, "bid.req"),
+                                  os.path.join(work, "bid.reply")], capture_output=True, text=True)
+        ok = checked.returncode == 0 and reply[-144:-96] == key
+        failed += not ok
+        print(f"a bid for a block built from a fixture, {took:.2f} s: "
+              f"{'signed by that key, and the signature verifies' if ok else 'NOT VERIFIED: ' + checked.stdout.strip()}")
 finally:
     try:
         os.killpg(guest.pid, signal.SIGTERM)

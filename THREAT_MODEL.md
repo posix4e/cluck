@@ -160,29 +160,52 @@ come back unchanged. Nobody is asked to keep the transactions secret: they arriv
 host. And the guest signs nothing yet, so a block built here binds no one until something outside signs a
 bid for it.
 
-**A signing key, written but not yet held.** `evm/Evm/Sign/` is the arithmetic for a BLS key that is to be
-made inside the guest and sign the builder's bids. Nothing calls it yet and the image holds no key. It is
-here ahead of its use because it is the part that has to be right about time, and what it can and cannot
-claim should be on record before a key depends on it.
+**A signing key.** The machine now holds a secret: a BLS key, drawn from the platform's randomness when it
+starts (`drawKey` in `evm/EfiMain.lean`), with which it signs the builder's bids (`evm/Evm/Bid.lean`). It is
+the first secret this package has held, and what follows is what protects it and what does not.
 
-The rule is the OS's: a secret never passes through `Nat` or `Int`, and a secret decides no branch, no
-address and no division. Jaune's own BLS code is on `Nat` throughout and cannot be used on a key. This code
-holds field elements as fifteen 26-bit limbs in machine words; where a value decides something, both
-answers are computed and `Secret.select` (checked in `Mini/Constant.lean`) picks one; points are added by
-one formula that is right in every case, so nothing asks which case it is in; and the multiplication does a
-doubling and an addition for each of 255 bits whatever they are. The message's point and the finished
-signature are public and go through `JauneConsensus` as before.
+*What the key is worth.* It guards no funds. Whoever has it can sign bids in this builder's name: say that
+a block pays a proposer what it does not, for which a relay that checks blocks refuses the bid and one
+that does not would hold the builder to account. It is gone when the machine stops, and a new one is drawn
+at the next start; nothing seals it and nothing carries it over. Its public key is answered to anyone who
+asks (`JKEY1`), with a report when the request is wrapped in `JATT1`, which is how someone outside learns
+that this key belongs to this image.
 
-What holds it: `bls-test`, in which 54,850 field operations agree with `Nat`, 242 sums of points agree
-with Jaune's in every case the formula covers, and the public keys and signatures of 23 keys are byte for
-byte `JauneConsensus`'s. That is correctness. For time there is less: the discipline in the source, and
-the machine code of the build on Lean's runtime read once (2026-11-21): the product, the sum and the
-reduction have no conditional jump and no division; the difference and the choice have four jumps each,
-all on the reference count of an argument, which is how many things hold it and not what it holds. The
-image's own build has not been read, the reading is not a test that runs, and nothing was measured on a
+*What it will sign.* Only a bid for a block it has just built, in answer to the request that asked for it.
+The block hash, gas used and value are worked out here; the parent hash, fee recipient and gas limit are
+read off the header built; the slot, the proposer's key and the fork version are the sender's and are
+signed as given. No request signs a message of the sender's choosing, and the domain is fixed to the
+builder's, so a bid cannot be made into a consensus message. The sender can have as many bids signed as it
+likes, for any slot and proposer it names.
+
+*Time.* The rule is the OS's: a secret never passes through `Nat` or `Int`, and decides no branch, no
+address and no division. Jaune's own BLS code is on `Nat` and is not used on the key. `evm/Evm/Sign/` holds
+field elements as fifteen 26-bit limbs in machine words; where a value decides something, both answers are
+computed and `Secret.select` (checked in `Mini/Constant.lean`) picks one; points are added by one formula
+that is right in every case, so nothing asks which case it is in; and the multiplication does a doubling
+and an addition for each of 255 bits whatever they are. Hashing the message to a point and writing the
+signature out are public and are `JauneConsensus`'s.
+
+What holds that: for correctness, `bls-test` (54,850 field operations against `Nat`, 242 sums of points
+against Jaune's in every case the formula covers, the public keys and signatures of 23 keys byte for byte
+`JauneConsensus`'s, a bid's hashing against `JauneConsensus`'s and against a registration a validator
+signed for a relay on mainnet). For time there is less. `evm/scripts/check-secret-code` reads the image's
+own machine code: the product, the sum and the reduction have no conditional jump and no division; the
+difference and the choice have four jumps each, read by hand to be on the reference counts of their
+arguments. The curve arithmetic above the field is not read by that script. Nothing was measured on a
 running guest. The OS's checker covers the two functions of `Mini/Secret.lean`, not Lean code that calls
-them; the Lean and C compilers are between this source and the machine. And the host can time the guest as
-finely as it likes. So "constant time" here means written to be and read to be in one build, not proved.
+them, and the Lean and C compilers are between this source and the machine. The host can time the guest
+as finely as it likes, and can ask for as many signatures as it likes. So "constant time" here means
+written to be, and found to be in the places looked at, not proved. Two things are not constant time and
+are not meant to be: drawing the key throws away a draw that is not below the group's order, which says
+only that a draw was thrown away; and the key's bytes come from the platform's random source, which on
+this target is the processor's, and is trusted.
+
+*Where the key lies.* In the machine's memory, as four words in a Lean object, for as long as it runs. The
+runtime zeroes a block when it frees it, but this one is never freed. Nothing here stops the firmware,
+which shares the address space, from reading it; and the request reader, the trie decoder and Jaune all
+run in that same space on bytes the sender chose, with a stack that has no guard (above). A flaw in any of
+them that let a sender read memory would give up the key.
 
 **A branch of Jaune.** The image now holds `posix4e/jaune`, twelve commits ahead of the upstream commit
 this section was written about. Four of them change how something is computed and prove the result the
@@ -213,9 +236,9 @@ None of that is a proof, and a block made to find the difference has not been lo
 **A plain answer still proves nothing.** A request without the `JATT1` prefix is answered over cleartext
 TCP with no report, and that response is worth what the network between is worth.
 
-**No secret is held.** The service has no key. Its arithmetic, on `Nat` and on fixed-width words alike,
-takes time that depends on the values, which is the reason a service with a key could not be built on Jaune
-as it is.
+**One secret is held**, the signing key above, and nothing else. Everything but the key's own arithmetic
+is on `Nat` or on code that branches on its values, takes time that depends on them, and must never be
+given a secret: that is the reason the key's arithmetic was written apart from Jaune's.
 ## What is being protected
 
 | Asset | When | Why it matters |

@@ -1,5 +1,6 @@
-import Evm.Sign
+import Evm.Bid
 import JauneConsensus.Crypto.BLSSignature
+import JauneConsensus.Signing
 
 /-! Tests of the signing key's arithmetic (`Evm/Sign/`), which nothing proves.
 
@@ -12,6 +13,11 @@ import JauneConsensus.Crypto.BLSSignature
 - Public keys and signatures against `JauneConsensus`'s, which are made with the key as a `Nat`: byte for
   byte the same, for keys at the ends of the range and keys from a generator, and each signature accepted
   by `JauneConsensus.verify`.
+
+- The hashing of a bid (`Evm/Bid.lean`) against `JauneConsensus`'s own merkleization, domain and signing
+  root; against a registration that a validator signed for a relay on mainnet, under the same builder
+  domain, which has to verify; and a bid made and signed for a block built from a fixture, which has to
+  verify under the builder's key.
 
     .lake/build/bin/bls-test            (from evm/)
 
@@ -43,9 +49,115 @@ def wellFormed (a : Fp) : Bool :=
 def scalarOf (n : Nat) : Scalar :=
   ⟨n.toUInt64, (n >>> 64).toUInt64, (n >>> 128).toUInt64, (n >>> 192).toUInt64⟩
 
+def bytesOfHex (hex : String) : ByteArray :=
+  let digits := hex.toList.filterMap fun c =>
+    if c.isDigit then some (c.toNat - '0'.toNat) else if 'a' ≤ c && c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
+    else if 'A' ≤ c && c ≤ 'F' then some (c.toNat - 'A'.toNat + 10) else none
+  let rec pairs : List Nat → List UInt8
+    | a :: b :: rest => (a * 16 + b).toUInt8 :: pairs rest
+    | _ => []
+  (pairs digits).toByteArray
+
+def wordOf (bytes : ByteArray) : Jaune.U256 := Bytes.toU256 bytes.toList
+
+/-- A registration a validator signed for a relay (boost-relay.flashbots.net's public list, 2026-11-21,
+for slot 15700576): fee recipient, gas limit, time, public key, and the signature over them under the
+builder's domain for mainnet. -/
+def registration : ByteArray × Nat × Nat × ByteArray × ByteArray :=
+  (bytesOfHex "cAe2b829451ba6692418ec79faa762a6B5d93388", 45000000, 1756754519,
+   bytesOfHex "897a4c268a7480d6b7ea38888390d5bd6f0644ea76a974c8206e565460cd920872d791874b532051d0474dcc933f802a",
+   bytesOfHex "932b0e816a6ff5f0647dcc6cf9b8ea3927865a5bbd1f11908dbc633434576e67ecd9d99c57437fd6d471ba8f9b32a68514a902c4bf9f56d7fbd8405c127025262c34ff9f8e5d24d5bd72efd4d82631feeb93d5caa77e22e6ec89f1752c1d556a")
+
+def bidChecks : IO (Nat × Nat) := do
+  let mut failures := 0
+  let mut checks := 0
+  let expect (what : String) (ok : Bool) (f c : Nat) : IO (Nat × Nat) := do
+    if !ok then IO.println s!"FAILED: {what}"
+    pure (f + (if ok then 0 else 1), c + 1)
+  -- The domain and the signing root against JauneConsensus's.
+  let mainnet := Evm.Bid.domain (Evm.Bid.zeros 4)
+  match versionOf [0, 0, 0, 0] with
+  | .ok version =>
+    let theirs := computeDomain #v[0, 0, 0, 1] version 0
+    (failures, checks) ← expect "the builder's domain for mainnet is not JauneConsensus's" (wordOf mainnet == theirs) failures checks
+    let object := Evm.Bid.sha "an object".toUTF8
+    (failures, checks) ← expect "the signing root is not JauneConsensus's"
+      (wordOf (Evm.Bid.signingRoot object mainnet) == computeSigningRootOfRoot (wordOf object) theirs) failures checks
+  | .error _ => (failures, checks) ← expect "no version" false failures checks
+  -- A bid's root against JauneConsensus's merkleization of the same nine leaves.
+  let key := bytesOfHex "897a4c268a7480d6b7ea38888390d5bd6f0644ea76a974c8206e565460cd920872d791874b532051d0474dcc933f802a"
+  let bid : Evm.Bid.Bid :=
+    { slot := 15700576, parentHash := Evm.Bid.sha "parent".toUTF8, blockHash := Evm.Bid.sha "block".toUTF8,
+      builderKey := key, proposerKey := key.extract 1 48 ++ key.extract 0 1,
+      feeRecipient := bytesOfHex "cAe2b829451ba6692418ec79faa762a6B5d93388", gasLimit := 60000000,
+      gasUsed := 12345678, value := 2 ^ 70 + 5 }
+  let leaves : List Jaune.U256 := [
+    wordOf (Evm.Bid.leaf (Evm.Bid.little 8 bid.slot)), wordOf bid.parentHash, wordOf bid.blockHash,
+    wordOf (Evm.Bid.keyRoot bid.builderKey), wordOf (Evm.Bid.keyRoot bid.proposerKey),
+    wordOf (Evm.Bid.leaf bid.feeRecipient), wordOf (Evm.Bid.leaf (Evm.Bid.little 8 bid.gasLimit)),
+    wordOf (Evm.Bid.leaf (Evm.Bid.little 8 bid.gasUsed)), wordOf (Evm.Bid.little 32 bid.value)]
+  (failures, checks) ← expect "a bid's root is not JauneConsensus's merkleization of its leaves"
+    ((JauneConsensus.merkleize leaves).toOption == some (wordOf bid.root)) failures checks
+  (failures, checks) ← expect "a key's root is not JauneConsensus's merkleization of its two leaves"
+    ((JauneConsensus.merkleize [wordOf (key.extract 0 32), wordOf (Evm.Bid.leaf (key.extract 32 48))]).toOption ==
+      some (wordOf (Evm.Bid.keyRoot key))) failures checks
+  -- A registration signed on mainnet under the same domain verifies.
+  let (feeRecipient, gasLimit, time, validator, signature) := registration
+  let root := Evm.Bid.merkle #[Evm.Bid.leaf feeRecipient, Evm.Bid.leaf (Evm.Bid.little 8 gasLimit),
+    Evm.Bid.leaf (Evm.Bid.little 8 time), Evm.Bid.keyRoot validator]
+  let message := (Evm.Bid.signingRoot root mainnet).toList
+  (failures, checks) ← expect "a validator's registration from mainnet does not verify under the builder's domain"
+    (JauneConsensus.verify validator.toList message signature.toList) failures checks
+  (failures, checks) ← expect "the registration verifies under another domain too"
+    (!JauneConsensus.verify validator.toList
+      (Evm.Bid.signingRoot root (Evm.Bid.domain (bytesOfHex "00000001"))).toList signature.toList) failures checks
+  -- A bid for a block built from a fixture, made and signed, verifies under the builder's key.
+  let some builder := Evm.Bid.testKey
+    | expect "no key from the test's bytes" false failures checks
+  (failures, checks) ← expect "the request for the key is not answered with it"
+    (Evm.Bid.serve builder Evm.Bid.keyMagic == builder.publicKey && builder.publicKey.size == 48) failures checks
+  let request ← IO.FS.readBinFile "fixtures/build/DelegateCallSpam-1.req"
+  let proposer := key
+  let asked := Evm.Bid.magic ++ Evm.Service.be 8 15700576 ++ proposer ++ Evm.Bid.zeros 4 ++ request
+  let reply := Evm.Bid.serve builder asked
+  let plain := Evm.Build.serve request
+  (failures, checks) ← expect "the bid's reply does not begin with the reply to the request to build"
+    (reply.size == plain.size + 48 + 96 && reply.extract 0 plain.size == plain) failures checks
+  match (Evm.Build.request request).run 0 with
+  | some (parsed, _) =>
+    match (Evm.Build.run parsed).built with
+    | some built =>
+      let made : Evm.Bid.Bid :=
+        { slot := 15700576, parentHash := Evm.Trie.wordBytes built.header.parentHash,
+          blockHash := Evm.Trie.wordBytes built.hash, builderKey := builder.publicKey, proposerKey := proposer,
+          feeRecipient := built.header.coinbase.toBytes.toByteArray, gasLimit := built.header.gasLimit,
+          gasUsed := built.header.gasUsed, value := built.value }
+      let signed := (Evm.Bid.signingRoot made.root mainnet).toList
+      let signature := reply.extract (plain.size + 48) reply.size
+      (failures, checks) ← expect "the bid's signature does not verify under the builder's key"
+        (reply.extract plain.size (plain.size + 48) == builder.publicKey &&
+          JauneConsensus.verify builder.publicKey.toList signed signature.toList) failures checks
+      let other := (Evm.Bid.signingRoot { made with value := made.value + 1 }.root mainnet).toList
+      (failures, checks) ← expect "the signature verifies for a bid of another value"
+        (!JauneConsensus.verify builder.publicKey.toList other signature.toList) failures checks
+    | none => (failures, checks) ← expect "nothing built from the fixture" false failures checks
+  | none => (failures, checks) ← expect "the fixture is not a request to build" false failures checks
+  -- A key is usable exactly when it is in range.
+  let unusable := [Evm.Bid.zeros 32, Evm.Bid.little 32 blsCurveOrder, Evm.Bid.little 32 (blsCurveOrder + 1)]
+  (failures, checks) ← expect "a key that is zero or not below the order was taken"
+    (unusable.all fun bytes => (Evm.Bid.keyOf bytes).isNone) failures checks
+  (failures, checks) ← expect "the largest key, or the smallest, was not taken"
+    ((Evm.Bid.keyOf (Evm.Bid.little 32 (blsCurveOrder - 1))).isSome && (Evm.Bid.keyOf (Evm.Bid.little 32 1)).isSome)
+    failures checks
+  IO.println s!"bids: {checks} checks"
+  pure (failures, checks)
+
 def main : IO UInt32 := do
   let mut failures := 0
   let mut checks := 0
+  let (bidFailures, bidCount) ← bidChecks
+  failures := failures + bidFailures
+  checks := checks + bidCount
   -- The field.
   for m in values do
     let a := Fp.ofPublic m

@@ -42,6 +42,9 @@ it, and continuous integration does not build it. What has been run and what it 
 - `BuildTest.lean`: `Evm.Build` against `Evm.Stateless`, which checks what it builds, and against blocks
   that exist, which it has to build again exactly. `witness/to-build`: turns a request to check a block
   into a request to build one from the same transactions.
+- `Evm/Bid.lean`: a block built and the builder's signature over what it offers for it, by a key the
+  machine draws when it starts. `BidVerify.lean`: checks such a signature from outside.
+  `scripts/check-secret-code`: reads the image's machine code for the key's arithmetic.
 - `BuildWhy.lean`: what became of each transaction in a request to build, and why one was left out.
   `builder/shadow`: the builder run in shadow on the host, a block built in the guest for every slot from
   pending transactions and judged by the node's own validator, nothing signed or sent. Neither goes in an

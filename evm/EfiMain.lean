@@ -1,4 +1,5 @@
 import Evm
+import Evm.Bid
 import Kernel.Efi
 import Kernel.Net.Tcp
 import Kernel.Net.Fragment
@@ -42,6 +43,7 @@ private def Pending.add (p : Pending) (bytes : ByteArray) : Pending :=
   else { pieces := p.pieces.push bytes, size := p.size + bytes.size }
 
 private structure Server where
+  key : Evm.Bid.Key
   tcp : Tcp.Endpoint := { listenPort := servicePort }
   fragments : Fragment.Cache := {}
   nextIpId : UInt32 := 0
@@ -90,13 +92,25 @@ private partial def requests (p : Pending) (out : Array ByteArray) : Option (Pen
 private def frame (payload : ByteArray) : ByteArray :=
   Evm.Service.be 4 payload.size ++ payload
 
+/-- The builder's key: drawn from the platform's randomness when the machine starts, held in this machine's
+memory and nowhere else, and gone when it stops. About one draw in ten is not below the group's order and
+is thrown away; sixty-four in a row would be a random source that is not one, and the machine stops. -/
+private def drawKey : IO Evm.Bid.Key := do
+  for _ in [0 : 64] do
+    if let some key := Evm.Bid.keyOf (← Platform.random 32) then return key
+  throw (IO.userError "no key could be drawn")
+
+/-- Any request: one for a bid or for the builder's key, which need the key, or one of the others. -/
+private def serveWith (key : Evm.Bid.Key) (request : ByteArray) : ByteArray :=
+  if Evm.Bid.mine request then Evm.Bid.serve key request else Evm.serve request
+
 /-- The response to one frame, and after it the TDREPORT that binds it to the frame when the frame asked for
 one and this machine can make one (`Evm.Attest`). -/
-private def answer (request : ByteArray) : IO ByteArray := do
+private def answer (key : Evm.Bid.Key) (request : ByteArray) : IO ByteArray := do
   match Evm.Attest.asked? request with
-  | none => IO.lazyPure fun _ => Evm.serve request
+  | none => IO.lazyPure fun _ => serveWith key request
   | some asked =>
-    let reply ← IO.lazyPure fun _ => Evm.serve (Evm.Attest.request asked)
+    let reply ← IO.lazyPure fun _ => serveWith key (Evm.Attest.request asked)
     let report ← Efi.report (Evm.Attest.reportData asked reply)
     return if report.size == 1024 then reply ++ report else reply
 
@@ -133,7 +147,7 @@ private partial def settle (cfg : Internet.Config) (now : Nat)
       for request in whole do
         Platform.write s!"evm: request of {request.size} bytes\n".toUTF8
         let started ← Efi.millis
-        let reply ← answer request
+        let reply ← answer s.key request
         let ended ← Efi.millis
         let attested := if reply.size > 69 then ", with a report" else ""
         Platform.write s!"evm: status {reply[0]!}, {(ended - started).toNat} ms{attested}\n".toUTF8
@@ -184,5 +198,6 @@ def main : IO UInt32 := do
   if mac.size != 6 then return 2
   let cfg : Internet.Config := { mac }
   if let some announcement := Internet.solicit cfg cfg.ipv4 then Efi.send announcement
+  let key ← drawKey
   Platform.write "evm: Ethernet ready, serving TCP 5005\n".toUTF8
-  serve cfg {} 0
+  serve cfg { key } 0

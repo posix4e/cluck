@@ -268,7 +268,17 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   built a block the node judged valid, each ready 6.6 to 9.7 seconds before its slot, and the randomness
   and withdrawals guessed for the slot were the next block's every time; the rest were slots lost to the
   host (the head moving under it) or a witness too short for the block as a whole.
-- Not done: no key is made or held and nothing is signed; nothing has been sent to a relay.
+- **The guest holds a key and signs bids** (`evm/Evm/Bid.lean`, `drawKey` in `evm/EfiMain.lean`). In the
+  TDX guest (image SHA-256 `c7415c05…54f1913d`): the builder's key asked for twice was the same key; a
+  bid for a block built from a fixture came back in 0.47 seconds signed by it, and `bid-verify`, outside,
+  found the signature good by `JauneConsensus`'s verification; the fixtures and `--limits` as before.
+  `bls-test`: a bid's root and domain are `JauneConsensus`'s, and a registration that a validator signed
+  for a relay on mainnet verifies under the same domain, which is the evidence that a mainnet relay would
+  read these signatures as it reads its validators'. `scripts/check-secret-code tdx`: in the image's own
+  machine code the field's product, sum and reduction have no conditional jump and no division.
+- Not done: a bid has not been made for a block built from pending transactions; no relay has been sent
+  anything, so no relay has said whether it accepts a signature from here; the report that ties the key
+  to the image has not been fetched and checked by anything outside.
 
 What is next, in order:
 

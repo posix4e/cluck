@@ -276,9 +276,25 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   for a relay on mainnet verifies under the same domain, which is the evidence that a mainnet relay would
   read these signatures as it reads its validators'. `scripts/check-secret-code tdx`: in the image's own
   machine code the field's product, sum and reduction have no conditional jump and no division.
-- Not done: a bid has not been made for a block built from pending transactions; no relay has been sent
-  anything, so no relay has said whether it accepts a signature from here; the report that ties the key
-  to the image has not been fetched and checked by anything outside.
+- **Bids for blocks built from pending transactions, in the guest, in shadow.** A first run of 182 slots
+  (image `6f26eddb…6b5966`, no key yet): 177 built a block the node's validator judged valid, with the
+  slot's randomness and withdrawals guessed right every time; 4 were lost to the node refusing a proof and
+  1 to a transaction that creates a contract (since left out one at a time); one block was ready 1.7
+  seconds before its slot and every other at least 2. The guest took 0.17 seconds at the median and 4.8 at
+  the most. Blocks were small, a median of 0.85M gas, because little is pending in public.
+- **What a win would cost.** Over 160 of those slots, the bid that won (relays' public data) was 0.0081 ETH
+  at the median and the guest's would have been 0.00016: short by 0.0054 ETH or less in a quarter of
+  slots, 0.0073 at the median, 0.0195 or less in three quarters, and 2.2 at the most.
+- **A top-up, tried against the node's validator only.** `builder/shadow --top-up` puts a transaction from
+  a wallet on the host to itself in front of what is proposed, moving nothing and tipping the amount, which
+  goes to the proposer as the block's fee recipient. Four slots as a process with 0.001 ETH: each bid was
+  worth that much more, and the validator, which checks that the proposer is paid what the bid says,
+  judged each block valid. Nothing was sent to a relay and the wallet's balance did not change.
+- Not done: no relay has been sent anything, so no relay has said whether it accepts a block or a
+  signature from here; 1,000 slots in a row with a valid block ready in time (a run with the key in the
+  guest was started on 2026-11-21 and is not finished); the report that ties the key to the image has not
+  been fetched and checked by anything outside; the order privacy a builder in a trust domain is for:
+  transactions still reach the guest in the clear, through the host.
 
 What is next, in order:
 

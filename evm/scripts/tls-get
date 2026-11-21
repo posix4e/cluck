@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Fetches a page over TLS with this project's own client (`Tls/Client.lean`), on the host.
+
+    scripts/tls-get HOST PATH [--connect ADDRESS:PORT] [--root FILE]... [--now SECONDS] [--out FILE]
+                                                             (from evm/, after: lake build tls-fetch)
+
+It opens a connection to HOST on port 443, or to wherever --connect says, and hands it to `tls-fetch`,
+which does everything else: this script moves no bytes and checks nothing. Certificates are judged against
+the roots given (PEM or DER), or against four from this machine's store when none is: Let's Encrypt's two
+and two of Google's, which is what the relays' certificates lead to. The time they are judged at is this
+machine's clock unless --now says otherwise. What happened is said on standard error, by `tls-fetch`."""
+import argparse, os, socket, ssl, subprocess, sys, tempfile, time
+
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STORE = ["/etc/ssl/certs/ISRG_Root_X1.pem", "/etc/ssl/certs/ISRG_Root_X2.pem",
+         "/etc/ssl/certs/GTS_Root_R1.pem", "/etc/ssl/certs/GTS_Root_R4.pem"]
+
+def fetch(host, path, connect=None, roots=None, now=None, out="-", timeout=30):
+    """Runs one fetch: the exit status of `tls-fetch` and what it said."""
+    address, port = (connect.rsplit(":", 1) if connect else (host, "443"))
+    with tempfile.TemporaryDirectory() as scratch:
+        ders = []
+        for i, root in enumerate(roots or STORE):
+            data = open(root, "rb").read()
+            if data.lstrip().startswith(b"-----BEGIN"): data = ssl.PEM_cert_to_DER_cert(data.decode())
+            ders.append(os.path.join(scratch, f"{i}.der")); open(ders[-1], "wb").write(data)
+        with socket.create_connection((address, int(port)), timeout=timeout) as s:
+            s.settimeout(None)
+            done = subprocess.run([os.path.join(here, ".lake/build/bin/tls-fetch"), host, path, str(now or int(time.time())), out] + ders,
+                                  stdin=s, stdout=s, stderr=subprocess.PIPE, timeout=timeout)
+    return done.returncode, done.stderr.decode(errors="replace").strip()
+
+if __name__ == "__main__":
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("host"); p.add_argument("path")
+    p.add_argument("--connect"); p.add_argument("--root", action="append"); p.add_argument("--now", type=int); p.add_argument("--out", default="-")
+    a = p.parse_args()
+    status, said = fetch(a.host, a.path, a.connect, a.root, a.now, a.out)
+    print(said, file=sys.stderr)
+    sys.exit(status)

@@ -1,5 +1,6 @@
 import Tls.Ecdsa
 import Tls.Sha512
+import Tls.Wire
 
 /-! Certificates read and checked (RFC 5280), as far as a TLS client that trusts a few named roots needs.
 
@@ -219,29 +220,31 @@ def read? (der : @& ByteArray) : Option Certificate := do
          notBefore := ← time? der validity[0]!, notAfter := ← time? der validity[1]!,
          key, names, authority }
 
+/-- The two numbers of an ECDSA signature, which is written as a DER sequence of them. -/
+def ecdsaNumbers? (signature : @& ByteArray) : Option (Nat × Nat) := do
+  let whole ← element? signature 0 signature.size
+  let parts ← inside? signature whole
+  if whole.tag != 0x30 || whole.stop != signature.size || parts.size != 2 then none
+  let (r, _) ← integer? signature parts[0]!
+  let (s, _) ← integer? signature parts[1]!
+  pure (r, s)
+
+/-- Whether `signature` is one by the holder of `key` over `digest`, in ECDSA. -/
+def ecdsaHolds (curve : Ecdsa.Curve) (x y : Nat) (digest signature : @& ByteArray) : Bool :=
+  match ecdsaNumbers? signature with
+  | some (r, s) => Ecdsa.verify curve x y digest r s
+  | none => false
+
 /-- Whether `cert` carries a good signature by the holder of `key`. -/
 def signedBy (cert : Certificate) (key : Key) : Bool :=
   let digest := match cert.how with
     | .rsaSha256 | .ecdsaSha256 => Sha256.hash cert.signed
     | .rsaSha384 | .ecdsaSha384 => Sha512.hash384 cert.signed
-  let ecdsa (curve : Ecdsa.Curve) (x y : Nat) : Bool :=
-    -- An ECDSA signature is a sequence of two numbers.
-    (do
-      let whole ← element? cert.signature 0 cert.signature.size
-      let parts ← inside? cert.signature whole
-      if whole.tag != 0x30 || whole.stop != cert.signature.size || parts.size != 2 then none
-      let (r, _) ← integer? cert.signature parts[0]!
-      let (s, _) ← integer? cert.signature parts[1]!
-      pure (Ecdsa.verify curve x y digest r s)).getD false
   match cert.how, key with
   | .rsaSha256, .rsa k | .rsaSha384, .rsa k => Rsa.verifyPkcs1 k digest cert.signature
-  | .ecdsaSha256, .p256 x y | .ecdsaSha384, .p256 x y => ecdsa Ecdsa.p256 x y
-  | .ecdsaSha256, .p384 x y | .ecdsaSha384, .p384 x y => ecdsa Ecdsa.p384 x y
+  | .ecdsaSha256, .p256 x y | .ecdsaSha384, .p256 x y => ecdsaHolds Ecdsa.p256 x y digest cert.signature
+  | .ecdsaSha256, .p384 x y | .ecdsaSha384, .p384 x y => ecdsaHolds Ecdsa.p384 x y digest cert.signature
   | _, _ => false
-
-/-- A name with its capital letters made small. -/
-def lower (name : @& ByteArray) : ByteArray :=
-  ByteArray.mk (name.data.map fun c => if c ≥ 0x41 && c ≤ 0x5a then c + 0x20 else c)
 
 /-- Whether a certificate's name covers `host`: the same name, letter case aside, or a name whose first
 label is `*` and whose rest, with its dot, is `host` after a first label that is not empty and holds no

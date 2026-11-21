@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""Puts this project's TLS client to OpenSSL's own server, `openssl s_server`, on this machine.
+
+    scripts/tls-against-openssl        (from evm/, after: lake build tls-fetch)
+
+It makes certificates for a server called relay.test (RSA, and ECDSA on two curves, each under its own
+root and a middle certificate), starts `openssl s_server` on local ports in several configurations, and
+fetches a page from each with `scripts/tls-get`. A server set up properly must be answered, with the page
+it serves; one with something wrong (another name, another root, a certificate out of date or with its
+signature changed, an older TLS, a cipher or a curve this client does not have, a demand for a client's
+certificate) must be refused, and for that reason. Exit status 0 only if every case goes as it should.
+
+Nothing leaves this machine. The certificates and keys are made for the run and thrown away."""
+import datetime, hashlib, importlib.machinery, importlib.util, os, random, socket, subprocess, sys, tempfile, time
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa, ec
+
+here = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader("tls_get", os.path.join(here, "tls-get"))
+tls_get = importlib.util.module_from_spec(importlib.util.spec_from_loader("tls_get", loader)); loader.exec_module(tls_get)
+
+day = datetime.timedelta(days=1)
+today = datetime.datetime.now(datetime.timezone.utc)
+def certificate(subject, issuer, key, signer, authority, names=(), first=-2, last=90):
+    name = lambda cn: x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    b = (x509.CertificateBuilder().subject_name(name(subject)).issuer_name(name(issuer)).public_key(key.public_key())
+         .serial_number(random.getrandbits(100) + 1).not_valid_before(today + first * day).not_valid_after(today + last * day)
+         .add_extension(x509.BasicConstraints(ca=authority, path_length=None), critical=True))
+    if names: b = b.add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in names]), critical=False)
+    p384 = isinstance(signer, ec.EllipticCurvePrivateKey) and signer.curve.name == "secp384r1"
+    return b.sign(signer, hashes.SHA384() if p384 else hashes.SHA256())
+
+scratch = tempfile.TemporaryDirectory()
+def put(name, data):
+    path = os.path.join(scratch.name, name); open(path, "wb").write(data); return path
+pem = lambda c: c.public_bytes(serialization.Encoding.PEM)
+key_pem = lambda k: k.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+
+made = {}
+for kind in ("rsa", "ec", "ec384"):
+    new = {"rsa": lambda: rsa.generate_private_key(65537, 2048), "ec": lambda: ec.generate_private_key(ec.SECP256R1()),
+           "ec384": lambda: ec.generate_private_key(ec.SECP384R1())}[kind]
+    root_key, mid_key, leaf_key = new(), new(), new()
+    root = certificate(f"{kind} root", f"{kind} root", root_key, root_key, True, last=3650)
+    mid = certificate(f"{kind} middle", f"{kind} root", mid_key, root_key, True, last=700)
+    leaf = certificate("relay.test", f"{kind} middle", leaf_key, mid_key, False, ("relay.test",))
+    old = certificate("relay.test", f"{kind} middle", leaf_key, mid_key, False, ("relay.test",), first=-30, last=-1)
+    spoiled = bytearray(leaf.public_bytes(serialization.Encoding.DER)); spoiled[-5] ^= 1
+    made[kind] = dict(root=put(f"{kind}-root.pem", pem(root)), mid=put(f"{kind}-mid.pem", pem(mid)), leaf=put(f"{kind}-leaf.pem", pem(leaf)),
+                      key=put(f"{kind}-leaf.key", key_pem(leaf_key)), old=put(f"{kind}-old.pem", pem(old)),
+                      spoiled=put(f"{kind}-spoiled.pem", pem(x509.load_der_x509_certificate(bytes(spoiled)))))
+big = random.Random(7).randbytes(300_000)
+put("big.bin", big)
+
+servers = []
+def server(kind="rsa", leaf="leaf", page="-www", *more):
+    """An `openssl s_server` on a free local port, serving its status page (-www) or files (-WWW)."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
+    m = made[kind]
+    process = subprocess.Popen(["openssl", "s_server", "-accept", f"127.0.0.1:{port}", "-cert", m[leaf], "-key", m["key"],
+                                "-cert_chain", m["mid"], page, "-quiet", *more],
+                               cwd=scratch.name, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    servers.append(process)
+    for _ in range(100):
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=0.2).close(); break
+        except OSError: time.sleep(0.05)
+    return f"127.0.0.1:{port}"
+
+failures = 0
+def case(what, at, kind, expected, host="relay.test", path="/", root=None, now=None, body=None):
+    """One fetch: `expected` must be in what `tls-fetch` says, and `body`, if given, in the page."""
+    global failures
+    out = os.path.join(scratch.name, "page")
+    if os.path.exists(out): os.remove(out)
+    try:
+        status, said = tls_get.fetch(host, path, at, [root or made[kind]["root"]], now, out, timeout=60)
+    except subprocess.TimeoutExpired:
+        status, said = 1, "no end within a minute"
+    page = open(out, "rb").read() if os.path.exists(out) else b""
+    good = expected in said and (status == 0) == said.startswith("answered") and (body is None or body(page))
+    failures += not good
+    print(f"{'as it should be' if good else 'WRONG':>15}  {what}: {said}")
+
+later = int(time.time()) + 200 * 86400
+for kind in ("rsa", "ec", "ec384"):
+    at = server(kind)
+    case(f"{kind}: a server set up properly", at, kind, "answered: HTTP 200", body=lambda p: b"TLSv1.3" in p and b"TLS_CHACHA20_POLY1305_SHA256" in p)
+    case(f"{kind}: asked by another name", at, kind, "another name", host="other.test")
+    case(f"{kind}: judged against another root", at, kind, "does not reach a root", root=made["rsa" if kind != "rsa" else "ec"]["root"])
+    case(f"{kind}: judged 200 days from now", at, kind, "out of date", now=later)
+    case(f"{kind}: a certificate that ran out yesterday", server(kind, "old"), kind, "out of date")
+    case(f"{kind}: a certificate with its signature changed", server(kind, "spoiled"), kind, "bad signature")
+    case(f"{kind}: a file of 300,000 bytes", server(kind, "leaf", "-WWW"), kind, "answered: HTTP 200", path="/big.bin",
+         body=lambda p: hashlib.sha256(p).digest() == hashlib.sha256(big).digest())
+case("small records: messages spread over many", server("rsa", "leaf", "-WWW", "-max_send_frag", "512"), "rsa", "answered: HTTP 200",
+     path="/big.bin", body=lambda p: p == big)
+case("records padded to 1024 bytes", server("ec", "leaf", "-WWW", "-record_padding", "1024"), "ec", "answered: HTTP 200", path="/big.bin", body=lambda p: p == big)
+case("no allowance for old equipment", server("rsa", "leaf", "-www", "-no_middlebox"), "rsa", "answered: HTTP 200")
+case("a server that speaks only TLS 1.2", server("rsa", "leaf", "-www", "-tls1_2"), "rsa", "refused: the server refused: alert 70")
+case("a server with only AES", server("rsa", "leaf", "-www", "-ciphersuites", "TLS_AES_256_GCM_SHA384"), "rsa", "refused: the server refused: alert 40")
+case("a server with only the curve P-256", server("rsa", "leaf", "-www", "-groups", "P-256"), "rsa", "refused: the server refused: alert 40")
+case("a server that demands a certificate", server("rsa", "leaf", "-www", "-Verify", "1"), "rsa", "asks this side")
+for process in servers: process.kill()
+print("every case as it should be" if not failures else f"{failures} WRONG")
+sys.exit(1 if failures else 0)

@@ -1,0 +1,266 @@
+#!/usr/bin/env python3
+"""Writes the handshakes `tls-test` puts to `Tls/Client.lean`: a TLS 1.3 server made here out of the
+`cryptography` package's pieces (OpenSSL underneath), which behaves or misbehaves in a chosen way.
+
+    scripts/tls-handshakes > Tls/handshakes.txt        (from evm/)
+
+The client is a function of the bytes it is given, so a whole conversation can be written down beforehand:
+the random bytes and key the client is to use, the first message it must then send, everything the server
+says, and what must come of it: a connection that is open, closed, still waiting or refused; the bytes
+the client must have sent in answer; the data it must have got; the record it must make of the word
+"ping"; and, when it refuses, a few words that its reason must contain, so that a refusal for some other
+cause than the one meant is not counted a pass.
+
+This is a second writing of the protocol by the same hand as the first, so agreement between them shows
+less than it seems to; `scripts/tls-against-openssl` is the check against somebody else's.
+
+One case to a line: `handshake`, its name, then fields in hexadecimal ("-" is no bytes)."""
+import hashlib, hmac, random, datetime
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+
+rng = random.Random(0x7153)
+some = lambda n: bytes(rng.getrandbits(8) for _ in range(n))
+show = lambda b: b.hex() or "-"
+def line(kind, *fields): print(kind, *[show(f) if isinstance(f, bytes) else str(f) for f in fields])
+def spoil(b, i): return b[:i] + bytes([b[i] ^ 1]) + b[i + 1:]
+
+u16 = lambda n: n.to_bytes(2, "big")
+f8 = lambda b: bytes([len(b)]) + b
+f16 = lambda b: u16(len(b)) + b
+f24 = lambda b: len(b).to_bytes(3, "big") + b
+msg = lambda kind, body: bytes([kind]) + f24(body)
+record = lambda kind, body: bytes([kind, 3, 3]) + f16(body)
+ext = lambda kind, body: u16(kind) + f16(body)
+H = lambda b: hashlib.sha256(b).digest()
+mac = lambda key, b: hmac.new(key, b, hashlib.sha256).digest()
+zero = bytes(32)
+def label(secret, name, context, length):
+    info = u16(length) + f8(b"tls13 " + name) + f8(context)
+    return mac(secret, info + b"\x01")[:length]          # one block is all that is ever asked for
+derive = lambda secret, name, hashed: label(secret, name, hashed, 32)
+
+class Keys:
+    """One direction's keys, counting its records."""
+    def __init__(self, secret):
+        self.secret, self.key, self.iv, self.n = secret, label(secret, b"key", b"", 32), label(secret, b"iv", b"", 12), 0
+    def seal(self, kind, content, pad=0):
+        inner = content + bytes([kind]) + bytes(pad)
+        header = b"\x17\x03\x03" + u16(len(inner) + 16)
+        nonce = bytes(a ^ b for a, b in zip(self.iv, bytes(4) + self.n.to_bytes(8, "big")))
+        self.n += 1
+        return header + ChaCha20Poly1305(self.key).encrypt(nonce, inner, header)
+    def next(self): return Keys(label(self.secret, b"traffic upd", b"", 32))
+
+def client_hello(host, rnd, public):
+    """What the client must send first, written out again here from the RFC."""
+    extensions = (ext(0, f16(b"\0" + f16(host))) + ext(10, f16(u16(0x1d)))
+                  + ext(13, f16(u16(0x0804) + u16(0x0403) + u16(0x0503) + u16(0x0401) + u16(0x0501)))
+                  + ext(16, f16(f8(b"http/1.1"))) + ext(43, f8(u16(0x0304))) + ext(51, f16(u16(0x1d) + f16(public))))
+    return msg(1, u16(0x0303) + rnd + f8(b"") + f16(u16(0x1303)) + f8(b"\0") + f16(extensions))
+
+# ---- certificates for the stand-in ----------------------------------------------------------------------
+day = datetime.timedelta(days=1)
+start = datetime.datetime(2026, 11, 1, tzinfo=datetime.timezone.utc)
+at = lambda days: int((start + days * day).timestamp())
+def certificate(subject, issuer, key, signer, authority, names=(), last=90):
+    name = lambda cn: x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    b = (x509.CertificateBuilder().subject_name(name(subject)).issuer_name(name(issuer)).public_key(key.public_key())
+         .serial_number(rng.getrandbits(100) + 1).not_valid_before(start).not_valid_after(start + last * day)
+         .add_extension(x509.BasicConstraints(ca=authority, path_length=None), critical=True))
+    if names: b = b.add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in names]), critical=False)
+    p384 = isinstance(signer, ec.EllipticCurvePrivateKey) and signer.curve.name == "secp384r1"
+    return b.sign(signer, hashes.SHA384() if p384 else hashes.SHA256()).public_bytes(serialization.Encoding.DER)
+made = {}
+for kind in ("rsa", "ec", "ec384"):
+    new = {"rsa": lambda: rsa.generate_private_key(65537, 2048), "ec": lambda: ec.generate_private_key(ec.SECP256R1()),
+           "ec384": lambda: ec.generate_private_key(ec.SECP384R1())}[kind]
+    root_key, mid_key, leaf_key, other_key = new(), new(), new(), new()
+    made[kind] = dict(
+        root=certificate("a root", "a root", root_key, root_key, True, last=3650),
+        other=certificate("another root", "another root", other_key, other_key, True, last=3650),
+        mid=certificate("a middle", "a root", mid_key, root_key, True, last=700),
+        leaf=certificate("a leaf", "a middle", leaf_key, mid_key, False, ("relay.example.org",)),
+        leaf_key=leaf_key, other_key=other_key)
+
+def sign(key, said, pkcs1=False):
+    """The server's proof that it holds `key`: the algorithm's number and the signature."""
+    if isinstance(key, rsa.RSAPrivateKey):
+        if pkcs1: return 0x0401, key.sign(said, padding.PKCS1v15(), hashes.SHA256())
+        return 0x0804, key.sign(said, padding.PSS(padding.MGF1(hashes.SHA256()), 32), hashes.SHA256())
+    if key.curve.name == "secp384r1": return 0x0503, key.sign(said, ec.ECDSA(hashes.SHA384()))
+    return 0x0403, key.sign(said, ec.ECDSA(hashes.SHA256()))
+
+HELLO_RETRY = H(b"HelloRetryRequest")
+WORD = b"hello from the stand-in"
+count = 0
+
+def case(name, verdict="ok", why="", kind="rsa", **o):
+    """One conversation. `o` says how the server departs from the usual."""
+    global count; count += 1
+    m = made[kind]
+    host, now = o.get("host", b"relay.example.org"), o.get("now", at(10))
+    rnd, key = some(32), some(32)
+    public = X25519PrivateKey.from_private_bytes(key).public_key().public_bytes_raw()
+    hello = client_hello(host, rnd, public)
+    own = X25519PrivateKey.from_private_bytes(some(32))
+    share, shared = own.public_key().public_bytes_raw(), own.exchange(X25519PublicKey.from_public_bytes(public))
+    if o.get("zero_point"): share, shared = bytes(32), bytes(32)
+    extensions = ext(43, u16(o.get("version", 0x0304))) + ext(51, u16(o.get("group", 0x1d)) + f16(share))
+    if "hello_extensions" in o: extensions = o["hello_extensions"](extensions)
+    sh = msg(2, u16(0x0303) + (HELLO_RETRY if o.get("retry") else some(32)) + f8(o.get("session", b""))
+             + u16(o.get("suite", 0x1303)) + b"\0" + f16(extensions))
+    out = record(22, sh + o.get("after_hello", b""))
+    if "alert" in o: out = record(21, bytes([2, o["alert"]]))
+    if o.get("ccs", True): out += record(20, b"\x01")
+    t = hello + sh
+    hs = mac(derive(mac(zero, zero), b"derived", H(b"")), shared)
+    s_hs, c_hs = Keys(derive(hs, b"s hs traffic", H(t))), Keys(derive(hs, b"c hs traffic", H(t)))
+    master = mac(derive(hs, b"derived", H(b"")), zero)
+    # What follows the first message, sealed: extensions, certificates, the proof, the finishing word.
+    ee = msg(8, f16(o.get("ee", ext(0, b"") + ext(16, f16(f8(b"http/1.1"))))))
+    pieces = [(22, ee)]; t += ee
+    if o.get("request"):
+        ask = msg(13, f8(b"") + f16(ext(13, f16(u16(0x0804))))); pieces.append((22, ask)); t += ask
+    if not o.get("no_certificate"):
+        chain = o.get("chain", [m["leaf"], m["mid"]])
+        cert = msg(11, f8(o.get("context", b"")) + f24(b"".join(f24(d) + f16(o.get("with_certificate", b"")) for d in chain)))
+        pieces.append((22, cert)); t += cert
+        if not o.get("no_proof"):
+            said = b" " * 64 + o.get("opening", b"TLS 1.3, server CertificateVerify") + b"\0" + H(t)
+            algorithm, signature = sign(o.get("signer", m["leaf_key"]), said, o.get("pkcs1"))
+            if o.get("spoil_proof"): signature = spoil(signature, 10)
+            cv = msg(15, u16(o.get("algorithm", algorithm)) + f16(signature)); pieces.append((22, cv)); t += cv
+    word = mac(label(s_hs.secret, b"finished", b"", 32), H(t))
+    if o.get("spoil_finished"): word = spoil(word, 5)
+    if o.get("short_finished"): word = word[:31]
+    fin = msg(20, word); pieces.append((22, fin + o.get("with_finished", b""))); t += fin
+    if "pieces" in o: pieces = o["pieces"](pieces)
+    sealed = [s_hs.seal(k, c, o.get("pad", 0)) for k, c in pieces]
+    if "records" in o: sealed = o["records"](sealed)
+    out += b"".join(sealed)
+    s_ap, c_ap = Keys(derive(master, b"s ap traffic", H(t))), Keys(derive(master, b"c ap traffic", H(t)))
+    done = o.get("done", verdict in ("ok", "closed"))
+    sent, data = b"", b""
+    if done:
+        sent = c_hs.seal(22, msg(20, mac(label(c_hs.secret, b"finished", b"", 32), H(t))))
+        for step in o.get("after", ["data"]):
+            if step == "data": out += s_ap.seal(23, WORD, o.get("pad", 0)); data += WORD
+            elif step == "nothing": out += s_ap.seal(23, b"")
+            elif step == "most": big = some(16384); out += s_ap.seal(23, big); data += big
+            elif step == "long": out += s_ap.seal(23, bytes(16500))
+            elif step == "ticket": out += s_ap.seal(22, msg(4, some(60)))
+            elif step == "update and ask":
+                out += s_ap.seal(22, msg(24, b"\x01")); s_ap = s_ap.next()
+                sent += c_ap.seal(22, msg(24, b"\0")); c_ap = c_ap.next()
+            elif step == "update": out += s_ap.seal(22, msg(24, b"\0")); s_ap = s_ap.next()
+            elif step == "update badly": out += s_ap.seal(22, msg(24, b"\x02"))
+            elif step == "update and more": out += s_ap.seal(22, msg(24, b"\0") + msg(4, some(20)))
+            elif step == "close": out += s_ap.seal(21, b"\x01\x00")
+            elif step == "alert": out += s_ap.seal(21, b"\x02\x14")
+            elif step == "garbage": out += record(23, some(40))
+            elif step == "clear": out += record(23, WORD)
+            elif step == "meaningless": out += record(20, b"\x01")
+            elif step == "old keys": out += s_hs.seal(23, WORD)
+            elif step == "finished again": out += s_ap.seal(22, fin)
+            else: raise ValueError(step)
+    if "cut" in o: out = out[:o["cut"](len(out))]
+    written = c_ap.seal(23, b"ping") if verdict == "ok" else b""
+    line("handshake", name.replace(" ", "_"), host, now, o.get("anchor", m["root"]), rnd, key, record(22, hello), out,
+         verdict.encode(), why.encode(), sent, data, written)
+
+# ---- a server that behaves ------------------------------------------------------------------------------
+for kind in ("rsa", "ec", "ec384"):
+    case(f"{kind}: as it should be", kind=kind)
+    case(f"{kind}: every message in one record", kind=kind, pieces=lambda p: [(22, b"".join(c for _, c in p))])
+    case(f"{kind}: messages cut every 61 bytes", kind=kind,
+         pieces=lambda p: [(22, b"".join(c for _, c in p)[i:i + 61]) for i in range(0, len(b"".join(c for _, c in p)), 61)])
+    case(f"{kind}: records padded", kind=kind, pad=37)
+    case(f"{kind}: the root sent too", kind=kind, chain=[made[kind]["leaf"], made[kind]["mid"], made[kind]["root"]])
+case("no meaningless record", ccs=False)
+case("no extensions at all", ee=b"")
+case("the name asked in capitals", host=b"RELAY.Example.org")
+case("a ticket, then data", after=["ticket", "data"])
+case("two tickets in one record, data, nothing, data", after=["ticket", "ticket", "data", "nothing", "data"])
+case("the largest record there is", after=["most", "data"])
+case("new keys from the server", after=["data", "update", "data"])
+case("new keys both ways", after=["data", "update and ask", "data"])
+case("new keys twice", after=["update and ask", "update", "data", "update and ask", "data"])
+case("the server says it is done", "closed", after=["data", "close"])
+case("only the first message so far", "waiting", cut=lambda n: 60)
+case("half of what the server says", "waiting", cut=lambda n: n // 2, done=False)
+
+# ---- a server that is not who it says -------------------------------------------------------------------
+proof = "did not prove"
+for kind in ("rsa", "ec"):
+    case(f"{kind}: the proof with a bit changed", "no", proof, kind=kind, spoil_proof=True)
+    case(f"{kind}: the proof made with another key", "no", proof, kind=kind, signer=made[kind]["other_key"])
+    case(f"{kind}: the proof over the client's words", "no", proof, kind=kind, opening=b"TLS 1.3, client CertificateVerify")
+    case(f"{kind}: no proof at all", "no", "out of its turn (20)", kind=kind, no_proof=True)
+    case(f"{kind}: no certificate and no proof", "no", "out of its turn (20)", kind=kind, no_certificate=True)
+    case(f"{kind}: the proof before the certificate", "no", "out of its turn (15)", kind=kind,
+         pieces=lambda p: [p[0], p[2], p[1], p[3]])
+    case(f"{kind}: the finishing word with a bit changed", "no", "finishing word", kind=kind, spoil_finished=True)
+    case(f"{kind}: a certificate for another name", "no", "another name", kind=kind, host=b"other.example.org")
+    case(f"{kind}: a certificate under another root", "no", "does not reach a root", kind=kind, anchor=made[kind]["other"])
+    case(f"{kind}: a certificate that has run out", "no", "out of date", kind=kind, now=at(91))
+    case(f"{kind}: a certificate not yet good", "no", "out of date", kind=kind, now=at(-1))
+    case(f"{kind}: a certificate with its signature changed", "no", "bad signature", kind=kind,
+         chain=[spoil(made[kind]["leaf"], len(made[kind]["leaf"]) - 5), made[kind]["mid"]])
+    case(f"{kind}: the middle certificate left out", "no", "does not reach a root", kind=kind, chain=[made[kind]["leaf"]])
+    case(f"{kind}: no certificates in the message", "no", "no certificate", kind=kind, chain=[])
+case("the proof in the old padding", "no", proof, pkcs1=True)
+case("the proof said to be ECDSA, the key RSA", "no", proof, algorithm=0x0403)
+case("the proof said to be RSA, the key ECDSA", "no", proof, kind="ec", algorithm=0x0804)
+case("the proof said to be SHA-384's, the curve P-256", "no", proof, kind="ec", algorithm=0x0503)
+case("a finishing word too short", "no", "finishing word", short_finished=True)
+case("another server's certificates, this one's key", "no", proof, chain=[made["ec"]["leaf"], made["ec"]["mid"]], anchor=made["ec"]["root"])
+
+# ---- a server that does not keep to what was offered ----------------------------------------------------
+case("another cipher", "no", "cipher that was not offered", suite=0x1301)
+case("TLS 1.2 chosen", "no", "did not choose TLS 1.3", version=0x0303)
+case("no version chosen", "no", "carries what it may not", hello_extensions=lambda e: e[6:])
+case("a new start asked for", "no", "begin again", retry=True)
+case("another curve", "no", "not X25519", group=0x17)
+case("a key exchange that gives nothing", "no", "came to nothing", zero_point=True)
+case("a session resumed that never was", "no", "not TLS 1.3", session=some(32))
+case("something extra in the first message", "no", "carries what it may not", hello_extensions=lambda e: e + ext(0xff01, b"\0"))
+case("the key exchange twice", "no", "cannot be read", hello_extensions=lambda e: e + e[6:])
+case("something after the first message in its record", "no", "middle of a record", after_hello=msg(8, f16(b"")))
+case("a refusal in the clear", "no", "alert 40", alert=40, ccs=False)
+case("an extension nobody offered", "no", "not offered", ee=ext(5, b""))
+case("HTTP/2 chosen", "no", "other than HTTP/1.1", ee=ext(16, f16(f8(b"h2"))))
+case("a certificate asked of the client", "no", "asks this side", request=True)
+case("something sent with a certificate", "no", "cannot be read", with_certificate=ext(5, b"\x01"))
+case("a certificate message with a context", "no", "cannot be read", context=b"\x01")
+case("a ticket in the finishing word's record", "no", "middle of a record", with_finished=msg(4, some(20)))
+case("data before the finishing word", "no", "before the server proved", pieces=lambda p: p[:-1] + [(23, WORD), p[-1]])
+case("the extensions in the clear", "no", "in the clear", records=lambda r: [record(22, msg(8, f16(b"")))] + r[1:])
+case("a sealed record with a bit changed", "no", "does not open", records=lambda r: [spoil(r[0], 9)] + r[1:])
+case("a sealed record's length changed", "no", "does not open", records=lambda r: [r[0][:4] + bytes([r[0][4] - 1]) + r[0][5:-1]] + r[1:])
+case("two sealed records the other way round", "no", "does not open", records=lambda r: [r[1], r[0]] + r[2:])
+case("a sealed record sent twice", "no", "does not open", records=lambda r: [r[0], r[0]] + r[1:])
+case("a record longer than any may be", "no", "too long", records=lambda r: [record(23, bytes(0x4200))] + r)
+case("a handshake message longer than any honest one", "no", "too long to be honest", pieces=lambda p: [(22, b"\x0b\x10\x00\x00")] + p)
+case("an empty handshake record", "no", "empty handshake record", pieces=lambda p: [p[0], (22, b"")] + p[1:])
+case("a record of nothing but padding", "no", "does not open", pieces=lambda p: [p[0], (0, b"")] + p[1:])
+case("a record of no known kind", "no", "no known kind", pieces=lambda p: [p[0], (99, b"x")] + p[1:])
+case("a message broken off by an alert", "no", "broken off",
+     pieces=lambda p: [p[0], (22, p[1][1][:100]), (21, b"\x01\x5a"), (22, p[1][1][100:])] + p[2:])
+case("a second meaningless record after the handshake", "no", "means nothing", done=True, after=["data", "meaningless"])
+
+# ---- a server that goes wrong once data flows: what came before still counts ----------------------------
+case("an alert after data", "no", "alert 20", done=True, after=["data", "alert"])
+case("bytes that are not a record after data", "no", "does not open", done=True, after=["data", "garbage"])
+case("data in the clear after the handshake", "no", "does not open", done=True, after=["data", "clear"])
+case("data under the handshake's keys", "no", "does not open", done=True, after=["old keys"])
+case("data under the old keys after new ones", "no", "does not open", done=True, after=["update", "data", "update", "old keys"])
+case("a request for new keys that is neither kind", "no", "cannot be read", done=True, after=["data", "update badly"])
+case("something after new keys in the same record", "no", "middle of a record", done=True, after=["update and more"])
+case("the finishing word again", "no", "out of its turn (20)", done=True, after=["data", "finished again"])
+case("a record that opens to more than any may hold", "no", "too long", done=True, after=["data", "long"])
+import sys; print(f"{count} handshakes", file=sys.stderr)

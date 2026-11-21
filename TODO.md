@@ -433,7 +433,38 @@ times, and the block from the relay. Six stages, of which the first is half done
   curves and other hashes are refused). On the minimal runtime all of `tls-test` passes, in 4.3 s where
   the ordinary runtime takes 1.1 s; names are compared as bytes because that runtime has no changing of
   a string's letters.
-- [ ] A TLS 1.3 client as a pure state machine, against `openssl s_server` and then the relays' public pages.
+- [x] **A TLS 1.3 client** (`evm/Tls/Client.lean`, with `Wire.lean` and `Http.lean`), 2026-11-22. A
+  value and functions on it, with no connection of its own, as `Kernel/Net/Tcp.lean` is: bytes that
+  arrived go in, bytes to send and data come out. One of everything (TLS 1.3, X25519, ChaCha20-Poly1305
+  with SHA-256, the server proving its key by RSA-PSS or ECDSA, HTTP/1.1), nothing resumed, nothing sent
+  early, and whatever is not provided for is a refusal that stays one. Held three ways:
+  - `tls-test` on `Tls/handshakes.txt`, 100 whole conversations with a TLS 1.3 server written in Python
+    for the purpose (`scripts/tls-handshakes`), which behaves in 27 of them and misbehaves in 73: a proof
+    of its key that is changed, made with another key, made over the wrong words or in an algorithm that
+    does not fit the key; no proof, or no certificate; a finishing word changed; certificates for another
+    name, under another root, out of date or badly signed; another cipher, version, curve; a key exchange
+    that gives nothing; records changed, swapped, repeated, in the clear, too long; data before the
+    proof; keys changed in the middle of a record; and things going wrong after data has flowed. Each is
+    given whole and again a few bytes at a time, the client's every byte must be what the Python expects,
+    and a refusal must be for the reason meant. Six deliberate breakages of the client (the proof not
+    checked, the finishing word not checked, certificates not checked, and three smaller) were each
+    caught, by 11, 3, 14, 3, 1 and 1 conversations. That server is by the same hand as the client, so
+    agreement on the good cases shows less than it seems to.
+  - `scripts/tls-against-openssl`, against somebody else's: `openssl s_server` (3.5.5) on this machine
+    with RSA, P-256 and P-384 certificates, 28 cases, all as they should be: 13 answered, among them
+    files of 300,000 bytes, records of 512 bytes and padded ones; 15 refused for the right reason
+    (another name, another root, out of date two ways, a signature changed, TLS 1.2 only, AES only,
+    P-256 only, a client certificate demanded).
+  - The four relays' public lists of coming proposers, fetched with it from this machine
+    (`scripts/tls-get HOST /relay/v1/builder/validators`): Flashbots, Ultrasound, Aestus and Titan each
+    answered with a list beginning at the same slot, in about 0.2 s; asked by a wrong name, or judged
+    against the wrong roots, refused. Nothing of ours was sent.
+
+  All of `tls-test` passes on the minimal runtime too, where a whole handshake with certificates checked
+  takes about 4 ms with RSA and about 50 ms with ECDSA, the curves being on `Nat`. Not done or not there:
+  a server that asks to begin again (refused); sessions resumed; a certificate from this side; telling
+  the server why it was refused (the connection is just dropped); wiping a key's memory when it is
+  dropped; any measurement of time; anything in the guest.
 - [ ] Connections out from the guest's loop; the guest fetching a relay's public page in TDX.
 - [ ] The guest putting a submission together itself and posting it over TLS, to a stand-in first.
 - [ ] Sealed transactions in, kept in the guest and built into its blocks; a page that seals one.

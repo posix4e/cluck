@@ -114,6 +114,17 @@ said in its first lines and matters: nothing is checked for revocation, so a rel
 until its certificate runs out; and "runs out" is judged by a time the caller supplies, and the guest has
 no clock but what the host tells it.
 
+The client that will use these (`Tls/Client.lean`) is written to be small before anything else: TLS 1.3
+only, one key exchange, one cipher, no resumption, no early data, and a refusal for every message it does
+not expect. Every byte it reads before the server's finishing word is chosen by whoever is on the path,
+which for the guest is the host. What it relies on: that the server's proof of its key is checked over
+everything said so far, that the finishing word is checked before any data is believed or sent, and that
+keys never change in the middle of a record; each of those has conversations in `tls-test` that fail if it
+is taken out, and that was tried. What it does not do: it sends no alert, so a server learns nothing of
+why it was dropped; a key that is dropped is not wiped from memory; the lengths of records, and so
+roughly of what is said, are plain to the carrier, and it pads nothing. It is tested against OpenSSL's
+server and against one written here, and is neither proved nor reviewed.
+
 **Start-up routines that do nothing.** `evm/rt/start.c` stands in for seven of mathlib's. If any code the
 service reaches reads a constant one of them would have built, it reads memory nothing has written. This is
 the rule "nothing that is not there may pass for something that is" broken on purpose, and the fixtures

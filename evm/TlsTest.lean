@@ -4,7 +4,11 @@ import Std.Data.HashMap
 
 /-! `evm/Tls/` against the standards' examples and against OpenSSL.
 
-    .lake/build/bin/tls-test < Tls/vectors.txt        (from evm/; and tls-test-min, after scripts/build-min tls-test)
+    cat Tls/vectors.txt Tls/handshakes.txt | .lake/build/bin/tls-test        (from evm/)
+
+and the same into `tls-test-min` after `scripts/build-min tls-test`. `Tls/handshakes.txt` is made by
+`scripts/tls-handshakes`: whole conversations with a TLS 1.3 server written there, which the client in
+`Tls/Client.lean` must come through, or refuse for the reason given.
 
 The file of cases is made by `scripts/tls-vectors` from Python's hashlib and `cryptography` package. For
 each case the same inputs are given to the Lean and the answers must be the same bytes; for a signature or
@@ -48,6 +52,34 @@ def cut (b : ByteArray) (mark : UInt8) : Array ByteArray := Id.run do
       start := i + 1
   return if start < b.size then parts.push (b.extract start b.size) else parts
 
+/-- Whether `needle` lies somewhere in `hay`. -/
+def contains (hay needle : ByteArray) : Bool :=
+  (List.range (hay.size + 1 - needle.size)).any fun i => hay.extract i (i + needle.size) == needle
+
+/-- A whole conversation with a server whose every byte is given: the client's first message, then what
+came of the server's bytes (how the connection stands, what the client sent back, the data that came out,
+and the record it makes of "ping"), and its reason if it refused. The server's bytes arrive all at once,
+or with `pieces` not zero a few at a time, in pieces of changing size. -/
+def converse (host : ByteArray) (now : Nat) (anchor random key flight : ByteArray) (pieces : Nat) : ByteArray × ByteArray × String := Id.run do
+  let anchors := match X509.Anchor.of anchor with | some a => #[a] | none => #[]
+  let (begun, hello) := Client.start host anchors now random key
+  let mut c := begun
+  let mut sent := ByteArray.empty
+  let mut data := ByteArray.empty
+  let mut pos := 0
+  for turn in [0:flight.size + 1] do
+    if pos ≥ flight.size then break
+    let size := if pieces == 0 then flight.size else 1 + (turn * 7 + pieces) % 23
+    let step := c.receive (flight.extract pos (pos + size))
+    c := step.client
+    sent := sent ++ step.send
+    data := data ++ step.data
+    pos := pos + size
+  let (verdict, why) := match c.stage with
+    | .ready => ("ok", "") | .closed => ("closed", "") | .failed why => ("no", why) | _ => ("waiting", "")
+  let bar := ByteArray.mk #[0x7c]
+  return (hello, verdict.toUTF8 ++ bar ++ sent ++ bar ++ data ++ bar ++ (c.write "ping".toUTF8).2, why)
+
 def main : IO UInt32 := do
   let mut failures := 0
   let mut counts : Std.HashMap String Nat := {}
@@ -56,6 +88,20 @@ def main : IO UInt32 := do
     let kind := ascii (fields.getD 0 .empty)
     let f (i : Nat) : ByteArray := unhexBytes (fields.getD i .empty)
     let n (i : Nat) : Nat := (fields.getD i .empty).foldl (fun n c => n * 10 + (c.toNat - 48)) 0
+    if kind == "handshake" then
+      counts := counts.insert kind (counts.getD kind 0 + 1)
+      let (hello, whole, why) := converse (f 2) (n 3) (f 4) (f 5) (f 6) (f 8) 0
+      let (_, inPieces, _) := converse (f 2) (n 3) (f 4) (f 5) (f 6) (f 8) 3
+      let bar := ByteArray.mk #[0x7c]
+      let want := f 9 ++ bar ++ f 11 ++ bar ++ f 12 ++ bar ++ f 13
+      let wrong := (if hello != f 7 then "its first message; " else "")
+        ++ (if whole != want then s!"what came of it ({ascii ((cut whole 0x7c).getD 0 .empty)} {why}); " else "")
+        ++ (if inPieces != whole then "what came of it a few bytes at a time; " else "")
+        ++ (if !contains why.toUTF8 (f 10) then s!"its reason ({why}); " else "")
+      if wrong != "" then
+        failures := failures + 1
+        say s!"handshake {ascii (fields.getD 1 .empty)}: wrong in {wrong}"
+      continue
     let (got, want) : ByteArray × ByteArray :=
       match kind with
       | "sha256" => (Sha256.hash (f 1), f 2)
@@ -86,7 +132,9 @@ def main : IO UInt32 := do
     if got != want then
       failures := failures + 1
       if failures < 12 then say s!"{kind}: {ascii (line.extract 0 150)}…\n  got {hex (got.extract 0 75)}"
-  for (kind, count) in counts.toList do say s!"{kind}: {count} cases against OpenSSL"
+  for (kind, count) in counts.toList do
+    if kind == "handshake" then say s!"handshake: {count} conversations with a server that behaves or misbehaves as told, each twice"
+    else say s!"{kind}: {count} cases against OpenSSL"
   -- The standards' own examples.
   let abc := "abc".toUTF8
   let printed : List (String × ByteArray × String) := [

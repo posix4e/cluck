@@ -41,8 +41,13 @@ it, and continuous integration does not build it. What has been run and what it 
   with witnesses cut from the whole state by `Evm/Cut.lean`; `EngineTime.lean` says where its time goes.
 - `Tls/`: what the guest will need to keep a secret on a wire, in Lean: SHA-256, SHA-384 and SHA-512,
   HMAC and HKDF, ChaCha20-Poly1305, X25519, and for certificates RSA and ECDSA signatures checked and a
-  reader and checker of chains (`X509.lean`). Imports no Jaune. Used by nothing yet. `TlsTest.lean` holds
-  it to OpenSSL through `Tls/vectors.txt`, which `scripts/tls-vectors` makes.
+  reader and checker of chains (`X509.lean`); a TLS 1.3 client that is a value with no connection of its
+  own (`Client.lean`) and enough HTTP/1.1 to ask a question (`Http.lean`). Imports no Jaune. Used by
+  nothing in the image yet. `TlsTest.lean` holds the pieces to OpenSSL through `Tls/vectors.txt`, which
+  `scripts/tls-vectors` makes, and the client to `Tls/handshakes.txt`, conversations with a server that
+  misbehaves on purpose, which `scripts/tls-handshakes` makes. `TlsFetch.lean` and `scripts/tls-get`
+  drive the client over a real connection from the host; `scripts/tls-against-openssl` puts it to
+  `openssl s_server`.
 - `Evm/Sign.lean`, `Evm/Sign/`: a BLS key used without ever being a `Nat`. `Field.lean` is the base field on
   fixed-width words with every value-dependent choice made by the OS's `Secret.select`; `Curve.lean` is
   the key times a point by the same steps whatever the key; `Sign.lean` is public keys and signatures over

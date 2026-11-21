@@ -593,7 +593,17 @@ times, and the block from the relay. Six stages:
     only one round of asking again happens per missing thing, so a transaction that reads much state
     takes several; nobody but this program has sealed to the guest; the real image has all of this
     and has sent nothing to a real relay.
-- [ ] Live, and only when asked for with the cost named.
+- [ ] **Live**, and only when asked for with the cost named. Not run. What is ready for it:
+  `builder/shadow --live --guest-sends --sealed --top-up ETH --wallet KEY.pem --relays ...` boots the
+  image that is meant, tells the guest which of its four relays hold the registration each block is
+  built for, and the guest sends. Rehearsed against the stand-in without `--live`: six slots with the
+  payment and a sealed transaction of the same wallet in one block, five of them with both in (the
+  first had no time), each worth the payment and the tips, valid and signed; the guest's two keys
+  asked for with reports when the run began, and their quotes kept. What a live run would be the
+  first of: a real relay reading this SSZ; a block sent with nothing judging it first (the guest
+  sends when it has built, where until now the node's validator judged every block before it left);
+  a block built by the fast engine's builder sent anywhere; this program knowing its block in the
+  chain only by the payment in it.
 
 What is next, in order:
 

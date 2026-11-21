@@ -335,6 +335,17 @@ def Endpoint.close (e : Endpoint) (now : Nat) (key : Key) : Endpoint × Array Ev
   let (c, events) := pump { c with closing := true, passiveClose := c.peerFin } now #[]
   return (e.store c, events)
 
+/-- Give a connection up at once: a reset to the peer if it was open or opening, and its place freed with
+no wait. For whoever opened it and no longer wants it; `close` is the orderly way. -/
+def Endpoint.abort (e : Endpoint) (key : Key) : Endpoint × Array Event :=
+  match e.conns.find? (·.key == key) with
+  | none => (e, #[])
+  | some c =>
+    let said := if c.phase == .timeWait then #[]
+      else if c.phase == .synSent then #[c.emit { c.packet rst with seq := c.snd }]
+      else #[c.emit (c.packet (rst ||| ack))]
+    (e.remove key, said.push (.closed key))
+
 private def onTimer (c : Conn) (now : Nat) : Option Conn × Array Event := Id.run do
   if c.phase == .timeWait then
     return (if now ≥ c.touched + 120000 then none else some c, #[])

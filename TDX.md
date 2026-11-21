@@ -66,6 +66,9 @@ addresses. Set `Internet.Config` in `TdxMain.lean` when building for another
 network. `SILO_NET_SOCKET=/path/to/link.sock` selects a QEMU UNIX stream Ethernet
 backend for a point-to-point link. The IPv6 integration test drives that link.
 
+`SILO_NET_DUMP=/path/to/frames.pcap` has QEMU write every Ethernet frame the guest sends or is sent to
+that file, as a packet capture: what the host carries for the guest, seen from where the host stands.
+
 ## Build the firmware for TDX
 
 The IntelTdxX64 firmware manifest in the revision below ships virtio PCI and

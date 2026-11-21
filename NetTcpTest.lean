@@ -156,6 +156,14 @@ def main : IO UInt32 := do
   check "lost final ACK recovered in TIME-WAIT" ((packets finalAck)[0]!.answer == 102)
   check "TIME-WAIT expires" ((waiting.tick 120100).1.conns.isEmpty)
 
+  let (gone, given) := est.abort key
+  check "giving a connection up resets the peer and frees its place at once"
+    (gone.conns.isEmpty && closed given && (packets given)[0]!.has rst && (packets given)[0]!.seq == est.conns[0]!.snd)
+  let (opening, _) := listener.connect 0 20 remote 51002 443
+  let (gone, given) := opening.abort ⟨remote.ip,443,51002⟩
+  check "giving up before the peer answered" (gone.conns.isEmpty && closed given && (packets given).size == 1)
+  check "giving up what is not there does nothing" ((listener.abort key).2.isEmpty)
+
   let (bounded, overflow) := est.send 0 key ⟨Array.replicate (maxQueued + 1) 0⟩
   check "send overflow reclaims state and signals a reset" (bounded.conns.isEmpty && closed overflow && (packets overflow)[0]!.has rst)
   let full := (List.range (maxConnections + 2)).foldl

@@ -25,6 +25,9 @@ it, and continuous integration does not build it. What has been run and what it 
   that say when the witness falls short, and writes and removals that give the new root.
 - `Evm/PowMod.lean`: `Nat.powMod` in Lean, which the minimal runtime lacks.
 - `ServeMain.lean`: the service as a process, one request on standard input.
+- `Evm/Build.lean`: the makings of a block and a witness, and out of them a block: which of the proposed
+  transactions go in, in what order, and the header that follows from running them. The format, the rule
+  for ordering and what is left out are at the top of the file.
 - `EfiMain.lean`: the service as a whole machine, an EFI guest answering framed requests on TCP port 5005
   over the OS's own Ethernet, IP and TCP.
 - `MkRequest.lean`: turns a case of a blockchain-test fixture into a request and the response the fixture
@@ -32,6 +35,9 @@ it, and continuous integration does not build it. What has been run and what it 
 - `EvmTest.lean`: pure tests of the format and of `Evm.powMod`. `TrieTest.lean`: the trie against Jaune's
   root computation. `StatelessTest.lean`: a block with a witness against the same block with the whole
   state, and with every piece of the witness left out in turn.
+- `BuildTest.lean`: `Evm.Build` against `Evm.Stateless`, which checks what it builds, and against blocks
+  that exist, which it has to build again exactly. `witness/to-build`: turns a request to check a block
+  into a request to build one from the same transactions.
 - `StatelessWhy.lean`: a stateless request's answer in words, with Jaune's reason for a rejection and what a
   short witness lacks. `witness/fetch`: makes a stateless request for a block from a node that follows the
   chain. Neither goes in an image.
@@ -181,6 +187,16 @@ The same requests go to the guest from wherever they were written:
 
 ```
 SILO_TDVF=/path/to/OVMF.fd scripts/run-fixtures tdx --from DIR 26456375
+```
+
+A block can be built as well as checked. `fixtures/build/` holds three requests to build, written by
+`build-test write`. For a block of mainnet, a request to check it becomes a request to build it again from
+its own transactions, and what comes back has to carry the hash the chain has for that block:
+
+```
+witness/to-build block.req build.req
+.lake/build/bin/evm-serve < build.req | xxd | head -3     # status 00, then the block's hash
+.lake/build/bin/build-test DIR                            # every NAME.req in DIR, as given and by the rule
 ```
 
 From another machine, `ssh -L 8545:127.0.0.1:8545 HOST` puts that node within reach of `witness/fetch`,

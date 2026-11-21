@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Turns a request to check a block (Evm/Stateless.lean) into a request to build one from the same
+transactions and witness (Evm/Build.lean).
+
+    witness/to-build IN.req OUT.req [RULE [GAS]]
+
+RULE is 0 to keep the transactions in the block's order (the default: the block built has to be the block
+that was there, hash and all) or 1 to order them by what they pay. GAS is the most the block may use; left
+out, the header's own limit is all that bounds it.
+
+The two requests differ only at the front: a different word, and after the chain id the rule and the gas.
+"""
+import struct, sys
+
+if len(sys.argv) not in (3, 4, 5):
+    sys.exit(__doc__)
+with open(sys.argv[1], "rb") as f:
+    request = f.read()
+if request[:5] != b"JWIT1":
+    sys.exit("to-build: not a stateless request")
+rule = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+gas = int(sys.argv[4]) if len(sys.argv) > 4 else 2 ** 63
+with open(sys.argv[2], "wb") as out:
+    out.write(b"JBLD1" + request[5:14] + bytes([rule]) + struct.pack(">Q", gas) + request[14:])

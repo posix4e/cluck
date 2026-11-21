@@ -126,6 +126,26 @@ went unrecorded, which were then closed; that it now finds none is evidence abou
 which hold no EIP-7702 authorization, no blob and no withdrawal. An answer of "valid" also says nothing of
 the parent: it is about this block on that parent, whatever chain the parent is or is not part of.
 
+**The makings of a block.** A request that begins `JBLD1` carries a header to be filled in, transactions
+that are proposed, and a witness, and is answered with a block made of them (`evm/Evm/Build.lean`). All of
+it is the sender's. What stands in the way of a wrong block is what stands in the way of a wrong verdict,
+used one transaction at a time: a transaction that read anything the witness does not prove is thrown away
+with its effects, the block as a whole has to pass the same checks of what was read and what was made, and
+the header in the request is held to the parent by Jaune's `validateHeader` before anything runs. So a
+short witness gives a smaller block or none. `build-test` leaves every piece of three witnesses out in turn
+and puts each block that still comes out to `Evm.Stateless` with the whole witness: 404 shortened
+witnesses, none built a block the checker refuses. That is the same kind of evidence as for the checker,
+and rests on the same record of reads, which nothing proves complete.
+
+What an answer says is narrow. It says the block is valid on the parent state the witness hangs from and
+that, of the transactions proposed and provable, those that went in are in the order the rule gives. It
+does not say the sender proposed every transaction it knew of, or proved every account it could have: the
+sender chooses what is proposed and can keep a transaction out by leaving its signer unproven. It says
+nothing about the slot's inputs (time, randomness, withdrawals, fee recipient), which are the sender's and
+come back unchanged. Nobody is asked to keep the transactions secret: they arrive in the clear from the
+host. And the guest signs nothing yet, so a block built here binds no one until something outside signs a
+bid for it.
+
 **A branch of Jaune.** The image now holds `posix4e/jaune`, eleven commits ahead of the upstream commit
 this section was written about. Four of them change how something is computed and prove the result the
 same (how EVM memory grows, a polynomial division, and what holds the machine's state while an instruction

@@ -220,25 +220,50 @@ multiplication was a product and a division of big numbers.
   2% in the jump check. Counted another way, 35% of it is the minimal runtime allocating and freeing
   (issue #1), and 7% is one function of Jaune's that grows EVM memory an element at a time.
 
-What is next, in the order it depends on itself. The aim is the check a relay makes of a builder's block
-(re-execute it on the real chain, confirm the state root, confirm the proposer is paid), attested, in the
-guest:
+On 2026-11-21 the aim changed. It had been the check a relay makes of a builder's block. It is now the
+builder: a block built inside the guest, bid for with a key that never leaves it, delivered by a relay and
+landed on mainnet; and only after that a faster engine in place of Jaune. (What Flashbots itself keeps in a
+trust domain is its builder, in a Linux machine; relays and mev-boost are not in one.)
 
-1. **The relay's own checks** (`flashbots_validateBuilderSubmissionV5`, as reth's
-   `crates/rpc/rpc/src/validation.rs` makes them): the bid against the block, the gas limit against the one
-   registered, blob commitments, and payment to the proposer. A host-side adapter that speaks the relay's
-   JSON-RPC and gets a witness for a submitted payload.
-2. **Hostile input.** A step budget and a host that replaces a guest that overruns; the recursions in
-   Jaune that follow the input made into loops; the items under "not sound yet" below; fuzzing of the trie
-   and request readers; `evm/` in CI.
-3. **A week of every relay-delivered mainnet block**, validated after the fact and attested, shown on
-   the page.
+The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`).
 
-Time is where it was meant to get to before those (a median of 3 seconds in the guest), and no further:
-it was decided that the relay's checks come next. What is known to be left in it: the minimal runtime's
-allocator (issue #1), the stack held as a list whose length is counted at every push (3%), extension
-fields held as lists of big numbers (13%, in both pairings), keccak in Lean (5%), and a request's 0.9
-seconds on its way in.
+- The 21 mainnet blocks above, each built again from its own transactions in their order, as a process on
+  both runtimes and in the TDX guest (image SHA-256 `c525a02d…3cc30138`): every one came out with the hash
+  and the state root the chain has for it, which is every field of the header. In the guest that took 0.8
+  to 8.4 seconds a block.
+- The same blocks with their transactions ordered by what they pay, as a process: every block built was
+  one `Evm.Stateless` accepts. Between 2 and 13 of each block's transactions were left out, most of them
+  the ones that carry blobs.
+- `build-test` on three test chains: built again as given, each is the block it was; a transaction proposed
+  twice is left out the second time; and of 404 witnesses with one piece missing, 110 built nothing, 74
+  built a smaller block, and none built a block the checker refuses.
+- A witness for transactions that are not in a block yet can come from the node's proofs at the head:
+  for everything one full block touched (545 accounts, 1,558 slots) reth answered in 0.8 to 1.2 seconds
+  over 16 to 32 connections, 3 MB of nodes. Those proofs do not include the neighbour a trie needs when a
+  slot is cleared and its branch collapses; about one transaction in nine clears a slot, and a block that
+  needs such a node is answered with status 6.
+- Not done: nothing has been built from pending transactions; nothing is signed; nothing has been sent to
+  a relay; building has not been timed against a slot.
+
+What is next, in order:
+
+1. **Building in shadow.** A program on the host follows the chain and each slot puts pending transactions
+   and their proofs to the guest; reth's own validator (the code relays run) judges each block built.
+   Nothing is signed or sent. The line: 1,000 slots in a row with a valid block, each ready two seconds
+   before its slot.
+2. **A key that never leaves the guest.** BLS12-381 signing on fixed-width words with no branch on the
+   key, held to the existing verification and to known vectors, and its machine code read for jumps that
+   depend on the key. The guest signs bids for blocks it has just built and nothing else.
+3. **What a win costs.** A day of comparing the bid the guest would have made with the bid that won.
+4. **Live.** A top-up signed outside the guest, submission to relays, one block landed, its quote shown.
+5. **A faster engine** in place of Jaune, tested against it.
+
+The relay's own checks, hostile input and a week of validating delivered blocks, which were next before
+the aim changed, are set aside, not done.
+
+What is known to be left in the time: the minimal runtime's allocator (issue #1), the stack held as a
+list whose length is counted at every push (3%), extension fields held as lists of big numbers (13%, in
+both pairings), keccak in Lean (5%), and a request's 0.9 seconds on its way in.
 
 What it stands on that is not sound yet:
 

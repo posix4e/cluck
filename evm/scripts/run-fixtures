@@ -55,9 +55,11 @@ def exchange(request, patience):
     with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
         s.settimeout(patience)
         s.sendall(struct.pack(">I", len(request)) + request)
+        # One frame back: four bytes of length, then that many. A verdict is 69 bytes; a block that was
+        # built is as long as its header and the list of what went into it.
         got = b""
-        while len(got) < 4 + 69:
-            piece = s.recv(4 + 69 - len(got))
+        while len(got) < 4 or len(got) < 4 + struct.unpack(">I", got[:4])[0]:
+            piece = s.recv(65536)
             if not piece:
                 break
             got += piece
@@ -84,7 +86,7 @@ try:
             got = b""
             print(f"{name}: {error}")
         took = time.time() - sent
-        ok = got == struct.pack(">I", 69) + expected
+        ok = got == struct.pack(">I", len(expected)) + expected
         failed += not ok
         inside = re.findall(r"evm: status \d+, (\d+) ms", serial())
         inside = f", {int(inside[-1]) / 1000:.2f} s of it in the guest" if inside else ""
@@ -129,7 +131,7 @@ try:
             request = f.read()
         with open(os.path.join(here, "fixtures/highGasUsage.expected"), "rb") as f:
             expected = f.read()
-        ok = exchange(request, 600) == struct.pack(">I", 69) + expected
+        ok = exchange(request, 600) == struct.pack(">I", len(expected)) + expected
         failed += not ok
         print(f"a fixture after that: {'the expected answer' if ok else 'WRONG'}")
 finally:

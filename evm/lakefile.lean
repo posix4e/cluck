@@ -73,6 +73,11 @@ lean_exe «trie-test» where
 lean_exe «stateless-test» where
   root := `StatelessTest
 
+/-- `Evm.Build` against `Evm.Stateless` and against blocks that exist. -/
+@[default_target]
+lean_exe «build-test» where
+  root := `BuildTest
+
 /-- A stateless request's answer in words, with Jaune's reason for a rejection. For making witnesses. -/
 @[default_target]
 lean_exe «stateless-why» where

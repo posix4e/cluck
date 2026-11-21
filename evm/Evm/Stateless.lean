@@ -358,9 +358,3 @@ def serve (input : ByteArray) : ByteArray :=
   | none => (⟨5, 0, 0, 0⟩ : Response).encode
 
 end Evm.Stateless
-
-/-- Either kind of request, told apart by how it begins: a chain with its whole state (`Evm.Service`), or
-one block with a witness. -/
-def Evm.serve (input : ByteArray) : ByteArray :=
-  if input.extract 0 Evm.Stateless.magic.size == Evm.Stateless.magic then Evm.Stateless.serve input
-  else Evm.Service.serve input

@@ -1,0 +1,141 @@
+import Evm
+
+/-! Tests of `Evm.Build` against `Evm.Stateless`, which checks blocks, and against blocks that exist.
+
+A stateless request is a block and a witness for it. Its block is used as the makings of a block: the
+header as the template and the transactions as what is proposed.
+
+- **Built again as given.** With the transactions kept in their order, the block built has to be the block
+  the request holds: the same hash, which is every field of the header. That is the test that the header
+  is put together as the chain puts it together.
+- **A transaction that cannot go in.** The first transaction proposed a second time has a nonce already
+  used. It has to be left out and the block come out as before.
+- **Built by the rule.** With the transactions ordered by what they pay, whatever is built has to be a
+  block `Evm.Stateless` accepts with the same witness.
+- **A witness that falls short.** Each node, key and code of the witness is left out in turn. The answer
+  has to be that nothing was built (4 when what is missing is needed before or after the transactions, by
+  a system call; 6 or 7 otherwise), or a block that `Evm.Stateless` accepts with the whole witness: with
+  less to go on it may build a smaller block, never a wrong one.
+
+    .lake/build/bin/build-test             (from evm/: the three fixtures in fixtures/stateless/)
+    .lake/build/bin/build-test write       (the same, and fixtures/build/ made again from them: a request
+                                            to build by the rule and the response it must get)
+    .lake/build/bin/build-test DIR         (every NAME.req in DIR as well, built again as given and by
+                                            the rule; for blocks of mainnet made by witness/fetch)
+
+Run on Lean's own runtime. -/
+open Jaune Evm
+
+structure Tally where
+  failures : Nat := 0
+  checks : Nat := 0
+
+def Tally.expect (t : Tally) (what : String) (ok : Bool) : IO Tally := do
+  if !ok then IO.println s!"FAILED: {what}"
+  pure { failures := t.failures + (if ok then 0 else 1), checks := t.checks + 1 }
+
+/-- The block a response describes, as bytes: its header, the proposed transactions it names, and the
+withdrawals proposed. -/
+def blockOf (template : Block) (built : Build.Built) : ByteArray :=
+  let proposed := template.transactions.toArray
+  let block : Block :=
+    { header := built.header, transactions := built.included.filterMap (proposed[·]?), ommers := [],
+      withdrawals := template.withdrawals }
+  block.toRlpItem.toBytes.toByteArray
+
+/-- Whether `Evm.Stateless` accepts the block a response describes, with this witness, as the block the
+response says it is. -/
+def accepted (witness : Stateless.Request) (template : Block) (built : Build.Built) : Bool :=
+  let answer := Stateless.run { witness with block := blockOf template built }
+  answer.status == 0 && answer.tip == built.hash && answer.root == built.header.stateRoot
+
+def one (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (write : Bool := false) :
+    IO Tally := do
+  let mut tally := tally
+  let some (witness, _) := (Stateless.request bytes).run 0
+    | tally.expect s!"{name}: not a stateless request" false
+  let .ok (template, hash) := rlpToBlockE witness.block.toList
+    | tally.expect s!"{name}: the block does not decode" false
+  let count := template.transactions.length
+  let limit := template.header.gasLimit
+  -- Built again as given.
+  let started ← IO.monoMsNow
+  let again := Build.run { witness, rule := 0, gasCap := limit }
+  let took := (← IO.monoMsNow) - started
+  match again.built with
+  | some b =>
+    tally ← tally.expect s!"{name}: built again as given, {b.included.length} of {count} went in and the \
+      hash is {b.hash}, not {hash}" (b.hash == hash && b.included.length == count)
+    -- The request survives being written and read, and the response says the same as bytes.
+    match (Build.Request.encode { witness, rule := 0, gasCap := limit }) with
+    | some encoded =>
+      let reply := Build.serve encoded
+      tally ← tally.expect s!"{name}: the request as bytes is answered differently"
+        (reply == again.encode && reply.size > 100 && reply.extract 1 33 == Trie.wordBytes hash)
+    | none => tally ← tally.expect s!"{name}: the request has no encoding" false
+  | none => tally ← tally.expect s!"{name}: nothing built from the block's own transactions, status {again.status}" false
+  -- A transaction that cannot go in.
+  if let first :: _ := template.transactions then
+    let doubled := { template with transactions := template.transactions ++ [first] }
+    let twice := Build.run
+      { witness := { witness with block := doubled.toRlpItem.toBytes.toByteArray }, rule := 0, gasCap := limit }
+    tally ← tally.expect s!"{name}: a transaction proposed twice was not left out the second time"
+      ((twice.built.map fun b => b.hash == hash && b.included.length == count) == some true)
+  -- Built by the rule.
+  let started ← IO.monoMsNow
+  let ruled := Build.run { witness, rule := 1, gasCap := limit }
+  let ruledTook := (← IO.monoMsNow) - started
+  let mut went := 0
+  match ruled.built with
+  | some b =>
+    went := b.included.length
+    tally ← tally.expect s!"{name}: the block built by the rule is not one the checker accepts"
+      (accepted witness template b)
+  | none =>
+    -- With the order changed the witness may not reach: that is an answer, and it is said.
+    tally ← tally.expect s!"{name}: by the rule, status {ruled.status}" (ruled.status == 6)
+  if write then
+    if let some encoded := Build.Request.encode { witness, rule := 1, gasCap := limit } then
+      IO.FS.createDirAll "fixtures/build"
+      IO.FS.writeBinFile s!"fixtures/build/{name}.req" encoded
+      IO.FS.writeBinFile s!"fixtures/build/{name}.expected" ruled.encode
+  IO.println s!"{name}: {count} transactions; as given {took} ms; by the rule {went} went in \
+    (status {ruled.status}), {ruledTook} ms"
+  -- A witness that falls short.
+  if shorten then
+    let mut variants : List (String × Stateless.Request) := []
+    for i in [0 : witness.nodes.size] do
+      variants := (s!"node {i}", { witness with nodes := witness.nodes.eraseIdx! i }) :: variants
+    for i in [0 : witness.keys.length] do
+      variants := (s!"key {i}", { witness with keys := witness.keys.eraseIdx i }) :: variants
+    for i in [0 : witness.codes.length] do
+      variants := (s!"code {i}", { witness with codes := witness.codes.eraseIdx i }) :: variants
+    let mut smaller := 0
+    let mut nothing := 0
+    for (left, short) in variants do
+      for rule in [0, 1] do
+        let answer := Build.run { witness := short, rule, gasCap := limit }
+        match answer.built with
+        | some b =>
+          if b.included.length < count then smaller := smaller + 1
+          tally ← tally.expect s!"{name}: without {left}, rule {rule}, a block was built that the checker \
+            does not accept" (accepted witness template b)
+        | none =>
+          nothing := nothing + 1
+          tally ← tally.expect s!"{name}: without {left}, rule {rule}, status {answer.status}"
+            (answer.status == 4 || answer.status == 6 || answer.status == 7)
+    IO.println s!"{name}: {2 * variants.length} shortened witnesses; {nothing} built nothing, {smaller} built a \
+      smaller block"
+  pure tally
+
+def main (args : List String) : IO UInt32 := do
+  let mut tally : Tally := {}
+  for name in ["highGasUsage-11", "wallet2outOf3txsRevokeAndConfirmAgain-8", "DelegateCallSpam-1"] do
+    tally ← one name (← IO.FS.readBinFile s!"fixtures/stateless/{name}.req") true tally (args == ["write"])
+  if let [dir] := args.filter (· != "write") then
+    let entries := (← System.FilePath.readDir dir).filter (·.fileName.endsWith ".req")
+    for entry in entries.qsort (·.fileName < ·.fileName) do
+      tally ← one ((entry.fileName.splitOn ".req").headD entry.fileName) (← IO.FS.readBinFile entry.path) false tally
+  if tally.failures == 0 then IO.println s!"build-test: all {tally.checks} checks passed"
+  else IO.println s!"build-test: {tally.failures} of {tally.checks} FAILED"
+  return if tally.failures == 0 then 0 else 1

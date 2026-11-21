@@ -583,6 +583,8 @@ times, and the block from the relay. Six stages:
   - The image built from `2d7a74f` with a clean tree is `a6fbc0d4…d3fc67e` (the shadow image
     `df9fa571…c8ebdaf5`), RTMR1 `00df554e…061a142a`; `run-fixtures tdx --limits --key`, `run-ask tdx`
     and `check-secret-code tdx` pass on it, and the demo runs it since, with the page at `/seal`.
+  - The engine was changed for this (it keeps every lack, not the first), so Ethereum's own suites
+    were put to it again (`scripts/run-eest`, all eight): 4,723 files of 4,723 pass, as before.
   - What is not hidden, and was not meant to be: the accounts and slots (above); the length of the
     transaction; that a block has a sealed transaction in it, and how many; when it was handed in.
     What is not done: a transaction is tried again in every block until its slot passes, and the

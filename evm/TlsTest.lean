@@ -6,7 +6,11 @@ import Std.Data.HashMap
     .lake/build/bin/tls-test Tls/vectors.txt        (from evm/)
 
 The file of cases is made by `scripts/tls-vectors` from Python's hashlib and `cryptography` package. For
-each case the same inputs are given to the Lean and the answers must be the same bytes. Beside the file:
+each case the same inputs are given to the Lean and the answers must be the same bytes; for a signature or
+a chain of certificates the answer is whether it holds, and the cases have both kinds: signatures OpenSSL
+made and the same with a bit changed, chains made for the purpose that are good, for another name, out of
+date, under another root, out of order or badly signed, and the chains four relays served, each against
+each root in this machine's store. Beside the file:
 the examples printed in FIPS 180-4 and RFC 7748, a sealed message that must not open once any one bit of
 it, of its tag, of the data beside it or of its key is changed, and X25519's own check that two sides
 arrive at the same secret. -/
@@ -23,6 +27,8 @@ def unhex (s : String) : ByteArray :=
 
 def hex (b : ByteArray) : String :=
   b.foldl (fun out x => out ++ String.ofList [Nat.digitChar (x.toNat / 16), Nat.digitChar (x.toNat % 16)]) ""
+
+def verdict (yes : Bool) : ByteArray := (if yes then "ok" else "no").toUTF8
 
 def main (args : List String) : IO UInt32 := do
   let [path] := args | do IO.eprintln "usage: tls-test VECTORS"; return 2
@@ -48,6 +54,16 @@ def main (args : List String) : IO UInt32 := do
       | "poly1305" => (Poly1305.tag (f 1) (f 2), f 3)
       | "x25519" => (X25519.x25519 (f 1) (f 2), f 3)
       | "public" => (X25519.publicKey (f 1), f 2)
+      -- Signatures and chains: the answer is yes or no, and OpenSSL's is the last field.
+      | "rsa1" => (verdict (Rsa.verifyPkcs1 ⟨natOf (f 1), natOf (f 2), (f 1).size⟩ (f 3) (f 4)), (fields.getD 5 "").toUTF8)
+      | "rsapss" => (verdict (Rsa.verifyPss ⟨natOf (f 1), natOf (f 2), (f 1).size⟩ (f 3) (f 4)), (fields.getD 5 "").toUTF8)
+      | "ecdsa" =>
+        (verdict (Ecdsa.verify (if fields.getD 1 "" == "p256" then Ecdsa.p256 else Ecdsa.p384) (natOf (f 2)) (natOf (f 3)) (f 4)
+          (natOf (f 5)) (natOf (f 6))), (fields.getD 7 "").toUTF8)
+      | "chain" =>
+        let anchors := match X509.Anchor.of (f 3) with | some a => #[a] | none => #[]
+        let chain := ((fields.getD 4 "-").splitOn ",").toArray.filterMap fun c => if c == "-" || c == "" then none else some (unhex c)
+        (verdict (X509.validate anchors chain (String.fromUTF8! (f 1)) (n 2)).isOk, (fields.getD 5 "").toUTF8)
       | _ => (ByteArray.empty, ByteArray.mk #[1])
     counts := counts.insert kind (counts.getD kind 0 + 1)
     if got != want then

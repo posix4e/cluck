@@ -106,7 +106,13 @@ is the OS's `Secret.select`; a tag is compared by `Secret.equal`. What the compi
 at as the signing key's arithmetic was (`scripts/check-secret-code lib`), which counts jumps and does not
 prove their absence where it matters, and one branch on a key's bit was found that way and removed.
 Nothing was measured on a running machine. The key exchange's private key will be drawn from `RDRAND`
-alone, like the signing key.
+alone, like the signing key. Beside it is what will decide whether the far end of a connection is the
+relay it claims to be (`Tls/X509.lean`): a reader of certificates and a walk up a chain to a root built
+into the image. It reads bytes that anyone on the path, the host first, can choose, so it is written to
+refuse whatever it does not expect, and a certificate it cannot read is a refusal. What it does not do is
+said in its first lines and matters: nothing is checked for revocation, so a relay's stolen key is good
+until its certificate runs out; and "runs out" is judged by a time the caller supplies, and the guest has
+no clock but what the host tells it.
 
 **Start-up routines that do nothing.** `evm/rt/start.c` stands in for seven of mathlib's. If any code the
 service reaches reads a constant one of them would have built, it reads memory nothing has written. This is

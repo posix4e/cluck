@@ -40,7 +40,8 @@ it, and continuous integration does not build it. What has been run and what it 
   headers of saved blocks; `FastFixtures.lean` puts execution-spec-tests' chains to it (`scripts/run-eest`),
   with witnesses cut from the whole state by `Evm/Cut.lean`; `EngineTime.lean` says where its time goes.
 - `Tls/`: what the guest will need to keep a secret on a wire, in Lean: SHA-256, SHA-384 and SHA-512,
-  HMAC and HKDF, ChaCha20-Poly1305, X25519. Imports no Jaune. Used by nothing yet. `TlsTest.lean` holds
+  HMAC and HKDF, ChaCha20-Poly1305, X25519, and for certificates RSA and ECDSA signatures checked and a
+  reader and checker of chains (`X509.lean`). Imports no Jaune. Used by nothing yet. `TlsTest.lean` holds
   it to OpenSSL through `Tls/vectors.txt`, which `scripts/tls-vectors` makes.
 - `Evm/Sign.lean`, `Evm/Sign/`: a BLS key used without ever being a `Nat`. `Field.lean` is the base field on
   fixed-width words with every value-dependent choice made by the OS's `Secret.select`; `Curve.lean` is

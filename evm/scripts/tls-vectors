@@ -4,12 +4,20 @@ hashlib and the `cryptography` package (OpenSSL underneath) make of them.
 
     scripts/tls-vectors > Tls/vectors.txt        (from evm/)
 
+With TLS_CAPTURED naming a directory of `openssl s_client -showcerts` output saved as s13_HOST.txt, the
+chains real servers sent are added, each against each root in this machine's own store.
+
 One case to a line: its kind, then hexadecimal fields, the last the expected answer ("-" is no bytes)."""
 import hashlib, hmac, random
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 from cryptography.hazmat.primitives import hashes, poly1305
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding, utils
+from cryptography.hazmat.primitives import serialization
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+import datetime, glob, os, re, sys
 
 rng = random.Random(0x5110)
 some = lambda n: bytes(rng.getrandbits(8) for _ in range(n))
@@ -50,3 +58,112 @@ for i in range(120):
         continue      # a point of small order, which the library refuses and this client need not make
     line("x25519", key, point, shared)
     line("public", key, X25519PrivateKey.from_private_bytes(key).public_key().public_bytes_raw())
+
+# ---- signatures: made by OpenSSL, then some spoiled ---------------------------------------------------
+number = lambda n: n.to_bytes((n.bit_length() + 7) // 8 or 1, "big")
+def spoil(b, i): return b[:i] + bytes([b[i] ^ 1]) + b[i + 1:]
+digests = {32: hashes.SHA256(), 48: hashes.SHA384()}
+rsa_keys = [rsa.generate_private_key(65537, bits) for bits in (2048, 2048, 3072, 4096)]
+for key in rsa_keys:
+    pub = key.public_key().public_numbers()
+    for size in (32, 48):
+        d = some(size)
+        sig = key.sign(d, padding.PKCS1v15(), utils.Prehashed(digests[size]))
+        line("rsa1", number(pub.n), number(pub.e), d, sig, "ok")
+        line("rsa1", number(pub.n), number(pub.e), d, spoil(sig, rng.randrange(len(sig))), "no")
+        line("rsa1", number(pub.n), number(pub.e), spoil(d, rng.randrange(size)), sig, "no")
+    for _ in range(3):
+        d = some(32)
+        sig = key.sign(d, padding.PSS(padding.MGF1(hashes.SHA256()), 32), utils.Prehashed(hashes.SHA256()))
+        line("rsapss", number(pub.n), number(pub.e), d, sig, "ok")
+        line("rsapss", number(pub.n), number(pub.e), d, spoil(sig, rng.randrange(len(sig))), "no")
+        line("rsapss", number(pub.n), number(pub.e), spoil(d, 0), sig, "no")
+    # A salt of another length, and the other padding, are not what TLS 1.3 allows.
+    d = some(32)
+    line("rsapss", number(pub.n), number(pub.e), d, key.sign(d, padding.PSS(padding.MGF1(hashes.SHA256()), 20), utils.Prehashed(hashes.SHA256())), "no")
+    line("rsapss", number(pub.n), number(pub.e), d, key.sign(d, padding.PKCS1v15(), utils.Prehashed(hashes.SHA256())), "no")
+for curve, name in ((ec.SECP256R1(), "p256"), (ec.SECP384R1(), "p384")):
+    for _ in range(6):
+        key = ec.generate_private_key(curve)
+        pub = key.public_key().public_numbers()
+        for size in (32, 48):
+            d = some(size)
+            r, s_ = utils.decode_dss_signature(key.sign(d, ec.ECDSA(utils.Prehashed(digests[size]))))
+            line("ecdsa", name, number(pub.x), number(pub.y), d, number(r), number(s_), "ok")
+            line("ecdsa", name, number(pub.x), number(pub.y), spoil(d, 3), number(r), number(s_), "no")
+            line("ecdsa", name, number(pub.x), number(pub.y), d, number(r ^ 2), number(s_), "no")
+            line("ecdsa", name, number(pub.x), number(pub.y), d, number(r), number(s_ + 1), "no")
+            line("ecdsa", name, number(pub.x + 1), number(pub.y), d, number(r), number(s_), "no")
+
+# ---- chains of certificates made for the purpose --------------------------------------------------------
+day = datetime.timedelta(days=1)
+start = datetime.datetime(2026, 11, 1, tzinfo=datetime.timezone.utc)
+at = lambda days: int((start + days * day).timestamp())
+def certificate(subject, issuer, key, signer, authority, names=(), first=0, last=90, algorithm=None):
+    name = lambda cn: x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+    b = (x509.CertificateBuilder().subject_name(name(subject)).issuer_name(name(issuer)).public_key(key.public_key())
+         .serial_number(rng.getrandbits(100) + 1).not_valid_before(start + first * day).not_valid_after(start + last * day)
+         .add_extension(x509.BasicConstraints(ca=authority, path_length=None), critical=True))
+    if names:
+        b = b.add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in names]), critical=False)
+    return b.sign(signer, algorithm or (hashes.SHA384() if isinstance(signer, ec.EllipticCurvePrivateKey) and signer.curve.name == "secp384r1" else hashes.SHA256()))
+der = lambda c: c.public_bytes(serialization.Encoding.DER)
+def chain_case(host, now, anchor, certs, expected): line("chain", host.encode(), now, der(anchor), ",".join(der(c).hex() for c in certs), expected)
+for kind in ("rsa", "ec"):
+    make = (lambda bits=None: rsa.generate_private_key(65537, bits or 2048)) if kind == "rsa" else None
+    root_key = rsa.generate_private_key(65537, 4096) if kind == "rsa" else ec.generate_private_key(ec.SECP384R1())
+    mid_key = rsa.generate_private_key(65537, 2048) if kind == "rsa" else ec.generate_private_key(ec.SECP384R1())
+    leaf_key = rsa.generate_private_key(65537, 2048) if kind == "rsa" else ec.generate_private_key(ec.SECP256R1())
+    other_key = rsa.generate_private_key(65537, 2048) if kind == "rsa" else ec.generate_private_key(ec.SECP384R1())
+    root = certificate("a root", "a root", root_key, root_key, True, last=3650)
+    other = certificate("another root", "another root", other_key, other_key, True, last=3650)
+    mid = certificate("a middle", "a root", mid_key, root_key, True, last=700)
+    leaf = certificate("a leaf", "a middle", leaf_key, mid_key, False, ("relay.example.org", "*.wild.example.org"))
+    chain_case("relay.example.org", at(10), root, [leaf, mid], "ok")
+    chain_case("RELAY.example.org", at(10), root, [leaf, mid], "ok")
+    chain_case("a.wild.example.org", at(10), root, [leaf, mid], "ok")
+    chain_case("relay.example.org", at(10), root, [leaf, mid, root], "ok")              # the root sent as well
+    chain_case("a.b.wild.example.org", at(10), root, [leaf, mid], "no")                 # a star is one label
+    chain_case("wild.example.org", at(10), root, [leaf, mid], "no")
+    chain_case("other.example.org", at(10), root, [leaf, mid], "no")                    # not its name
+    chain_case("relay.example.org", at(91), root, [leaf, mid], "no")                    # past its date
+    chain_case("relay.example.org", at(-1), root, [leaf, mid], "no")                    # before its date
+    chain_case("relay.example.org", at(10), other, [leaf, mid], "no")                   # not this root's
+    chain_case("relay.example.org", at(10), root, [leaf], "no")                         # the middle left out
+    chain_case("relay.example.org", at(10), root, [mid, leaf], "no")                    # out of order
+    chain_case("relay.example.org", at(10), root, [], "no")
+    spoiled = der(leaf)[:-5] + bytes([der(leaf)[-5] ^ 1]) + der(leaf)[-4:]
+    line("chain", b"relay.example.org", at(10), der(root), spoiled.hex() + "," + der(mid).hex(), "no")
+    body = der(leaf); k = body.find(b"relay.example.org")
+    line("chain", b"relay.example.org", at(10), der(root), (body[:k] + b"relax" + body[k + 5:]).hex() + "," + der(mid).hex(), "no")  # what was signed, changed
+    # A middle that may not sign, and a leaf under it.
+    weak = certificate("a weak middle", "a root", mid_key, root_key, False, last=700)
+    under = certificate("a leaf", "a weak middle", leaf_key, mid_key, False, ("relay.example.org",))
+    chain_case("relay.example.org", at(10), root, [under, weak], "no")
+    # A leaf signed by the root itself, and a middle that has run out while the leaf has not.
+    direct = certificate("a leaf", "a root", leaf_key, root_key, False, ("relay.example.org",))
+    chain_case("relay.example.org", at(10), root, [direct], "ok")
+    old = certificate("an old middle", "a root", mid_key, root_key, True, last=5)
+    late = certificate("a leaf", "an old middle", leaf_key, mid_key, False, ("relay.example.org",))
+    chain_case("relay.example.org", at(10), root, [late, old], "no")
+
+# ---- the chains four relays served, if they were captured (openssl s_client -showcerts) -----------------
+captured = os.environ.get("TLS_CAPTURED", "")
+roots = [x509.load_pem_x509_certificate(open(f, "rb").read()) for f in sorted(glob.glob("/etc/ssl/certs/ISRG_Root_X*.pem") + glob.glob("/etc/ssl/certs/GTS_Root_R*.pem"))]
+for path in sorted(glob.glob(os.path.join(captured, "s13_*.txt"))) if captured else []:
+    host = os.path.basename(path)[4:-4]
+    blocks = re.findall(rb"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", open(path, "rb").read(), re.S)
+    certs = []
+    for block in blocks:
+        try:
+            c = x509.load_pem_x509_certificate(block)
+        except ValueError:
+            continue          # a trace of the handshake printed across a block
+        if all(der(c) != der(k) for k in certs): certs.append(c)
+    if not certs: continue
+    now = int(certs[0].not_valid_before_utc.timestamp()) + 86400
+    for root in roots:
+        # The answer for each root is OpenSSL's: whether the chain's last certificate is issued by it.
+        reaches = any(c.issuer == root.subject for c in certs)
+        line("chain", host.encode(), now, der(root), ",".join(der(c).hex() for c in certs), "ok" if reaches else "no")
+        line("chain", b"not-the-relay.example", now, der(root), ",".join(der(c).hex() for c in certs), "no")

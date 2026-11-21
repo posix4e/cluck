@@ -415,7 +415,21 @@ times, and the block from the relay. Six stages, of which the first is half done
   read by hand, not checked by a tool. Poly1305's last carry was a question asked of a sum and is
   arithmetic too. Not done: the same on the minimal runtime; any timing measured; SHA-512 and SHA-384
   are written and tested here but are for certificates, which are public.
-- [ ] The pieces that only check certificates: RSA and ECDSA signature checks, a certificate reader.
+- [x] **The pieces that only check certificates** (`evm/Tls/Rsa.lean`, `Ecdsa.lean`, `X509.lean`): RSA
+  signatures in both paddings (PKCS #1 v1.5 for certificates, PSS with SHA-256 for a server's proof of its
+  key), ECDSA on P-256 and P-384, a reader of certificates, and a walk up a chain to a root that was put
+  in: each link signed by the next, the next allowed to sign, all in date at a time that is handed in,
+  the first for the name asked (a `*` standing for one label). All of it is public, so the numbers are
+  `Nat`s. `tls-test`, again against OpenSSL: 24 and 44 RSA signatures and 120 ECDSA, good ones and the
+  same with a bit changed in the signature, the digest or the key, and PSS with a salt of another length
+  refused; 36 chains made for the purpose (good; the root sent too; for another name; a star against two
+  labels; before and after their dates; under another root; the middle missing, out of order, not
+  allowed to sign, or run out; a signature or a signed byte changed); and the chains the four relays
+  served on 2026-11-21, each against each of the five Let's Encrypt and Google roots in this machine's
+  store, accepted under the root that issued it and for its own name and refused otherwise, 40 cases.
+  Not done: revocation, which is not checked at all; name constraints, key usage and path length, which
+  are not read; any certificate not shaped as these are (an RSA key under 2048 bits is refused, other
+  curves and other hashes are refused); the minimal runtime, where `Nat` is slower.
 - [ ] A TLS 1.3 client as a pure state machine, against `openssl s_server` and then the relays' public pages.
 - [ ] Connections out from the guest's loop; the guest fetching a relay's public page in TDX.
 - [ ] The guest putting a submission together itself and posting it over TLS, to a stand-in first.

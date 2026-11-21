@@ -78,7 +78,12 @@ no transaction or block that breaks a rule, other than that one lie, has been pu
 written and all but untested. A flaw in it that made a block's wrong execution agree with a header would
 have to match what the block's maker claimed; a flaw that makes a right block disagree is a false
 "invalid", which is the likelier kind. Both paths are in the image; nothing but the first five bytes of a
-request chooses between them, and the builder still uses Jaune.
+request chooses between them. The builder has the same two ways in: a request to build that begins `JBLF1`
+is built by the engine, and since a request for a bid carries a request to build of either kind, the
+machine's key signs for a block the engine built as readily as for one Jaune built. What that adds for
+whoever takes the bid: a flaw in the engine can make a block whose header claims what running it does not
+give, which a relay's own check then refuses, at the builder's cost and nobody else's. `build-test` has
+Jaune's checker judge every block the engine builds in it.
 
 On that second way in, three precompiled contracts are this project's too: addition and multiplication on
 bn254 and the pairing check (`Fast/Bn254.lean`), which is what zero-knowledge verifiers on the chain call.

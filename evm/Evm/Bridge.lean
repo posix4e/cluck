@@ -123,10 +123,9 @@ def Witness.shortfall (w : Witness) (world : Fast.World) : Stateless.Shortfall :
 def accessList (list : AccessList) : Array (Fast.Word × Array Fast.Word) :=
   list.toArray.map fun (a, keys) => (addressWord a, keys.toArray.map word)
 
-/-- A transaction as the engine takes it, with its sender and the signers of its authorizations recovered
-by Jaune. None when the sender cannot be recovered or a number in it is too big to be real. -/
-def transaction (chainId : UInt64) (tx : Transaction) : Option Fast.Tx := do
-  let sender ← (recoverSender chainId tx).toOption
+/-- A transaction as the engine takes it, given who sent it, with the signers of its authorizations
+recovered by Jaune. None when a number in it is too big to be real. -/
+def transactionFrom (tx : Transaction) (sender : Address) : Option Fast.Tx := do
   if tx.gasLimit ≥ 2 ^ 64 || tx.value ≥ 2 ^ 256 then none
   let base : Fast.Tx :=
     { kind := 0, sender := addressWord sender, callee := none, nonce := tx.nonce, gasLimit := tx.gasLimit.toUInt64,
@@ -152,6 +151,10 @@ def transaction (chainId : UInt64) (tx : Transaction) : Option Fast.Tx := do
                      authorizations := auths.toArray.map fun auth =>
                        { chainId := word auth.chainId, address := addressWord auth.address, nonce := auth.nonce,
                          authority := (recoverAuthority auth).toOption.map addressWord } }
+
+/-- A transaction as the engine takes it, its sender recovered by Jaune. None when there is no sender. -/
+def transaction (chainId : UInt64) (tx : Transaction) : Option Fast.Tx := do
+  transactionFrom tx (← (recoverSender chainId tx).toOption)
 
 /-- What the block fixes, from its header and the headers before it. -/
 def environment (fork : Fork) (chainId : UInt64) (header : Header) (ancestors : List Header) : Fast.BlockEnv :=

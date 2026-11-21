@@ -64,6 +64,16 @@ that go in is not theirs to choose under rule 1.
 The block is that header, those transactions in that order, no ommers, and the withdrawals proposed. The
 sender has the transactions and puts the block together; the response is small whatever the block is.
 
+## By the fast engine
+
+A request that begins `JBLF1` is the same in every other byte and is built by the engine of `Fast/`, not by
+Jaune: the same rule for what goes in and in what order, the same response. Three things differ. The
+engine reads the witness as it goes, so the addresses and slot numbers a request carries are not used. A
+transaction that asks the witness for what it cannot prove is undone whole and left out, as here, but the
+engine knows it at the moment of asking, not from a list checked afterwards. And when the block's own
+calls, before the first transaction or after the last, ask for what the witness lacks, the answer is 6,
+where Jaune's is 4. `build-test` puts every case to both.
+
 Statuses 0 and 3 are about the request alone. A block built here was not then put to `Evm.Stateless` as a
 check: `build-test` does that, on test chains and on blocks of mainnet built again from their own
 transactions, where the hash has to come out as the chain's. -/
@@ -74,15 +84,20 @@ open Jaune Evm.Service Evm.Stateless
 open Evm.Trie (Node Store)
 
 def magic : ByteArray := "JBLD1".toUTF8
+/-- The same request, built by the fast engine of `Fast/` (see "By the fast engine" above). -/
+def magicFast : ByteArray := "JBLF1".toUTF8
 
 structure Request where
   witness : Stateless.Request
   /-- 0 as given, 1 by what each pays. -/
   rule : Nat
   gasCap : Nat
+  /-- Whether the fast engine builds it: which of the two beginnings the request had. -/
+  engine : Bool := false
 
 def request (input : ByteArray) : P Request := do
-  if (← take input magic.size) != magic then stop
+  let begins ← take input magic.size
+  let engine ← if begins == magic then pure false else if begins == magicFast then pure true else stop
   let code ← nat input 1
   let fork ← if code == 255 then pure none else match Stateless.forkOf code with
     | some fork => pure (some fork)
@@ -97,7 +112,7 @@ def request (input : ByteArray) : P Request := do
   let codes ← many (← nat input 4) (sized input)
   let keys ← many (← nat input 4) (sized input)
   pure { witness := { fork, chainId := chainId.toUInt64, block, headers, nodes := nodes.toArray, codes, keys },
-         rule, gasCap }
+         rule, gasCap, engine }
 
 def Request.encode (r : Request) : Option ByteArray := do
   let fork ← match r.witness.fork with
@@ -105,7 +120,7 @@ def Request.encode (r : Request) : Option ByteArray := do
     | none => some 255
   let list (items : List ByteArray) : ByteArray :=
     items.foldl (fun out item => out ++ Evm.Service.sized item) (be 4 items.length)
-  pure <| magic ++ be 1 fork ++ be 8 r.witness.chainId.toNat ++ be 1 r.rule ++ be 8 r.gasCap ++
+  pure <| (if r.engine then magicFast else magic) ++ be 1 fork ++ be 8 r.witness.chainId.toNat ++ be 1 r.rule ++ be 8 r.gasCap ++
     Evm.Service.sized r.witness.block ++ list r.witness.headers ++ list r.witness.nodes.toList ++
     list r.witness.codes ++ list r.witness.keys
 
@@ -249,10 +264,34 @@ structure Job where
   paidBefore : Nat
   filling : Filling
 
-/-- How far a request to build has got: answered, or a block still being filled. -/
+/-- A block being built by the fast engine: what was settled before its first transaction, what is still
+proposed, and the block as it stands. -/
+structure FastJob where
+  fork : Fork
+  chainId : UInt64
+  witness : Bridge.Witness
+  blank : Header
+  template : Block
+  gasCap : Nat
+  blk : Fast.BlockEnv
+  host : Fast.Host
+  /-- The block's body with no transactions in it: its withdrawals, and what it allows. -/
+  body : Fast.BlockInput
+  /-- The fee recipient's balance before the first transaction. -/
+  paidBefore : Nat
+  rest : List Candidate
+  out : Fast.BlockOutput
+  /-- The transactions that went in, in the block's order. -/
+  taken : Array Transaction := #[]
+  included : Array Nat := #[]
+  notes : Array Note := #[]
+
+/-- How far a request to build has got: answered, or a block still being filled, by Jaune or by the fast
+engine. -/
 inductive Stage where
   | done (response : Response) (notes : Array Note) (why : String)
   | going (job : Job)
+  | goingFast (job : FastJob)
 
 /-- An answer that came out of the witness's own monad. -/
 def answered : M (Response × Array Note) → Stage
@@ -260,6 +299,35 @@ def answered : M (Response × Array Note) → Stage
   | .error (.lacking hash what) => .done { status := 6, lacking := hash } #[] what
   | .error .malformed => .done { status := 7 } #[] ""
   | .error .failure => .done { status := 4 } #[] ""
+
+/-- What is the same whoever builds: the header with everything in it that the parent fixes, checked as a
+header the parent allows, and the proposed transactions in the order they will be tried. The error is the
+answer when the template is refused. -/
+def openTemplate (r : Request) (fork : Fork) (parent : Header) (chain : BlockChain) (template : Block) :
+    Except Stage (Header × List Candidate) := do
+  let rules := fork.ruleSet
+  -- What the parent alone fixes is worked out from it; then the template has to be a header the parent
+  -- allows, with no gas used yet.
+  let asked := { template.header with gasUsed := 0 }
+  let baseFee ← match expectedBaseFee { asked with baseFeePerGas := if rules.header.baseFee then some 0 else none } parent with
+    | .ok fee => pure fee
+    | .error _ => .error (.done { status := 3 } #[] "")
+  let blank := { asked with
+    baseFeePerGas := baseFee,
+    excessBlobGas := if rules.header.blobGas then some (calcExcessBlobGas rules.blob parent) else none }
+  if (validateHeader rules chain blank).isOk == false || !template.ommers.isEmpty then
+    .error (.done { status := 3 } #[] "")
+  let fee := blank.baseFeePerGas.getD 0
+  let proposed := template.transactions.zipIdx.filterMap fun (item, place) =>
+    match decodeTransaction rules item with
+    | .error _ => none
+    | .ok tx =>
+      match recoverSender r.witness.chainId tx with
+      | .error _ => none
+      | .ok sender =>
+        if r.rule == 0 then some { place, tx, sender, tip := 0 : Candidate }
+        else (tip fee tx).map fun t => { place, tx, sender, tip := t }
+  pure (blank, if r.rule == 0 then proposed else (byTip proposed).toList)
 
 /-- Everything before the first transaction: the witness checked, the template checked against the parent,
 the two system calls that open a block, and the proposed transactions in the order they will be tried. -/
@@ -269,41 +337,122 @@ def start (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header
   let known ← materialise r.witness parent.stateRoot
   let chain : BlockChain :=
     { blocks := ancestors.map fun h => ⟨h, [], [], []⟩, state := known.state, chainId := r.witness.chainId }
-  -- What the parent alone fixes is worked out from it; then the template has to be a header the parent
-  -- allows, with no gas used yet.
-  let asked := { template.header with gasUsed := 0 }
-  let baseFee ← match expectedBaseFee { asked with baseFeePerGas := if rules.header.baseFee then some 0 else none } parent with
-    | .ok fee => pure fee
-    | .error _ => return .done { status := 3 } #[] ""
-  let blank := { asked with
-    baseFeePerGas := baseFee,
-    excessBlobGas := if rules.header.blobGas then some (calcExcessBlobGas rules.blob parent) else none }
-  if (validateHeader rules chain blank).isOk == false || !template.ommers.isEmpty then
-    return .done { status := 3 } #[] ""
-  let benv := initBenv fork chain blank
-  let opened : Except TransitionError (Benv × BlockAccessListBuilder) := do
-    let (stBeacon, bal) ← beaconRootsCall rules benv
-    let benvBeacon := benv.withState stBeacon
-    let (stHistory, bal) ← historyStorageCall rules benvBeacon bal
-    pure (benvBeacon.withState stHistory, bal)
-  match opened with
-  | .error _ => return .done { status := 4 } #[] ""
-  | .ok (begun, bal) =>
-    let baseFee := blank.baseFeePerGas.getD 0
-    let proposed := template.transactions.zipIdx.filterMap fun (item, place) =>
-      match decodeTransaction rules item with
-      | .error _ => none
-      | .ok tx =>
-        match recoverSender r.witness.chainId tx with
-        | .error _ => none
-        | .ok sender =>
-          if r.rule == 0 then some { place, tx, sender, tip := 0 : Candidate }
-          else (tip baseFee tx).map fun t => { place, tx, sender, tip := t }
-    let ordered := if r.rule == 0 then proposed else (byTip proposed).toList
-    return .going
-      { fork, known, blank, template, gasCap := min r.gasCap blank.gasLimit,
-        paidBefore := (begun.state.bal benv.stat.coinbase).toNat,
-        filling := { rest := ordered, benv := begun, bout := { BlockOutput.init with blockAccessListBuilder := bal } } }
+  match openTemplate r fork parent chain template with
+  | .error refused => return refused
+  | .ok (blank, ordered) =>
+    let benv := initBenv fork chain blank
+    let opened : Except TransitionError (Benv × BlockAccessListBuilder) := do
+      let (stBeacon, bal) ← beaconRootsCall rules benv
+      let benvBeacon := benv.withState stBeacon
+      let (stHistory, bal) ← historyStorageCall rules benvBeacon bal
+      pure (benvBeacon.withState stHistory, bal)
+    match opened with
+    | .error _ => return .done { status := 4 } #[] ""
+    | .ok (begun, bal) =>
+      return .going
+        { fork, known, blank, template, gasCap := min r.gasCap blank.gasLimit,
+          paidBefore := (begun.state.bal benv.stat.coinbase).toNat,
+          filling := { rest := ordered, benv := begun, bout := { BlockOutput.init with blockAccessListBuilder := bal } } }
+
+/-- An answer that says the witness falls short, in the engine's words for where. -/
+def short (witness : Bridge.Witness) (world : Fast.World) (notes : Array Note := #[]) : Stage :=
+  match witness.shortfall world with
+  | .lacking hash what => .done { status := 6, lacking := hash } notes what
+  | _ => .done { status := 7 } notes ""
+
+/-- The same beginning for the fast engine: the template checked against the parent, the engine's world
+over the witness, the block's two opening calls, and what the fee recipient has before any transaction. -/
+def startFast (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) : Stage :=
+  -- Jaune's checks of a header want a chain with a state, and read none of it.
+  let chain : BlockChain :=
+    { blocks := ancestors.map fun h => ⟨h, [], [], []⟩, state := State.ofPresentList [], chainId := r.witness.chainId }
+  match openTemplate r fork parent chain template with
+  | .error refused => refused
+  | .ok (blank, ordered) =>
+    match Bridge.body fork r.witness.chainId { template with header := blank } [] with
+    | none => .done { status := 5 } #[] ""
+    | some body =>
+      let witness := Bridge.Witness.of r.witness parent.stateRoot
+      let blk := Bridge.environment fork r.witness.chainId blank ancestors
+      let host := Bridge.host fork
+      let (world, stack) := Fast.openBlock blk host body ByteArray.empty (Fast.World.new witness.backing)
+      let (world, recipient) := world.account blk.coinbase
+      if world.missing then short witness world
+      else .goingFast
+        { fork, chainId := r.witness.chainId, witness, blank, template, gasCap := min r.gasCap blank.gasLimit, blk, host,
+          body, paidBefore := recipient.balance.toNat, rest := ordered,
+          out := { world, stack, receipts := #[], gasUsed := 0, blobs := 0, requests := #[] } }
+
+/-- The next proposed transaction, put in or left out, by the fast engine. One the engine refuses, or that
+asked the witness for what it cannot prove, leaves the world and the block as they were before it. -/
+def FastJob.step : FastJob → FastJob
+  | ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included, notes⟩ =>
+    match rest with
+    | [] => ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, [], out, taken, included, notes⟩
+    | c :: rest =>
+      let leftOut (why : String) (out : Fast.BlockOutput) : FastJob :=
+        ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included,
+         notes.push ⟨c.place, false, why⟩⟩
+      if out.gasUsed.toNat + c.tx.gasLimit > gasCap then leftOut "would pass the gas asked for" out
+      else if (Bridge.chainOf c.tx).any (· != chainId) then leftOut "rejected: made for another chain" out
+      else
+        match Bridge.transactionFrom c.tx c.sender with
+        | none => leftOut "rejected: a number in it is too big to be one" out
+        | some tx =>
+          let ⟨world, stack, receipts, gasUsed, blobs, requests⟩ := out
+          let allowed : Fast.Allowance :=
+            { gas := blk.gasLimit - gasUsed, blobs := body.maxBlobs - blobs, blobsPerTx := body.blobsPerTx,
+              alwaysWarm := body.precompiles }
+          match Fast.process blk host allowed tx stack world with
+          | .error (why, world, stack) =>
+            -- A marked world is the witness not answering. The transaction is undone already; the mark is
+            -- taken off, since what could not be answered was not kept, and the next transaction starts clean.
+            let why := if world.missing then s!"read what the witness does not prove, at {(Bridge.u256 world.lacking).toHex}"
+              else s!"rejected: {why}"
+            leftOut why ⟨{ world with missing := false }, stack, receipts, gasUsed, blobs, requests⟩
+          | .ok (world, stack, receipt) =>
+            let gasUsed := gasUsed + receipt.cumulativeGas
+            ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest,
+             ⟨world, stack, receipts.push { receipt with cumulativeGas := gasUsed }, gasUsed,
+              blobs + tx.blobHashes.size.toUInt64, requests⟩,
+             taken.push c.tx, included.push c.place, notes.push ⟨c.place, true, s!"{gasUsed.toNat}"⟩⟩
+
+/-- Everything after the last transaction, by the fast engine: withdrawals, the block's requests, the state
+root and the header. -/
+def FastJob.finish (job : FastJob) : Stage :=
+  let rules := job.fork.ruleSet
+  let notes := job.notes
+  let witness := job.witness
+  let ⟨world, stack, receipts, gasUsed, blobs, requests⟩ := job.out
+  let (world, recipient) := world.account job.blk.coinbase
+  let value := recipient.balance.toNat - job.paidBefore
+  match Fast.closeBlock job.blk job.host job.body ⟨world, stack, receipts, gasUsed, blobs, requests⟩ with
+  | .error (_, world) => if world.missing then short witness world notes else .done { status := 4 } notes ""
+  | .ok out =>
+    if out.world.missing then short witness out.world notes else
+    match Bridge.rootAfter witness out.world with
+    | .error (.lacking hash what) => .done { status := 6, lacking := hash } notes what
+    | .error .malformed => .done { status := 7 } notes ""
+    | .error .failure => .done { status := 4 } notes ""
+    | .ok stateRoot =>
+      let (receiptsRoot, bloom) := Bridge.receiptsRootAndBloom out.receipts
+      -- The roots that depend on the block's body alone, by Jaune's functions on what it would have kept.
+      let kept : BlockOutput :=
+        { BlockOutput.init with
+          blockGasUsed := out.gasUsed.toNat
+          blobGasUsed := (out.blobs * Fast.gasPerBlob).toNat
+          transactionsTrie := job.taken.toList.zipIdx.foldl (fun trie (tx, index) =>
+            trie.insert (Rlp.Item.bytes index.toBytes).toBytes tx) BlockOutput.init.transactionsTrie
+          withdrawalsTrie := processWithdrawalsTrie BlockOutput.init.withdrawalsTrie job.template.withdrawals }
+      let asked := out.requests.toList.map (·.toList)
+      let header : Header :=
+        { job.blank with
+          stateRoot, transactionsRoot := getTransactionsRoot kept, receiptsRoot, logsBloom := bloom,
+          gasUsed := out.gasUsed.toNat,
+          withdrawalsRoot := if rules.header.withdrawalsRoot then some (getWithdrawalsRoot kept) else none,
+          blobGasUsed := if rules.header.blobGas then some kept.blobGasUsed else none,
+          requestsHash := if rules.header.requestsHash then some (computeRequestsHash asked) else none }
+      .done { status := 0, built := some ⟨header, header.hash, job.included.toList, value, asked⟩ } notes ""
 
 /-- Everything after the last transaction: withdrawals, the block's requests, the checks that everything
 read was shown, the state root and the header. -/
@@ -361,6 +510,7 @@ def begin (r : Request) : Stage :=
         if !linked || parent.hash != template.header.parentHash then only { status := 5 } "the headers are not a chain to the parent"
         else if ancestors.length != min 255 template.header.number then only { status := 6 } "too few headers"
         else
+          if r.engine then startFast r fork parent ancestors template else
           match start r fork parent ancestors template with
           | .ok stage => stage
           | .error shortfall => answered (.error shortfall)
@@ -373,6 +523,7 @@ def Stage.step : Stage → Stage
     else match job.filling.step job.known job.gasCap with
       | .ok filling => .going { job with filling }
       | .error _ => .done { status := 4 } #[] ""
+  | .goingFast job => if job.rest.isEmpty then job.finish else .goingFast job.step
 
 /-- Everything still proposed is left out, each noted as such; the block ends with what is in it. -/
 def Stage.cut : Stage → Stage
@@ -381,17 +532,22 @@ def Stage.cut : Stage → Stage
     .going { job with filling := { filling with
       rest := [],
       notes := filling.rest.foldl (fun notes c => notes.push ⟨c.place, false, "out of time"⟩) filling.notes } }
+  | .goingFast job =>
+    .goingFast { job with
+      rest := [], notes := job.rest.foldl (fun notes c => notes.push ⟨c.place, false, "out of time"⟩) job.notes }
   | stage => stage
 
 /-- Whether anything is still proposed that has not been tried. -/
 def Stage.filling : Stage → Bool
   | .going job => !job.filling.rest.isEmpty
+  | .goingFast job => !job.rest.isEmpty
   | .done .. => false
 
 /-- How many more steps reach an answer when none is cut: one for each transaction still proposed, and one
 to end the block. -/
 def Stage.left : Stage → Nat
   | .going job => job.filling.rest.length + 1
+  | .goingFast job => job.rest.length + 1
   | .done .. => 0
 
 /-- A stage taken to its answer. Before each transaction `over` is asked whether to stop, and the first
@@ -406,7 +562,7 @@ def Stage.finishWith {m : Type → Type} [Monad m] (over : m Bool) : Nat → Sta
 
 def Stage.answer : Stage → Response × Array Note × String
   | .done response notes why => (response, notes, why)
-  | .going _ => ({ status := 4 }, #[], "")
+  | .going _ | .goingFast _ => ({ status := 4 }, #[], "")
 
 /-- The answer to a request to build, when `over` is asked before each transaction whether to stop. -/
 def runWith {m : Type → Type} [Monad m] (over : m Bool) (r : Request) : m (Response × Array Note × String) := do
@@ -429,7 +585,8 @@ end Evm.Build
 block with a witness to be checked (`Evm.Stateless`, or by the fast engine `Evm.Engine`), or the makings of
 a block to be built. -/
 def Evm.serve (input : ByteArray) : ByteArray :=
-  if input.extract 0 Evm.Build.magic.size == Evm.Build.magic then Evm.Build.serve input
+  if input.extract 0 Evm.Build.magic.size == Evm.Build.magic
+      || input.extract 0 Evm.Build.magicFast.size == Evm.Build.magicFast then Evm.Build.serve input
   else if input.extract 0 Evm.Engine.magic.size == Evm.Engine.magic then Evm.Engine.serve input
   else if input.extract 0 Evm.Stateless.magic.size == Evm.Stateless.magic then Evm.Stateless.serve input
   else Evm.Service.serve input

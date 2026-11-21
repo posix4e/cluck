@@ -526,6 +526,21 @@ The faster engine (`evm/Fast/`), step by step:
   witness and running the block took 236 ms at the median before and take 244 now) and a little faster
   on the minimal one, where the 21 blocks through the service take 25.9 seconds for 27.5. Keeping the
   nodes it has opened would be the next thing here.
+- **The builder on the engine** (2026-11-21; `evm/Evm/Build.lean`). A request to build that begins `JBLF1`
+  is built by the engine: the same template, the same rule for what goes in and in what order, the same
+  response, and the same machine of steps that a clock can cut short. A transaction that asks the witness
+  for what it cannot prove is undone whole, payment and nonce with the rest, and left out. `build-test`
+  puts every case to both builders and both pass all of it, 425 checks each: three test blocks built
+  again as given come out with the chain's hash; built by the rule they are blocks Jaune's checker
+  accepts; cut short before the first transaction and half way they are still such blocks; and with each
+  node, key and code of the witness left out in turn, under both rules, nothing is built or a block the
+  checker accepts is (the engine builds nothing 90 times of 808 where Jaune's builds nothing 110 times).
+  Three blocks of mainnet built again from their own transactions come out with the chain's hashes by
+  both, and by the rule both put in the same number (97, 104, 101). On Lean's runtime the engine takes
+  171 to 279 ms for those where Jaune's builder takes 422 to 749, and 32 ms for the test block of 8M gas
+  of delegate calls where Jaune's takes 401. A request for a bid (`JBID2`) carries either kind, so the
+  guest will sign a block built either way once an image has both. Not run: the minimal runtime, the
+  guest, the shadow builder; blocks of mainnet with addresses left out (`build-test real`) by the engine.
 - **bn254 on machine words** (2026-11-21; `evm/Fast/Bn254.lean`): the field in Montgomery form on four
   words, the tower above it, both groups, and the optimal ate pairing, for the three precompiled contracts
   that use the curve. Its constants were worked out from the curve's prime, order and parameter, not

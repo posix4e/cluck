@@ -52,9 +52,10 @@ def accepted (witness : Stateless.Request) (template : Block) (built : Build.Bui
   let answer := Stateless.run { witness with block := blockOf template built }
   answer.status == 0 && answer.tip == built.hash && answer.root == built.header.stateRoot
 
-def one (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (write : Bool := false) :
+def one (engine : Bool) (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (write : Bool := false) :
     IO Tally := do
   let mut tally := tally
+  let name := (if engine then "the engine: " else "") ++ name
   let some (witness, _) := (Stateless.request bytes).run 0
     | tally.expect s!"{name}: not a stateless request" false
   let .ok (template, hash) := rlpToBlockE witness.block.toList
@@ -63,14 +64,14 @@ def one (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (wr
   let limit := template.header.gasLimit
   -- Built again as given.
   let started ← IO.monoMsNow
-  let again := Build.run { witness, rule := 0, gasCap := limit }
+  let again := Build.run { witness, rule := 0, gasCap := limit, engine }
   let took := (← IO.monoMsNow) - started
   match again.built with
   | some b =>
     tally ← tally.expect s!"{name}: built again as given, {b.included.length} of {count} went in and the \
       hash is {b.hash}, not {hash}" (b.hash == hash && b.included.length == count)
     -- The request survives being written and read, and the response says the same as bytes.
-    match (Build.Request.encode { witness, rule := 0, gasCap := limit }) with
+    match (Build.Request.encode { witness, rule := 0, gasCap := limit, engine }) with
     | some encoded =>
       let reply := Build.serve encoded
       tally ← tally.expect s!"{name}: the request as bytes is answered differently"
@@ -87,19 +88,19 @@ def one (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (wr
       gasUsed := 9 }
   let wrong : Block := { template with header := wrongHeader }
   let righted := Build.run
-    { witness := { witness with block := wrong.toRlpItem.toBytes.toByteArray }, rule := 0, gasCap := limit }
+    { witness := { witness with block := wrong.toRlpItem.toBytes.toByteArray }, rule := 0, gasCap := limit, engine }
   tally ← tally.expect s!"{name}: a wrong base fee and excess blob gas in the template were not put right"
     ((righted.built.map fun b => b.hash == hash) == some true)
   -- A transaction that cannot go in.
   if let first :: _ := template.transactions then
     let doubled := { template with transactions := template.transactions ++ [first] }
     let twice := Build.run
-      { witness := { witness with block := doubled.toRlpItem.toBytes.toByteArray }, rule := 0, gasCap := limit }
+      { witness := { witness with block := doubled.toRlpItem.toBytes.toByteArray }, rule := 0, gasCap := limit, engine }
     tally ← tally.expect s!"{name}: a transaction proposed twice was not left out the second time"
       ((twice.built.map fun b => b.hash == hash && b.included.length == count) == some true)
   -- Built by the rule.
   let started ← IO.monoMsNow
-  let ruled := Build.run { witness, rule := 1, gasCap := limit }
+  let ruled := Build.run { witness, rule := 1, gasCap := limit, engine }
   let ruledTook := (← IO.monoMsNow) - started
   let mut went := 0
   match ruled.built with
@@ -116,14 +117,14 @@ def one (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (wr
   -- then the answer is that, said.
   for k in [0, count / 2] do
     let over : StateM Nat Bool := modifyGet fun asked => (asked ≥ k, asked + 1)
-    let ((cut, _, _), _) := (Build.runWith over { witness, rule := 0, gasCap := limit }).run 0
+    let ((cut, _, _), _) := (Build.runWith over { witness, rule := 0, gasCap := limit, engine }).run 0
     match cut.built with
     | some b =>
       tally ← tally.expect s!"{name}: out of time after {k} transactions, {b.included.length} went in, or the \
         checker does not accept the block" (b.included == List.range k && accepted witness template b)
     | none => tally ← tally.expect s!"{name}: out of time after {k} transactions, status {cut.status}" (cut.status == 6)
-  if write then
-    if let some encoded := Build.Request.encode { witness, rule := 1, gasCap := limit } then
+  if write && !engine then
+    if let some encoded := Build.Request.encode { witness, rule := 1, gasCap := limit, engine } then
       IO.FS.createDirAll "fixtures/build"
       IO.FS.writeBinFile s!"fixtures/build/{name}.req" encoded
       IO.FS.writeBinFile s!"fixtures/build/{name}.expected" ruled.encode
@@ -142,7 +143,7 @@ def one (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (wr
     let mut nothing := 0
     for (left, short) in variants do
       for rule in [0, 1] do
-        let answer := Build.run { witness := short, rule, gasCap := limit }
+        let answer := Build.run { witness := short, rule, gasCap := limit, engine }
         match answer.built with
         | some b =>
           if b.included.length < count then smaller := smaller + 1
@@ -158,21 +159,22 @@ def one (name : String) (bytes : ByteArray) (shorten : Bool) (tally : Tally) (wr
 
 /-- A block of the real chain built by the rule with every `step`th address left out of the witness in
 turn: nothing built, or a block the checker accepts with the whole witness. -/
-def real (name : String) (bytes : ByteArray) (step : Nat) (tally : Tally) : IO Tally := do
+def real (engine : Bool) (name : String) (bytes : ByteArray) (step : Nat) (tally : Tally) : IO Tally := do
   let mut tally := tally
+  let name := (if engine then "the engine: " else "") ++ name
   let some (witness, _) := (Stateless.request bytes).run 0
     | tally.expect s!"{name}: not a stateless request" false
   let .ok (template, _) := rlpToBlockE witness.block.toList
     | tally.expect s!"{name}: the block does not decode" false
   let addresses := (witness.keys.filter (·.size == 20)).toArray
-  let whole := (Build.run { witness, rule := 1, gasCap := template.header.gasLimit }).built.map (·.included.length)
+  let whole := (Build.run { witness, rule := 1, gasCap := template.header.gasLimit, engine }).built.map (·.included.length)
   let mut smaller := 0
   let mut nothing := 0
   let mut tried := 0
   for turn in [0 : (addresses.size + step) / (step + 1)] do
     let left := addresses[turn * (step + 1)]!
     let short := { witness with keys := witness.keys.filter (· != left) }
-    let answer := Build.run { witness := short, rule := 1, gasCap := template.header.gasLimit }
+    let answer := Build.run { witness := short, rule := 1, gasCap := template.header.gasLimit, engine }
     tried := tried + 1
     match answer.built with
     | some b =>
@@ -189,21 +191,25 @@ def real (name : String) (bytes : ByteArray) (step : Nat) (tally : Tally) : IO T
 
 def main (args : List String) : IO UInt32 := do
   let mut tally : Tally := {}
-  for name in ["highGasUsage-11", "wallet2outOf3txsRevokeAndConfirmAgain-8", "DelegateCallSpam-1"] do
-    tally ← one name (← IO.FS.readBinFile s!"fixtures/stateless/{name}.req") true tally (args == ["write"])
+  -- Every case is put to Jaune's builder and then to the fast engine's.
+  for engine in [false, true] do
+    for name in ["highGasUsage-11", "wallet2outOf3txsRevokeAndConfirmAgain-8", "DelegateCallSpam-1"] do
+      tally ← one engine name (← IO.FS.readBinFile s!"fixtures/stateless/{name}.req") true tally (args == ["write"])
   -- `build-test real DIR [STEP]`: only the blocks of the real chain in DIR, with addresses left out.
   if let "real" :: dir :: rest := args then
     let step := (rest.head?.bind String.toNat?).getD 10 - 1
     let entries := (← System.FilePath.readDir dir).filter (·.fileName.endsWith ".req")
-    for entry in entries.qsort (·.fileName < ·.fileName) do
-      tally ← real ((entry.fileName.splitOn ".req").headD entry.fileName) (← IO.FS.readBinFile entry.path) step tally
+    for engine in [false, true] do
+      for entry in entries.qsort (·.fileName < ·.fileName) do
+        tally ← real engine ((entry.fileName.splitOn ".req").headD entry.fileName) (← IO.FS.readBinFile entry.path) step tally
     if tally.failures == 0 then IO.println s!"build-test: all {tally.checks} checks passed"
     else IO.println s!"build-test: {tally.failures} of {tally.checks} FAILED"
     return if tally.failures == 0 then 0 else 1
   if let [dir] := args.filter (· != "write") then
     let entries := (← System.FilePath.readDir dir).filter (·.fileName.endsWith ".req")
-    for entry in entries.qsort (·.fileName < ·.fileName) do
-      tally ← one ((entry.fileName.splitOn ".req").headD entry.fileName) (← IO.FS.readBinFile entry.path) false tally
+    for engine in [false, true] do
+      for entry in entries.qsort (·.fileName < ·.fileName) do
+        tally ← one engine ((entry.fileName.splitOn ".req").headD entry.fileName) (← IO.FS.readBinFile entry.path) false tally
   if tally.failures == 0 then IO.println s!"build-test: all {tally.checks} checks passed"
   else IO.println s!"build-test: {tally.failures} of {tally.checks} FAILED"
   return if tally.failures == 0 then 0 else 1

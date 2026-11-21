@@ -98,10 +98,12 @@ structure Allowance where
 /-- A transaction run. An error is the transaction being one the block may not hold, in which case nothing
 was changed and the world and the stack come back with the reason; otherwise the world after it, the stack
 given back, and its receipt (with `cumulativeGas` holding only this transaction's gas, for the caller to
-add up). -/
+add up). A transaction that read what the world could not get a proven answer for is an error too, with
+the world put back as it was before the transaction and still marked. -/
 def process (blk : @& BlockEnv) (host : @& Host) (allowed : @& Allowance) (tx : @& Tx) (stack : ByteArray) (world : World) :
     Except (String × World × ByteArray) (World × ByteArray × Receipt) :=
   let (intrinsic, floor) := intrinsicGas tx
+  let begun := world.checkpoint
   if tx.gasLimit < max intrinsic floor then .error ("less gas than the transaction costs before it runs", world, stack) else
   if tx.callee.isNone && tx.input.size > 49152 then .error ("more code than a creation may carry", world, stack) else
   if blk.osaka && tx.gasLimit > 16777216 then .error ("more gas than a transaction may have", world, stack) else
@@ -183,6 +185,11 @@ def process (blk : @& BlockEnv) (host : @& Host) (allowed : @& Allowance) (tx : 
   let used := max (spent - refund) floor
   let world := world.credit tx.sender (Word.ofNat ((tx.gasLimit - used).toNat * price))
   let world := world.credit blk.coinbase (Word.ofNat (used.toNat * (price - baseFee)))
+  -- A transaction that asked for something no answer could be proven for ran on a state that never was.
+  -- Everything it did is undone, payment and nonce with the rest, and the world comes back still marked,
+  -- for the caller to decide what a transaction that cannot be run means: for a block being checked,
+  -- that there is no verdict; for one being built, that this transaction is left out.
+  if world.missing then .error ("it read what the witness does not prove", world.revert begun, out.stack) else
   let receipt : Receipt := { kind := tx.kind, success, cumulativeGas := used, logs := world.logs }
   .ok (world.endTransaction, out.stack, receipt)
 

@@ -5,7 +5,12 @@ import JauneConsensus.Crypto.BLSSignature
 from the two and verifies the signature under the key the reply names, with `JauneConsensus`'s own
 verification. For the host, which holds no key and trusts no reply. Never in an image.
 
-    .lake/build/bin/bid-verify bid.req bid.reply        prints the builder's key and whether it verifies -/
+    .lake/build/bin/bid-verify bid.req bid.reply        prints the builder's key and whether it verifies
+
+Or, as a relay would: given a block and bid as they were posted to a relay, in SSZ (`Evm/Submit.lean`),
+verifies the signature over the bid at its front under the builder's key it names, for mainnet's domain.
+
+    .lake/build/bin/bid-verify --submission posted.ssz -/
 open Jaune
 
 def hex (bytes : ByteArray) : String :=
@@ -13,8 +18,27 @@ def hex (bytes : ByteArray) : String :=
 
 def number (bytes : ByteArray) : Nat := bytes.foldl (fun n b => n * 256 + b.toNat) 0
 
+def little (bytes : ByteArray) : Nat := bytes.data.foldr (fun b n => n * 256 + b.toNat) 0
+
+/-- The bid at the front of a posted submission, and its signature, checked. -/
+def submission (path : String) : IO UInt32 := do
+  let posted ← IO.FS.readBinFile path
+  if posted.size < 344 then IO.println "too short to be a submission"; return 1
+  let part (start stop : Nat) : ByteArray := posted.extract start stop
+  let bid : Evm.Bid.Bid :=
+    { slot := little (part 0 8), parentHash := part 8 40, blockHash := part 40 72, builderKey := part 72 120,
+      proposerKey := part 120 168, feeRecipient := part 168 188, gasLimit := little (part 188 196),
+      gasUsed := little (part 196 204), value := little (part 204 236) }
+  let message := (Evm.Bid.signingRoot bid.root (Evm.Bid.domain (ByteArray.mk #[0, 0, 0, 0]))).toList
+  let ok := JauneConsensus.verify bid.builderKey.toList message (part 248 344).toList
+  IO.println s!"builder {hex bid.builderKey}"
+  IO.println s!"slot {bid.slot}, block {hex bid.blockHash}, gas used {bid.gasUsed}, value {bid.value}"
+  IO.println (if ok then "the signature verifies" else "THE SIGNATURE DOES NOT VERIFY")
+  return if ok then 0 else 1
+
 def main (args : List String) : IO UInt32 := do
-  let [requestPath, replyPath] := args | do IO.eprintln "usage: bid-verify REQUEST REPLY"; return 2
+  if let ["--submission", path] := args then return ← submission path
+  let [requestPath, replyPath] := args | do IO.eprintln "usage: bid-verify REQUEST REPLY | --submission POSTED"; return 2
   let request ← IO.FS.readBinFile requestPath
   let reply ← IO.FS.readBinFile replyPath
   if request.extract 0 5 != Evm.Bid.magic || request.size < 69 then IO.println "not a request for a bid"; return 1

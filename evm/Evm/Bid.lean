@@ -1,5 +1,6 @@
 import Evm.Build
 import Evm.Sign
+import Evm.Submit
 
 /-! A bid: a block built here, and the builder's signature over what it offers the proposer for it.
 
@@ -142,12 +143,31 @@ def allowed (input : ByteArray) : Nat :=
   if input.size < magic.size + 64 || input.extract 0 magic.size != magic then 0
   else (input.extract (magic.size + 60) (magic.size + 64)).foldl (fun n b => n * 256 + b.toNat) 0
 
-/-- The response to a request to build and bid, or to a request for the key. `over` is asked before each
+/-- What came of a request to build and bid. -/
+structure Outcome where
+  /-- The response, as the request's sender is given it. -/
+  reply : ByteArray
+  /-- When a block was built and signed for: the block and bid as a relay takes them (`Evm/Submit.lean`). -/
+  submission : Option ByteArray := none
+  /-- Of the transactions added to those the request proposed, the ones that went in, by their place
+  among those added. -/
+  added : Array Nat := #[]
+  /-- What the witness lacked for transactions left out because of it (the fast engine's builder only). -/
+  wanted : Array Fast.Lack := #[]
+
+/-- A request to build and bid, or a request for the key, carried out. `over` is asked before each
 transaction whether the time allowed has run out (`Build.Stage.finishWith`); whoever has a clock supplies
-it. Whatever it says, what comes back is a whole block and a bid for that block. -/
-def serveWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input : ByteArray) : m ByteArray := do
-  if input == keyMagic then return key.publicKey
-  let refuse := ({ status := 5 } : Build.Response).encode
+it. Whatever it says, what comes back is a whole block and a bid for that block.
+
+`more` is transactions the request's sender did not propose and is not shown, each as it goes on the
+wire: they are tried with the rest, by the fast engine's builder only (Jaune's wants to be told
+beforehand everything a transaction will read, and nobody can say that of a transaction they have not
+seen). The response tells the sender nothing of them but, in the places of those that went in, numbers
+past the end of what it proposed. -/
+def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input : ByteArray)
+    (more : Array ByteArray := #[]) : m Outcome := do
+  if input == keyMagic then return { reply := key.publicKey }
+  let refuse : Outcome := { reply := ({ status := 5 } : Build.Response).encode }
   if input.size < magic.size + 64 || input.extract 0 magic.size != magic then return refuse
   let start := magic.size
   let slot := (input.extract start (start + 8)).foldl (fun n b => n * 256 + b.toNat) 0
@@ -156,9 +176,15 @@ def serveWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
   match (Build.request (input.extract (start + 64) input.size)).run 0 with
   | none => return refuse
   | some (request, _) =>
+    -- The block the request proposed, with the added transactions after its own.
+    let own := (Submit.proposed? request.witness.block).getD 0
+    let request := if more.isEmpty || !request.engine then request else
+      match Submit.withMore? request.witness.block more with
+      | some block => { request with witness := { request.witness with block } }
+      | none => request
     let (response, _, _) ← Build.runWith over request
     match response.built with
-    | none => return response.encode
+    | none => return { reply := response.encode, wanted := response.wanted }
     | some built =>
       let bid : Bid :=
         { slot, parentHash := Trie.wordBytes built.header.parentHash, blockHash := Trie.wordBytes built.hash,
@@ -166,8 +192,23 @@ def serveWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
           feeRecipient := built.header.coinbase.toBytes.toByteArray, gasLimit := built.header.gasLimit,
           gasUsed := built.header.gasUsed, value := built.value }
       match Sign.sign key.secret (signingRoot bid.root (domain forkVersion)).toList with
-      | .ok signature => return response.encode ++ key.publicKey ++ signature.toByteArray
-      | .error _ => return ({ status := 4 } : Build.Response).encode
+      | .ok signature =>
+        let submission := Submit.submission
+          { slot, builderKey := key.publicKey, proposerKey, value := built.value, blockHash := bid.blockHash,
+            header := (Header.toRlpItem built.header).toBytes.toByteArray, block := request.witness.block,
+            places := built.included, requests := built.requests.map (·.toByteArray), signature := signature.toByteArray }
+        return { reply := response.encode ++ key.publicKey ++ signature.toByteArray, submission,
+                 added := (built.included.filter (· ≥ own)).toArray.map (· - own), wanted := response.wanted }
+      | .error _ => return { reply := ({ status := 4 } : Build.Response).encode }
+
+/-- The response alone. -/
+def serveWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input : ByteArray) : m ByteArray := do
+  return (← buildWith over key input).reply
+
+/-- The slot a request to build and bid is for; 0 when it is not such a request. -/
+def slotOf (input : ByteArray) : Nat :=
+  if input.size < magic.size + 64 || input.extract 0 magic.size != magic then 0
+  else (input.extract magic.size (magic.size + 8)).foldl (fun n b => n * 256 + b.toNat) 0
 
 /-- The same with no clock: the time allowed is not looked at, and the answer is a function of the request
 and the key. -/

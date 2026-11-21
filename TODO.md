@@ -548,6 +548,16 @@ The faster engine (`evm/Fast/`), step by step:
     answer the same as Jaune's in 25 of 25. A slot took Jaune's builder 0.31 seconds at the median and
     1.86 at the most, the engine's 0.26 and 0.38, each time with a process started for it, which is most
     of the smaller figures. Blocks here were small (1.1M gas at the median, 3.9M at the most).
+  - **The same in the TDX guest** (image `82c2974d…8f7c0f5e`, built at `774a3d1` with a clean tree;
+    `run-fixtures tdx --limits` passes on it): 150 slots of mainnet, 150 blocks built, all judged valid
+    by the node's validator, all signed, and the engine's signed answer the same bytes as Jaune's in 150
+    of 150. A slot took Jaune's builder 0.28 seconds at the median, 0.55 at the ninetieth percentile and
+    3.72 at the most; the engine's 0.25, 0.40 and 1.68. So at the median a slot's time in the guest is
+    hardly the building at all, whoever builds: it is the megabyte of request on its way in and what is
+    done to it before a transaction runs, which the engine does not change. The engine shortens the slow
+    slots: the five slowest for Jaune (3.72, 2.25, 1.78, 1.54, 1.39 seconds) took it 1.68, 0.40, 0.84,
+    0.32 and 0.40. And the blocks are small because what is pending in public is small: 1.2M gas at the
+    median, 7.3M at the most, under a cap of 8M.
 - **bn254 on machine words** (2026-11-21; `evm/Fast/Bn254.lean`): the field in Montgomery form on four
   words, the tower above it, both groups, and the optimal ate pairing, for the three precompiled contracts
   that use the curve. Its constants were worked out from the curve's prime, order and parameter, not

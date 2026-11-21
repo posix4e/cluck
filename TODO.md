@@ -232,8 +232,9 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   and the state root the chain has for it, which is every field of the header. In the guest that took 0.8
   to 8.4 seconds a block.
 - The same blocks with their transactions ordered by what they pay, as a process: every block built was
-  one `Evm.Stateless` accepts. Between 2 and 13 of each block's transactions were left out, most of them
-  the ones that carry blobs.
+  one `Evm.Stateless` accepts. Between 2 and 13 of each block's transactions were left out, 122 of 5,902
+  in all: 51 because they carry blobs, and the other 71 for reasons not looked at one by one (rejected in
+  the new order, or reading something the witness made for the old order does not prove).
 - `build-test` on three test chains: built again as given, each is the block it was; a transaction proposed
   twice is left out the second time; and of 404 witnesses with one piece missing, 110 built nothing, 74
   built a smaller block, and none built a block the checker refuses.

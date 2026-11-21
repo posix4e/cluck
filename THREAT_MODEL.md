@@ -100,6 +100,17 @@ accepts a quote from a processor whose firmware Intel no longer considers curren
 same host it is checking; a visitor who doubts the host reads the file or uses a verifier of their own on
 the quote the page offers for download.
 
+The same server has a second page, `demo/built.html`, for blocks the builder built: for each, the request
+the guest was sent, its reply, the quote made of its report, and a file of what the operator says about it
+(which image, which commit, whether it landed), kept by `builder/shadow` and served from one directory. The
+server opens only names that are digits and one of four endings, so a visitor's path reaches no other file.
+`demo/built.js` checks in the browser that the quote is for exactly that request and reply and that the
+challenge is the hash of the block's parent, which is what makes the quote no older than the parent. It
+does not check the builder's signature over the bid, and it cannot know whether the block is on the chain:
+"landed" on the page is the operator's word, and the visitor is told to look the hash up elsewhere. A
+request holds the transactions that were proposed, so publishing one publishes them; they were public
+already when they were taken from the pool.
+
 **A block with a witness.** A request that begins `JWIT1` carries one block, the headers before it and a
 witness: trie nodes, contract code, and the addresses and slot numbers behind the hashed keys
 (`evm/Evm/Stateless.lean`). All of it is the sender's, and none of it is believed. Nodes are found by

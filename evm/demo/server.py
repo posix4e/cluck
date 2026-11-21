@@ -19,8 +19,10 @@ Settings, all in the environment:
     SILO_HOST_PORT  loopback port the guest's port 5005 is forwarded to (default 5025)
     SILO_TDVF       the firmware, as scripts/run-efi takes it
     EVM_DEMO_QGS    the quote generation service's socket (default /var/run/tdx-qgs/qgs.socket)
+    EVM_DEMO_BUILT  where builder/shadow keeps blocks it built, with their quotes, for the page at /built
+                    (default /data/eth/shadow/landed)
 """
-import base64, glob, hashlib, importlib.machinery, importlib.util, json, os, shutil, signal, socket, struct
+import base64, glob, hashlib, importlib.machinery, importlib.util, json, os, re, shutil, signal, socket, struct
 import subprocess, sys, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -33,6 +35,7 @@ image = os.path.join(here, ".lake/build/efi/tdx/evm-os/BOOTX64.EFI")
 listen_port = int(os.environ.get("EVM_DEMO_PORT", "5172"))
 guest_port = int(os.environ.get("SILO_HOST_PORT", "5025"))
 qgs_socket = os.environ.get("EVM_DEMO_QGS", "/var/run/tdx-qgs/qgs.socket")
+built_dir = os.environ.get("EVM_DEMO_BUILT", "/data/eth/shadow/landed")
 firmware = os.environ.get("SILO_TDVF", os.path.join(system, ".lake/build/efi/tdx/OVMF.fd"))
 
 # The OS's own client for the quote generation service; it is a script, so it is loaded by path, and
@@ -245,6 +248,25 @@ def describe_self():
 
 # ---- The web server.
 
+# Blocks the builder built and kept with their quotes (builder/shadow), for demo/built.html.
+BUILT_FILE = re.compile(r"[0-9]{1,12}\.(req|reply|quote|json)")
+
+def built_index():
+    """The blocks kept under the directory, newest first: those with all four files."""
+    entries = []
+    for path in glob.glob(os.path.join(built_dir, "*.json")):
+        name = os.path.basename(path)[:-5]
+        if not name.isdigit() or not all(os.path.isfile(os.path.join(built_dir, f"{name}.{e}")) for e in ("req", "reply", "quote")):
+            continue
+        try:
+            with open(path) as f:
+                landed = bool(json.load(f).get("landed"))
+        except (OSError, ValueError):
+            continue
+        entries.append({"name": name, "landed": landed})
+    return sorted(entries, key=lambda e: -int(e["name"]))
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "evm-demo"
     protocol_version = "HTTP/1.1"
@@ -274,6 +296,16 @@ class Handler(BaseHTTPRequestHandler):
             self.file("page.html", "text/html; charset=utf-8")
         elif path == "/verify.js":
             self.file("verify.js", "text/javascript; charset=utf-8")
+        elif path == "/built":
+            self.file("built.html", "text/html; charset=utf-8")
+        elif path == "/built.js":
+            self.file("built.js", "text/javascript; charset=utf-8")
+        elif path == "/built/index.json":
+            self.json(200, built_index())
+        elif path.startswith("/built/") and BUILT_FILE.fullmatch(path[7:]) and \
+                os.path.isfile(os.path.join(built_dir, path[7:])):
+            with open(os.path.join(built_dir, path[7:]), "rb") as f:
+                self.send(200, "application/json" if path.endswith(".json") else "application/octet-stream", f.read())
         elif path == "/api/info":
             self.json(200, dict(identity, guest_up_seconds=round(time.time() - guest.started),
                                 guest_boots=guest.boots))

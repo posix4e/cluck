@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A block built in a trust domain</title>
+<style>
+  :root {
+    --paper: #f6f4ef; --card: #fffdf9; --ink: #1b1d1c; --soft: #5d635f; --line: #dcd8cd;
+    --accent: #0f6b52; --accent-ink: #ffffff; --good: #0f6b52; --good-bg: #e2f1ea;
+    --bad: #a3271f; --bad-bg: #f8e3df; --wait: #8a6100; --wait-bg: #f7ecd0; --code: #f0ede5;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #121514; --card: #1a1e1c; --ink: #e9ebe7; --soft: #9aa39d; --line: #2c3330;
+      --accent: #43c59e; --accent-ink: #06231a; --good: #43c59e; --good-bg: #12322a;
+      --bad: #ff8a7d; --bad-bg: #3a1a17; --wait: #e6bd5a; --wait-bg: #33290f; --code: #0e1110;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.55 var(--sans); }
+  main { max-width: 880px; margin: 0 auto; padding: 28px 16px 80px; }
+  a { color: var(--accent); }
+  h1 { font-size: clamp(1.7rem, 4.6vw, 2.5rem); line-height: 1.12; letter-spacing: -0.02em; margin: 18px 0 14px; }
+  h2 { font-size: 1.12rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  p { margin: 0 0 12px; }
+  .lede { font-size: 1.08rem; color: var(--soft); max-width: 62ch; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+         font-size: 0.86rem; color: var(--soft); }
+  .top .name { font-family: var(--mono); color: var(--ink); }
+  .pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px;
+          border: 1px solid var(--line); background: var(--card); white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wait); }
+  .dot.up { background: var(--good); box-shadow: 0 0 0 3px var(--good-bg); }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px;
+            margin-top: 18px; }
+  .hint { color: var(--soft); font-size: 0.92rem; margin-bottom: 14px; }
+  .step { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.09em; text-transform: uppercase;
+          color: var(--accent); margin-bottom: 8px; }
+  .choices { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .choice { display: block; position: relative; cursor: pointer; }
+  .choice input { position: absolute; opacity: 0; inset: 0; }
+  .choice span { display: block; height: 100%; padding: 11px 13px; border: 1px solid var(--line);
+                 border-radius: 10px; background: var(--paper); }
+  .choice b { display: block; font-weight: 600; font-size: 0.95rem; overflow-wrap: anywhere; }
+  .choice small { color: var(--soft); font-size: 0.82rem; display: block; margin-top: 2px; }
+  .choice input:checked + span { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .choice input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .go { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 18px; }
+  button { font: 600 1rem var(--sans); color: var(--accent-ink); background: var(--accent); border: 0;
+           border-radius: 10px; padding: 12px 20px; cursor: pointer; }
+  button:disabled { opacity: 0.55; cursor: progress; }
+  button.quiet { background: transparent; color: var(--accent); border: 1px solid var(--line);
+                 font-weight: 500; font-size: 0.9rem; padding: 8px 13px; }
+  .elapsed { color: var(--soft); font-size: 0.92rem; font-variant-numeric: tabular-nums; }
+  .verdict { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 14px; }
+  .verdict .word { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.01em; }
+  .verdict.good .word { color: var(--good); } .verdict.bad .word { color: var(--bad); }
+  .tag { font-size: 0.8rem; padding: 3px 9px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  .tag.good { background: var(--good-bg); color: var(--good); }
+  .tag.bad { background: var(--bad-bg); color: var(--bad); }
+  .tag.wait { background: var(--wait-bg); color: var(--wait); }
+  dl { display: grid; grid-template-columns: minmax(96px, max-content) 1fr; gap: 6px 16px; margin: 0; }
+  dt { color: var(--soft); font-size: 0.88rem; }
+  dd { margin: 0; min-width: 0; }
+  .hex, code { font-family: var(--mono); font-size: 0.82rem; overflow-wrap: anywhere; }
+  code { background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  ol.checks { list-style: none; margin: 0; padding: 0; }
+  ol.checks li { display: grid; grid-template-columns: 26px 1fr; gap: 2px 8px; padding: 10px 0;
+                 border-top: 1px solid var(--line); }
+  ol.checks li:first-child { border-top: 0; }
+  .mark { font-weight: 700; font-size: 1.05rem; line-height: 1.4; }
+  .mark.good { color: var(--good); } .mark.bad { color: var(--bad); }
+  .checks .what { font-weight: 600; }
+  .checks .how { grid-column: 2; color: var(--soft); font-size: 0.86rem; overflow-wrap: anywhere; }
+  .summary { margin: 0 0 6px; padding: 11px 14px; border-radius: 10px; font-weight: 600; }
+  .summary.good { background: var(--good-bg); color: var(--good); }
+  .summary.bad { background: var(--bad-bg); color: var(--bad); }
+  .table { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  th, td { text-align: left; padding: 7px 10px 7px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--soft); font-weight: 500; white-space: nowrap; }
+  tr:first-child th, tr:first-child td { border-top: 0; }
+  pre { margin: 0; padding: 12px 14px; background: var(--code); border-radius: 10px; overflow-x: auto;
+        font: 0.8rem/1.5 var(--mono); max-height: 240px; }
+  ul.plain { margin: 0; padding-left: 20px; }
+  ul.plain li { margin-bottom: 9px; }
+  .two { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .two h3 { font-size: 0.95rem; margin: 0 0 8px; }
+  .empty { color: var(--soft); font-size: 0.92rem; }
+  footer { margin-top: 26px; color: var(--soft); font-size: 0.85rem; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <span><span class="name">cluck / evm</span> &nbsp;·&nbsp; <a href="https://github.com/posix4e/cluck">source</a></span>
+    <span class="pill"><span class="dot" id="dot"></span><span id="status">loading…</span></span>
+  </div>
+
+  <h1>An Ethereum block built inside an Intel TDX trust domain. Your browser checks the proof.</h1>
+  <p class="lede">A block builder with <strong>no operating system under it</strong>, a unikernel written in
+    Lean, was handed pending transactions and proofs of the state they touch. It chose which went in and in
+    what order, ran them, and signed a bid for the block with a key that never leaves it. What it was asked
+    and what it answered are below, with a quote signed by a key Intel certified. This page checks that the
+    quote is for exactly those bytes, here in your browser.</p>
+
+  <section>
+    <div class="step">The block</div>
+    <div class="choices" id="blocks"><p class="empty">loading…</p></div>
+    <div class="verdict" id="verdict" style="margin-top:16px"></div>
+    <dl id="facts"></dl>
+  </section>
+
+  <section id="proof" hidden>
+    <div class="step">The proof, checked in this browser</div>
+    <p class="summary" id="summary"></p>
+    <ol class="checks" id="checks"></ol>
+    <p class="hint" style="margin:12px 0 0">The files checked: <span id="files"></span></p>
+  </section>
+
+  <section id="measured" hidden>
+    <div class="step">What was running</div>
+    <h2>Measurements in the quote</h2>
+    <p class="hint">The processor measured the firmware as it loaded (MRTD) and the firmware measured what it
+      then started (RTMRs). These are in the signed quote. What the operator says they belong to is below
+      them, and is the operator's word.</p>
+    <div class="table"><table id="measurements"></table></div>
+    <div class="table" style="margin-top:14px"><table id="identity"></table></div>
+  </section>
+
+  <section>
+    <div class="step">Read this before believing it</div>
+    <div class="two">
+      <div>
+        <h3>What the checks say</h3>
+        <ul class="plain">
+          <li>A real Intel TDX trust domain, not in debug mode, with the measurements shown, gave this reply
+            to this request.</li>
+          <li>It did so after the block's parent existed: the request was sent with the parent's hash as a
+            challenge, and the quote covers it.</li>
+          <li>The reply names the block: its hash, what it pays the proposer, how many of the proposed
+            transactions went in, and the builder's key and signature over the bid.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>What they do not say</h3>
+        <ul class="plain">
+          <li>Whether the block is on the chain. Look its hash up somewhere you trust; "landed" on this
+            page is the operator's word.</li>
+          <li>Whether the builder's signature over the bid is good. This page does not check BLS
+            signatures; <code>bid-verify</code> in the repository does.</li>
+          <li>That every transaction anyone knew of was offered. The host chooses what is proposed, and
+            the transactions reach the guest in the clear: this builder keeps no order private.</li>
+          <li>That the measurements are the published source. For that, rebuild the image and boot it on a
+            TDX host of your own. Nor does the browser ask Intel whether the processor's firmware is
+            current or a certificate revoked.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>This page and the files it loads come from a server outside the trust domain, which is the
+    untrusted host here. Only the quote and what it covers are evidence.</footer>
+</main>
+
+<script src="verify.js"></script>
+<script src="built.js"></script>
+<script>
+"use strict";
+const { hex } = TdxQuote;
+const { checkBuilt } = Built;
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, ...kids) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) k === "class" ? (node.className = v) : node.setAttribute(k, v);
+  node.append(...kids);
+  return node;
+};
+const unhex = (text) => Uint8Array.from(text.match(/../g) || [], (h) => parseInt(h, 16));
+const ether = (wei) => {
+  const s = wei.toString().padStart(19, "0");
+  return `${s.slice(0, -18)}.${s.slice(-18).replace(/0+$/, "") || "0"} ETH`;
+};
+const bytes = async (path) => {
+  const answer = await fetch(path);
+  if (!answer.ok) throw new Error(`${path}: the server said ${answer.status}`);
+  return new Uint8Array(await answer.arrayBuffer());
+};
+
+async function show(entry) {
+  $("verdict").replaceChildren(el("span", {}, "checking…"));
+  $("facts").replaceChildren();
+  $("proof").hidden = $("measured").hidden = true;
+  try {
+    const stem = `built/${entry.name}`;
+    const meta = JSON.parse(new TextDecoder().decode(await bytes(stem + ".json")));
+    const set = { request: await bytes(stem + ".req"), reply: await bytes(stem + ".reply"),
+                  quote: await bytes(stem + ".quote"), challenge: unhex(meta.challenge.slice(2)) };
+    const { fields, steps, asked, built } = await checkBuilt(set, Date.now());
+    const all = steps.every((s) => s.ok);
+    const verdict = $("verdict");
+    verdict.className = "verdict " + (all ? "good" : "bad");
+    if (built && built.status === 0) {
+      const hash = "0x" + hex(built.hash);
+      verdict.replaceChildren(el("span", { class: "word" }, `Block ${built.number}`),
+        el("span", { class: "tag " + (meta.landed ? "good" : "wait") },
+           meta.landed ? "the operator says it is on the chain" : "built in shadow, sent nowhere"));
+      const rows = [
+        ["Block hash", hash], ["Parent", "0x" + hex(built.parentHash)], ["Slot", String(asked.slot)],
+        ["Pays the proposer", `${ether(built.value)}, to 0x${hex(built.feeRecipient)}`],
+        ["Transactions", `${built.transactions} went in, ${built.gasUsed} gas`],
+        ["Builder's key", "0x" + hex(built.builderKey)],
+        ["Signature over the bid", "0x" + hex(built.signature) + " (not checked here)"],
+      ];
+      if (meta.landed) rows.splice(1, 0, ["Look it up", el("a", { href: `https://etherscan.io/block/${built.number}` },
+        "etherscan.io/block/" + built.number), " and compare the hash"]);
+      $("facts").replaceChildren(...rows.flatMap(([k, ...v]) => [el("dt", {}, k), el("dd", { class: "hex" }, ...v)]));
+    } else {
+      verdict.replaceChildren(el("span", { class: "word" }, "No block"));
+    }
+    const summary = $("summary");
+    summary.className = "summary " + (all ? "good" : "bad");
+    summary.textContent = all
+      ? "Every check passed: an Intel TDX trust domain built this block from this request, after its parent existed."
+      : "A check failed. Do not believe this block came from the trust domain.";
+    $("checks").replaceChildren(...steps.map((s) => el("li", {},
+      el("span", { class: "mark " + (s.ok ? "good" : "bad") }, s.ok ? "✓" : "✗"),
+      el("span", { class: "what" }, s.title), el("span", { class: "how" }, s.detail))));
+    $("files").replaceChildren(...["req", "reply", "quote", "json"].flatMap((ending) =>
+      [el("a", { href: `${stem}.${ending}` }, `${entry.name}.${ending}`), " "]));
+    $("proof").hidden = false;
+    const names = ["MRTD", "RTMR0", "RTMR1", "RTMR2", "RTMR3"];
+    $("measurements").replaceChildren(...names.map((n) =>
+      el("tr", {}, el("th", {}, n), el("td", { class: "hex" }, fields[n] || "—"))));
+    const commit = meta.commit ? el("a", { href: `https://github.com/posix4e/cluck/tree/${meta.commit}` },
+                                    meta.commit.slice(0, 12)) : "not said";
+    $("identity").replaceChildren(
+      el("tr", {}, el("th", {}, "EFI image, SHA-256"), el("td", { class: "hex" }, meta.image_sha256 || "not said")),
+      el("tr", {}, el("th", {}, "Built from"), el("td", {}, commit,
+        meta.uncommitted_changes ? " plus changes not committed, so not reproducible from the public source" : "")),
+      el("tr", {}, el("th", {}, "Certificates"), el("td", {}, (fields.certificates || []).join(" ← "))));
+    $("measured").hidden = false;
+  } catch (error) {
+    $("verdict").className = "verdict bad";
+    $("verdict").replaceChildren(el("span", { class: "word" }, "Could not check"), el("span", {}, String(error.message || error)));
+  }
+}
+
+async function start() {
+  const index = JSON.parse(new TextDecoder().decode(await bytes("built/index.json")));
+  $("dot").className = "dot up";
+  $("status").textContent = `${index.length} block${index.length === 1 ? "" : "s"} kept`;
+  if (!index.length) { $("blocks").replaceChildren(el("p", { class: "empty" }, "No block has been kept yet.")); return; }
+  $("blocks").replaceChildren(...index.map((entry, i) => {
+    const input = el("input", { type: "radio", name: "block", value: entry.name });
+    if (i === 0) input.checked = true;
+    input.addEventListener("change", () => show(entry));
+    return el("label", { class: "choice" }, input, el("span", {}, el("b", {}, "Block " + entry.name),
+      el("small", {}, entry.landed ? "landed, the operator says" : "built in shadow")));
+  }));
+  show(index[0]);
+}
+start().catch((error) => { $("status").textContent = "nothing to show: " + (error.message || error); });
+</script>
+</body>
+</html>

@@ -61,6 +61,8 @@ it, and continuous integration does not build it. What has been run and what it 
   `scripts/fetch-fixtures`: makes `fixtures/` again from its source and compares.
 - `demo/`: a web page in front of a guest in a trust domain. `server.py` runs on the host, `page.html` is
   the page, `verify.js` checks a TDX quote in the browser, and `test-verify.mjs` tests that under Node.
+  `built.html`, at `/built`, shows a block the builder built with its quote; `built.js` checks that the
+  quote is for that request and reply, and `test-built.mjs` tests that under Node.
 - `fixtures/`: five requests and the responses they must get, made from the Prague cases of five
   blockchain tests in `ethereum/tests` (`fixtures/SOURCES`).
 
@@ -157,6 +159,7 @@ scripts/build-efi tdx
 SILO_TDVF=/path/to/OVMF.fd demo/server.py record     # boots once and writes down the measurements
 SILO_TDVF=/path/to/OVMF.fd demo/server.py
 node demo/test-verify.mjs                            # from another terminal
+node demo/test-built.mjs /data/eth/shadow/attested N # a block builder/shadow kept, checked as /built checks it
 ```
 
 A visitor picks a fixture and whether to send it as it is, with a wrong state root in its last block, or

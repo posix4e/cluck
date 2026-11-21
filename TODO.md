@@ -325,8 +325,12 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   (the challenge is the parent's hash), stops at the first block built here that becomes the chain's
   head, and keeps the request, reply, report and quote for it. Tried as a process against a stand-in
   relay on the same machine: four slots, four bids posted in the builder API's shape, the stand-in's
-  "payload attributes not yet known" answered by asking again. Not run: the report with a bid, noticing a
-  landed block and making its quote, and any real relay. From the relays' documentation and code, read on
+  "payload attributes not yet known" answered by asking again. Then in a TDX guest with `--attest` and no
+  relay: three slots, each bid with a report, and the last kept with the quote the host's quoting service
+  made of it; `demo/test-built.mjs` found the quote good, for that request and that reply, with the
+  parent's hash as its challenge, and refused the set with any one of seven bytes changed. `demo/built.html`
+  is the page for it, run so far only against a stand-in for a browser. Not run: noticing a landed block,
+  and any real relay. From the relays' documentation and code, read on
   2026-11-21: Flashbots, Ultra Sound, Aestus and Titan take bids from a key they have not seen (as
   low-priority, fully simulated); bloXroute wants a paid plan; a bid below a relay's floor is skipped, not
   refused, and Flashbots drops an empty block without saying so.

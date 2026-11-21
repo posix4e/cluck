@@ -148,6 +148,18 @@ inductive Undo where
   | warmAccount (address : Word) (old : UInt64)
   | warmSlot (key : SlotKey) (old : UInt64)
 
+/-- Something asked of what stands behind that it could not answer: an account (kind 0, `what` its
+address), a slot of storage (kind 1, `what` the account's address and `key` the slot's number), or a code
+(kind 2, `what` its hash). -/
+structure Lack where
+  kind : UInt8
+  what : Word
+  key : Word
+  deriving Inhabited
+
+/-- The most that is remembered of what could not be answered. -/
+def maxLacks : Nat := 64
+
 /-- How far everything that a failed call must lose had got when the call began. -/
 structure Checkpoint where
   journal : Nat
@@ -180,6 +192,9 @@ structure World where
   missing : Bool
   /-- The first thing that could not be answered: an address, or a code's hash. -/
   lacking : Word
+  /-- Everything that could not be answered since this was last emptied, each once, up to `maxLacks`: for
+  whoever can go and get it. -/
+  lacks : Array Lack
   deriving Inhabited
 
 namespace World
@@ -187,7 +202,7 @@ namespace World
 def new (backing : Backing) : World :=
   { backing, accounts := {}, slots := {}, transient := {}, warmAccounts := {}, warmSlots := {}, jumps := {},
     journal := #[], logs := #[],
-    destructs := #[], refund := 0, epoch := 1, missing := false, lacking := Word.zero }
+    destructs := #[], refund := 0, epoch := 1, missing := false, lacking := Word.zero, lacks := #[] }
 
 /-- An account that is not in the state. -/
 def noAccount : Account :=
@@ -195,8 +210,13 @@ def noAccount : Account :=
     hasCode := true, fresh := true, createdAt := 0, dirty := false, storageWasEmpty := true, storage := Word.zero,
     existed := false }
 
-@[inline] def lack (w : World) (what : Word) : World :=
-  if w.missing then w else { w with missing := true, lacking := what }
+/-- Something could not be answered. This is off the path every instruction takes, so it is not inlined. -/
+@[noinline] def lackOf (w : World) (kind : UInt8) (what key : Word) : World :=
+  let w := if w.missing then w else { w with missing := true, lacking := what }
+  if w.lacks.size ≥ maxLacks || w.lacks.any (fun l => l.kind == kind && l.what == what && l.key == key) then w
+  else { w with lacks := w.lacks.push ⟨kind, what, key⟩ }
+
+@[inline] def lack (w : World) (what : Word) : World := lackOf w 0 what Word.zero
 
 /-- The account at `a`, fetched if it has not been. When it cannot be fetched the world is marked and an
 account that is not there is handed back, which the caller must not take for an answer. -/
@@ -229,7 +249,7 @@ def withCode (w : World) (a : Word) : World × Account :=
       -- Fetching is not a change: nothing goes on the journal, and `dirty` stays as it was.
       let entry := { entry with code, hasCode := true }
       ({ w with accounts := w.accounts.insert a entry }, entry)
-    | none => (w.lack entry.codeHash, entry)
+    | none => (w.lackOf 2 entry.codeHash Word.zero, entry)
 
 /-- Makes `a` warm for this transaction. The answer is whether it was cold. Nothing is fetched. -/
 def warm (w : World) (a : Word) : World × Bool :=
@@ -255,7 +275,7 @@ def slot (w : World) (a key : Word) : World × Slot :=
         let entry : Slot :=
           { value := Word.zero, original := Word.zero, originalAt := 0, before := Word.zero }
         ({ w with slots := w.slots.insert name entry }, entry)
-      | .missing => (w.lack a, default)
+      | .missing => (w.lackOf 1 a key, default)
   if entry.originalAt == w.epoch then (w, entry)
   else
     -- First touch in this transaction: what it holds now is what the transaction began with. This is a

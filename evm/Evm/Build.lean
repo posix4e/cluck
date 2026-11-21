@@ -139,6 +139,10 @@ structure Response where
   /-- For a status other than 0: zero, or the hash of a node the witness lacks. -/
   lacking : U256 := 0
   built : Option Built := none
+  /-- What the witness lacked for transactions that were left out because of it: not part of the answer
+  as it is written out, and for whoever can add to the witness and ask again. Only the fast engine's
+  builder says. -/
+  wanted : Array Fast.Lack := #[]
 
 def Response.encode (r : Response) : ByteArray :=
   match r.status, r.built with
@@ -285,6 +289,8 @@ structure FastJob where
   taken : Array Transaction := #[]
   included : Array Nat := #[]
   notes : Array Note := #[]
+  /-- What the witness lacked for the transactions left out because of it. -/
+  wanted : Array Fast.Lack := #[]
 
 /-- How far a request to build has got: answered, or a block still being filled, by Jaune or by the fast
 engine. -/
@@ -387,13 +393,13 @@ def startFast (r : Request) (fork : Fork) (parent : Header) (ancestors : List He
 /-- The next proposed transaction, put in or left out, by the fast engine. One the engine refuses, or that
 asked the witness for what it cannot prove, leaves the world and the block as they were before it. -/
 def FastJob.step : FastJob → FastJob
-  | ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included, notes⟩ =>
+  | ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included, notes, wanted⟩ =>
     match rest with
-    | [] => ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, [], out, taken, included, notes⟩
+    | [] => ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, [], out, taken, included, notes, wanted⟩
     | c :: rest =>
-      let leftOut (why : String) (out : Fast.BlockOutput) : FastJob :=
+      let leftOut (why : String) (out : Fast.BlockOutput) (lacks : Array Fast.Lack := #[]) : FastJob :=
         ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included,
-         notes.push ⟨c.place, false, why⟩⟩
+         notes.push ⟨c.place, false, why⟩, if wanted.size < 4 * Fast.maxLacks then wanted ++ lacks else wanted⟩
       if out.gasUsed.toNat + c.tx.gasLimit > gasCap then leftOut "would pass the gas asked for" out
       else if (Bridge.chainOf c.tx).any (· != chainId) then leftOut "rejected: made for another chain" out
       else
@@ -410,13 +416,13 @@ def FastJob.step : FastJob → FastJob
             -- taken off, since what could not be answered was not kept, and the next transaction starts clean.
             let why := if world.missing then s!"read what the witness does not prove, at {(Bridge.u256 world.lacking).toHex}"
               else s!"rejected: {why}"
-            leftOut why ⟨{ world with missing := false }, stack, receipts, gasUsed, blobs, requests⟩
+            leftOut why ⟨{ world with missing := false, lacks := #[] }, stack, receipts, gasUsed, blobs, requests⟩ world.lacks
           | .ok (world, stack, receipt) =>
             let gasUsed := gasUsed + receipt.cumulativeGas
             ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest,
              ⟨world, stack, receipts.push { receipt with cumulativeGas := gasUsed }, gasUsed,
               blobs + tx.blobHashes.size.toUInt64, requests⟩,
-             taken.push c.tx, included.push c.place, notes.push ⟨c.place, true, s!"{gasUsed.toNat}"⟩⟩
+             taken.push c.tx, included.push c.place, notes.push ⟨c.place, true, s!"{gasUsed.toNat}"⟩, wanted⟩
 
 /-- Everything after the last transaction, by the fast engine: withdrawals, the block's requests, the state
 root and the header. -/
@@ -453,7 +459,7 @@ def FastJob.finish (job : FastJob) : Stage :=
           withdrawalsRoot := if rules.header.withdrawalsRoot then some (getWithdrawalsRoot kept) else none,
           blobGasUsed := if rules.header.blobGas then some kept.blobGasUsed else none,
           requestsHash := if rules.header.requestsHash then some (computeRequestsHash asked) else none }
-      .done { status := 0, built := some ⟨header, header.hash, job.included.toList, value, asked⟩ } notes ""
+      .done { status := 0, built := some ⟨header, header.hash, job.included.toList, value, asked⟩, wanted := job.wanted } notes ""
 
 /-- Everything after the last transaction: withdrawals, the block's requests, the checks that everything
 read was shown, the state root and the header. -/

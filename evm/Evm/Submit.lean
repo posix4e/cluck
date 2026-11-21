@@ -14,8 +14,8 @@ execution payload of Deneb, a bundle of blobs, the execution requests of Electra
 from that library's source on 2026-11-21. No block built here carries blobs, so the bundle is empty.
 The stand-in relay (`builder/standin-relay`) takes it apart again, and `builder/shadow --guest-sends` lays
 what it found beside the same block put together on the host, the way blocks sent to real relays have
-been until now. That decoder is by the same hand as this, written from the same reading of the layout; it
-is not a relay's own, and until a relay has taken one of these that is what has not been shown. -/
+been until now. That decoder is by the same hand as this, written from the same reading of the layout, and
+is not a relay's own. Four relays took a block in this encoding on 2026-11-21 (mainnet block 26465583). -/
 
 namespace Evm.Submit
 

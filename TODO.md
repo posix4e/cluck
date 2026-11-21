@@ -393,9 +393,9 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   published); the order privacy a builder in a trust domain is for: transactions still reach the guest in
   the clear, through the host.
 
-**Order privacy** (begun 2026-11-21; five stages of six done: against a stand-in relay on this
-machine, a transaction sealed to the guest goes into a block only the guest and the relay see. Nothing
-of it has been tried on a real relay). The aim: a
+**Order privacy** (begun and, as far as one block goes, done on 2026-11-21: mainnet block 26465583
+holds a transaction that was sealed to the guest, in a block the guest built and sent to four relays
+itself, which the host carried and was never shown). The aim: a
 transaction sealed to a key only the attested guest holds, built into a block the guest sends to the
 relays itself over TLS, so that the host carries only ciphertext. What it will not hide, by its design:
 which accounts and storage slots such a transaction touches (the host supplies the proofs), sizes and
@@ -531,9 +531,9 @@ times, and the block from the relay. Six stages:
   - `scripts/run-ask` has the same without a node: a block from a fixture built, bid for and posted,
     and what the stand-in took compared with what the guest's answer describes; a relay the image does
     not have, a time before the roots, and no relay listening.
-  - Not shown: that a real relay takes these bytes. The decoder they were tried on is by the same hand
-    as the encoder, from the same reading of the layout. A relay's own answer to one is the first real
-    test, and that is a submission to a relay, which waits to be asked for. Blocks with blobs are not
+  - Whether a real relay takes these bytes was not shown by any of that: the decoder they were tried
+    on is by the same hand as the encoder, from the same reading of the layout. Four relays have since
+    taken one (the live run, below). Blocks with blobs are not
     built, so the bundle of blobs is always empty. Sending is one segment at a time, as all of this
     TCP is; over QEMU's network that is not felt, and over a real one a large block would be slow.
 - [x] **Sealed transactions**, 2026-11-21, against the stand-in.
@@ -593,19 +593,39 @@ times, and the block from the relay. Six stages:
     blocks decides which slots, up to the last one named, a sealed transaction is tried in, and can
     leave it out by never proving what it needs; Jaune's builder does not take sealed transactions;
     only one round of asking again happens per missing thing, so a transaction that reads much state
-    takes several; nobody but this program has sealed to the guest; the real image has all of this
-    and has sent nothing to a real relay.
-- [ ] **Live**, and only when asked for with the cost named. Not run. What is ready for it:
-  `builder/shadow --live --guest-sends --sealed --top-up ETH --wallet KEY.pem --relays ...` boots the
-  image that is meant, tells the guest which of its four relays hold the registration each block is
-  built for, and the guest sends. Rehearsed against the stand-in without `--live`: six slots with the
-  payment and a sealed transaction of the same wallet in one block, five of them with both in (the
-  first had no time), each worth the payment and the tips, valid and signed; the guest's two keys
-  asked for with reports when the run began, and their quotes kept. What a live run would be the
-  first of: a real relay reading this SSZ; a block sent with nothing judging it first (the guest
-  sends when it has built, where until now the node's validator judged every block before it left);
-  a block built by the fast engine's builder sent anywhere; this program knowing its block in the
-  chain only by the payment in it.
+    takes several; nobody but this program has sealed to the guest.
+- [x] **Live**, asked for and run on 2026-11-21, once. `builder/shadow --live --guest-sends --sealed
+  --top-up 0.02 --top-up-priority 0 --wallet KEY.pem --relays` and the four relays, the image
+  `a6fbc0d4…d3fc67e` in TDX (built from `2d7a74f`; the tree clean at `d04cee5`).
+  - **Mainnet block 26465583** (slot 15705454, 19:31:11 UTC, hash `0x7e4a7ada…b4eb94a9`, extra data
+    `cluck`, 20 transactions, 1.88M gas) was built by the fast engine's builder in the guest and posted
+    by the guest itself, over its own TLS, to Flashbots, Ultrasound, Aestus and Titan, 7.3 s before the
+    slot. All four answered 200. The proposer took it; Flashbots, Aestus and Titan list it as
+    delivered under the guest's builder key, at 0.02067 ETH.
+  - Its last transaction is the one that was sealed: a transfer of nothing from the test wallet to
+    itself, signed by this program as a sender, sealed to the guest's key with `demo/seal.js`, and
+    handed in as 161 bytes. This program as the host never had it in a request, and was not shown the
+    block: the answer was "one sealed transaction went in" and what the relays said. Its bytes and its
+    signature's two numbers were looked for in every request and answer, in every frame that crossed
+    the guest's network up to then (1.2 MB) and in the console, and were in none; the sender's address
+    was, twice. The block was known for ours by the payment in it.
+  - The transaction before it is the payment, 0.02 ETH to the proposer, proposed in the open as
+    before. Spent: 0.02 ETH and 0.0000106 ETH of gas for the two, once.
+  - What ties the block to the machine: the relays name the builder's key, and that key was asked for
+    with a report two blocks earlier (the challenge is block 26465581's hash). The quote passes every
+    step of `demo/verify.js`, is for that key and that request, and has the measurements recorded for
+    the image. The same holds for the sealing key. Kept under `/data/eth/shadow/live2/`, not
+    published.
+  - What it was the first of, and how each went: real relays reading this SSZ (three had already read
+    one a slot earlier and answered about its slot, not its shape; then four took one); a block sent
+    with nothing judging it first; a block of the fast engine's sent anywhere and put in the chain.
+  - What went wrong: the run began late in a slot, built an empty block for it with no time left and
+    sent that after the slot had begun; three relays refused it as for a slot gone by. Nothing came
+    of it, and a block that late is no longer sent.
+  - What one block does not show: that it works twice; anything about a transaction that reads more
+    than its sender's account; a sender other than this program; a relay that answers slowly. The
+    host knew the sender's address, as it must. And the block is public now, as every block is: what
+    was kept from the host was kept until then.
 
 What is next, in order:
 
@@ -813,7 +833,8 @@ The faster engine (`evm/Fast/`), step by step:
     what it builds is small because that is all there is in public. A faster engine does not make these
     blocks worth more. Since the test suites passed, `builder/shadow` asks the engine's builder
     unless told otherwise, with no cap but the block's own limit; a run that sends bids (`--live`)
-    still asks Jaune's unless told otherwise, and nothing built by the engine has been sent to a relay.
+    still asks Jaune's unless told otherwise. (Since then a block of the engine's has been sent and has
+    landed: block 26465583, under "Order privacy" above.)
   - After the test suites' two fixes, on the image built from them (`8a1e7d43…3739f134`, at `a973efe`
     with a clean tree; `run-fixtures tdx --limits` passes): 50 more slots in the guest with both
     builders and no cap but the block's limit, 50 blocks valid and signed, the same bytes from both 50

@@ -156,8 +156,9 @@ to read. What that rests on, and where it gives:
   the host, which could serve a different script: a sender who means it checks the script, or seals
   with a tool of their own, which the standard format allows. The page checks the quote for the key as
   the first page checks one, with the same limits (no revocation, no TCB status).
-- *Not live.* The image that is meant has all of this, and no sealed transaction has been built into a
-  block that went to a real relay.
+- *Live once.* Mainnet block 26465583 was built and sent this way, with one sealed transaction in it
+  that the host carried and was not shown (`TODO.md`). One block shows that the parts meet, and nothing
+  about how they stand up to someone trying.
 
 **Connections out.** The machine now speaks first: it opens TCP connections of its own, to the relays
 its image names (`Evm/Relays.lean`), and until now it only ever answered. What that adds:
@@ -195,9 +196,10 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   itself from the answer, which it still gets. So today this hides nothing: it is the path a hidden
   transaction will need, tried first on blocks that have none. What is new in it to go wrong: a second
   reader of RLP (`Submit.item?`, over a block Jaune has already decoded once), with every length
-  checked; and the SSZ itself, which so far only a decoder written here has read. The real image has
+  checked; and the SSZ itself, which four relays have now read once. The real image has
   this request as the shadow image has, and will send to real relays when asked: whether it is asked is
-  the host's choice, as sending always was.
+  the host's choice, as sending always was. A block the guest sends has been judged by nobody before
+  it leaves: when the host sent, the node's validator saw every block first.
 - *The loop was rewritten for it* (`Evm/Machine.lean`). Requests are run in the order they came on each
   connection, one at a time over all; a client waiting on a relay holds up only itself. While a block is
   built for a bid the network is looked at before each transaction, so frames are now read in the

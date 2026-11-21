@@ -73,6 +73,18 @@ def main : IO UInt32 := do
     if hex (Evm.Attest.sha256 text.toUTF8) != digest then
       failures := failures + 1
       IO.println s!"SHA-256 of {text.quote} is {hex (Evm.Attest.sha256 text.toUTF8)}"
+  -- The walk over a byte array is this package's own, so it is held to Jaune's SHA-256 of the same bytes as
+  -- a list at every length that pads differently and some way past, and to the standard's long example,
+  -- a million times the letter a, which is 15,625 whole blocks and an empty rest.
+  for n in List.range 301 do
+    let sample : ByteArray := ⟨(List.range n).map (fun i => (i * 131 + n * 7 + 3).toUInt8) |>.toArray⟩
+    if Evm.Attest.sha256 sample != (Bytes.sha256 sample.toList).toBytes.toByteArray then
+      failures := failures + 1
+      IO.println s!"SHA-256 of {n} bytes is not Jaune's"
+  if hex (Evm.Attest.sha256 ⟨Array.replicate 1000000 0x61⟩) !=
+      "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0" then
+    failures := failures + 1
+    IO.println "SHA-256 of a million bytes is not the standard's"
   let challenge : ByteArray := ⟨(List.range 32).map (·.toUInt8) |>.toArray⟩
   let attested := Evm.Attest.tag ++ challenge ++ bytes
   if (Evm.Attest.asked? attested).map Evm.Attest.request != some bytes then
@@ -85,7 +97,7 @@ def main : IO UInt32 := do
   if data != Evm.Attest.sha256 (challenge ++ bytes) ++ Evm.Attest.sha256 malformed || data.size != 64 then
     failures := failures + 1
     IO.println "REPORTDATA is not the two hashes, 64 bytes"
-  IO.println s!"attested answer: {sha256Cases.length + 3} cases"
+  IO.println s!"attested answer: {sha256Cases.length + 3 + 302} cases"
   -- This package's Jaune compiles `jumpable` as something nothing proves equal to it: back from the
   -- destination to a position that must start an instruction, then forward. `jumpdestOk` is proved equal to
   -- `jumpable`, so the two must agree at every position of code made of the bytes that matter: jump

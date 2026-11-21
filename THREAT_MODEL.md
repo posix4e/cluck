@@ -83,8 +83,14 @@ asks the processor for a report, so a report from it with other REPORTDATA does 
 quote of that report says is that a trust domain with the quoted measurements answered this request with
 this response after the 32 bytes were chosen. It does not say the measurements are of this repository's
 source: that is for whoever relies on it to establish, by building the image and firmware and comparing.
-The hash is Jaune's SHA-256, the one behind the EVM's precompile; the fixtures exercise it through the
-precompile and `evm-test` holds it to three of the standard's examples. Nothing is secret here, so the
+The hash is Jaune's SHA-256, the one behind the EVM's precompile, in its compression function and its
+padding; the walk over the request's bytes is this package's own (`Evm.Attest.sha256`), because Jaune's
+takes a list, and a request of 4.5 MB asked for with a report, as a list, was more than the heap and ended
+the guest (found 2026-11-21, by the builder's own requests). Nothing proves the walk equal to Jaune's
+function: `evm-test` holds it to Jaune's at every length to 300 bytes and to four of the standard's
+examples, one of them a million bytes. A report still costs memory a plain answer does not, two more
+copies of the request: the largest block request kept (21.7 MB), which is answered plainly, ended the
+guest when asked for with a report. Nothing is secret here, so the
 report protects no confidentiality: it says who computed an answer, not that the request was hidden from
 the host. Outside a trust domain the answer carries no report.
 

@@ -19,7 +19,9 @@ which firmware and which image; they are for the relying party to compare with o
 Outside a trust domain there is no report and the answer is the 69 bytes alone, so an answer never carries
 bytes that look like a report and are not one.
 
-The hash is Jaune's SHA-256, the one behind the EVM's precompile at address 2. -/
+The hash is Jaune's SHA-256, the one behind the EVM's precompile at address 2: its compression function and
+its padding, with the walk over the bytes written here (`sha256`), because Jaune's own takes a list and a
+request of a few million bytes as a list is more than this machine's heap. -/
 
 open Jaune
 
@@ -38,7 +40,27 @@ def asked? (frame : ByteArray) : Option ByteArray :=
 /-- The request inside what `asked?` returned. -/
 def request (asked : ByteArray) : ByteArray := asked.extract challengeSize asked.size
 
-def sha256 (bytes : ByteArray) : ByteArray := (Bytes.sha256 bytes.toList).toBytes.toByteArray
+/-- The 64 bytes from `start`, as Jaune's compression function takes a block. -/
+private def block (bytes : ByteArray) (start : Nat) : Array UInt8 :=
+  Array.ofFn (n := 64) fun i => bytes.get! (start + i)
+
+/-- The state after the blocks numbered `i` and on, of the `whole` blocks the bytes hold. -/
+private def blocks (bytes : ByteArray) (whole i : Nat) (state : Vector UInt32 8) : Vector UInt32 8 :=
+  if i < whole then blocks bytes whole (i + 1) (SHA256.consumeChunk state (block bytes (64 * i))) else state
+termination_by whole - i
+
+/-- SHA-256 of a byte array, in memory that does not grow with it. Each whole block of 64 bytes goes to
+Jaune's compression function from where it lies; what is left over, under 64 bytes, is padded by Jaune's own
+padding, told the length of the whole. Nothing proves it equal to `Bytes.sha256` of the same bytes as a
+list, which a request of a few million bytes cannot be made into here (a list of 4.5 million bytes ended the
+guest); `evm-test` compares the two at every length to 300 and checks the standard's long example. -/
+def sha256 (bytes : ByteArray) : ByteArray :=
+  let whole := bytes.size / 64
+  let state := blocks bytes whole 0 SHA256.initChunk
+  let rest := (bytes.extract (64 * whole) bytes.size).toList
+  let last := SHA256.Bytes.toChunks (UInt64.toBytes (bytes.size * 8).toUInt64) 1 rest rest.length
+  let hash := last.foldl SHA256.consumeChunk state
+  (UInt32s.toU256 hash[0] hash[1] hash[2] hash[3] hash[4] hash[5] hash[6] hash[7]).toBytes.toByteArray
 
 /-- The 64 bytes of REPORTDATA for a response to what was asked. -/
 def reportData (asked response : ByteArray) : ByteArray := sha256 asked ++ sha256 response

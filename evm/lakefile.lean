@@ -84,6 +84,11 @@ lean_exe «fast-word-test» where
 lean_exe «fast-op-test» where
   root := `FastOpTest
 
+/-- Saved blocks of the real chain through the fast engine, each block's header the judge. -/
+@[default_target]
+lean_exe «fast-replay» where
+  root := `FastReplay
+
 /-- Times the hashing, the curves and the interpreter, on whichever runtime it is linked against. -/
 @[default_target]
 lean_exe «evm-bench» where

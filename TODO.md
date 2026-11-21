@@ -461,6 +461,24 @@ The faster engine (`evm/Fast/`), step by step:
   precompiles), jumps, running out of gas, and the stack's limits; nothing proves anything; and nothing
   uses it. An empty account that is touched is not removed (EIP-161), which mainnet no longer needs and
   some tests do.
+- **121 blocks of mainnet through the new engine, each as its header has it** (2026-11-21;
+  `evm/Fast/Tx.lean`, `Fast/Block.lean`, `Evm/Bridge.lean`, `fast-replay`). Transactions (what one may be
+  and what it pays, access lists, blobs, set-code authorizations, creation, refunds, the floor price) and
+  blocks (the two calls a block makes before its transactions, withdrawals, deposits read from logs, the
+  two request queues) are written on the engine. `fast-replay` runs a saved block on the state its
+  witness gives and compares four things with the block's own header: gas used, the root of the receipts
+  (every transaction's success, gas and logs), the bloom of the logs, and the hash of the requests. All
+  121 saved blocks (26456375 to 26456395 and 26458315 to 26458414, up to 625 transactions and 60M gas)
+  agree, the first time they were run. On Lean's runtime the block itself takes 261 ms at the median (48
+  ms to 4.2 seconds), reading the witness 114 ms and recovering senders 165 ms: 560 ms for the three,
+  where the whole of Jaune's check takes about 2.5 seconds at the median on the same runtime. **That
+  comparison is not like for like yet:** the engine's run leaves out the state root, the check that what
+  was read was proven, and decoding the request, all of which Jaune's figure includes. What this does
+  not show: that the state after a block is right (no state root is worked out from the engine's world
+  yet, so a wrong balance or slot that changed no gas and no log would pass); anything on the minimal
+  runtime or in the guest; anything about blocks that should be refused. The precompiled contracts, the
+  decoding of transactions, the recovery of senders and the roots are still Jaune's, reached through
+  `Evm/Bridge.lean`.
 
 The relay's own checks, hostile input and a week of validating delivered blocks, which were next before
 the aim changed, are set aside, not done.

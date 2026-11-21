@@ -106,8 +106,6 @@ structure Account where
   /-- Its storage is known to hold nothing but what is in this world: it was not in the state before, or it
   was created since. Slots of such an account are never asked of what stands behind. -/
   fresh : Bool
-  /-- The transaction in which it became warm, by number; none is 0. -/
-  warmAt : UInt64
   /-- The transaction in which it was created, by number; none is 0. -/
   createdAt : UInt64
   /-- Whether anything about it has been changed since it was fetched and not undone. -/
@@ -126,7 +124,6 @@ structure Slot where
   refund are reckoned from. -/
   original : Word
   originalAt : UInt64
-  warmAt : UInt64
   /-- What it held when fetched: what the state before the block had. -/
   before : Word
   deriving Inhabited
@@ -142,6 +139,8 @@ inductive Undo where
   | slot (key : SlotKey) (old : Slot)
   | transient (key : SlotKey) (old : Word)
   | refund (old : UInt64)
+  | warmAccount (address : Word) (old : UInt64)
+  | warmSlot (key : SlotKey) (old : UInt64)
 
 /-- How far everything that a failed call must lose had got when the call began. -/
 structure Checkpoint where
@@ -154,6 +153,11 @@ structure World where
   accounts : Std.HashMap Word Account
   slots : Std.HashMap SlotKey Slot
   transient : Std.HashMap SlotKey Word
+  /-- The transaction in which an address became warm, by number. Warmth is kept apart from what is known
+  of the account, because an address can be warm that nothing has read: one in a transaction's access list
+  that the transaction never touches is warm and is not fetched. -/
+  warmAccounts : Std.HashMap Word UInt64
+  warmSlots : Std.HashMap SlotKey UInt64
   /-- Which bytes of a code are jump destinations, by the code's hash: worked out once. -/
   jumps : Std.HashMap Word ByteArray
   journal : Array Undo
@@ -175,13 +179,14 @@ structure World where
 namespace World
 
 def new (backing : Backing) : World :=
-  { backing, accounts := {}, slots := {}, transient := {}, jumps := {}, journal := #[], logs := #[],
+  { backing, accounts := {}, slots := {}, transient := {}, warmAccounts := {}, warmSlots := {}, jumps := {},
+    journal := #[], logs := #[],
     destructs := #[], refund := 0, epoch := 1, missing := false, lacking := Word.zero }
 
 /-- An account that is not in the state. -/
 def noAccount : Account :=
   { present := false, nonce := 0, balance := Word.zero, codeHash := emptyCodeHash, code := ByteArray.empty,
-    hasCode := true, fresh := true, warmAt := 0, createdAt := 0, dirty := false, storageWasEmpty := true }
+    hasCode := true, fresh := true, createdAt := 0, dirty := false, storageWasEmpty := true }
 
 @[inline] def lack (w : World) (what : Word) : World :=
   if w.missing then w else { w with missing := true, lacking := what }
@@ -196,7 +201,7 @@ def account (w : World) (a : Word) : World × Account :=
     | .found leaf =>
       let entry : Account :=
         { present := true, nonce := leaf.nonce, balance := leaf.balance, codeHash := leaf.codeHash,
-          code := ByteArray.empty, hasCode := leaf.codeHash == emptyCodeHash, fresh := false, warmAt := 0,
+          code := ByteArray.empty, hasCode := leaf.codeHash == emptyCodeHash, fresh := false,
           createdAt := 0, dirty := false, storageWasEmpty := leaf.storageEmpty }
       ({ w with accounts := w.accounts.insert a entry }, entry)
     | .absent => ({ w with accounts := w.accounts.insert a noAccount }, noAccount)
@@ -218,15 +223,11 @@ def withCode (w : World) (a : Word) : World × Account :=
       ({ w with accounts := w.accounts.insert a entry }, entry)
     | none => (w.lack entry.codeHash, entry)
 
-/-- Makes `a` warm for this transaction. The answer is whether it was cold. -/
+/-- Makes `a` warm for this transaction. The answer is whether it was cold. Nothing is fetched. -/
 def warm (w : World) (a : Word) : World × Bool :=
-  let (w, entry) := w.account a
-  if entry.warmAt == w.epoch then (w, false)
-  else
-    -- Warmth is undone with the call that caused it, so it goes on the journal, but it is no change to
-    -- the state: `dirty` is put back as it was.
-    let warmed := { entry with warmAt := w.epoch }
-    ({ w with accounts := w.accounts.insert a warmed, journal := w.journal.push (.account a entry) }, true)
+  let old := w.warmAccounts.getD a 0
+  if old == w.epoch then (w, false)
+  else ({ w with warmAccounts := w.warmAccounts.insert a w.epoch, journal := w.journal.push (.warmAccount a old) }, true)
 
 /-- The slot `key` of `a`, fetched if it has not been, and stamped for this transaction. -/
 def slot (w : World) (a key : Word) : World × Slot :=
@@ -239,11 +240,11 @@ def slot (w : World) (a key : Word) : World × Slot :=
       let fetched : Fetched Word := if owner.fresh || owner.storageWasEmpty then .absent else w.backing.slot a key
       match fetched with
       | .found value =>
-        let entry : Slot := { value, original := value, originalAt := 0, warmAt := 0, before := value }
+        let entry : Slot := { value, original := value, originalAt := 0, before := value }
         ({ w with slots := w.slots.insert name entry }, entry)
       | .absent =>
         let entry : Slot :=
-          { value := Word.zero, original := Word.zero, originalAt := 0, warmAt := 0, before := Word.zero }
+          { value := Word.zero, original := Word.zero, originalAt := 0, before := Word.zero }
         ({ w with slots := w.slots.insert name entry }, entry)
       | .missing => (w.lack a, default)
   if entry.originalAt == w.epoch then (w, entry)
@@ -254,14 +255,21 @@ def slot (w : World) (a key : Word) : World × Slot :=
     let entry := { entry with original := entry.value, originalAt := w.epoch }
     ({ w with slots := w.slots.insert name entry }, entry)
 
-/-- Makes a slot warm for this transaction. The answer is the slot as it was and whether it was cold. -/
+/-- A slot fetched and made warm for this transaction. The answer is the slot and whether it was cold. -/
 def warmSlot (w : World) (a key : Word) : World × Slot × Bool :=
   let (w, entry) := w.slot a key
-  if entry.warmAt == w.epoch then (w, entry, false)
+  let name : SlotKey := ⟨a, key⟩
+  let old := w.warmSlots.getD name 0
+  if old == w.epoch then (w, entry, false)
   else
-    let warmed := { entry with warmAt := w.epoch }
-    ({ w with slots := w.slots.insert ⟨a, key⟩ warmed, journal := w.journal.push (.slot ⟨a, key⟩ entry) },
-     warmed, true)
+    ({ w with warmSlots := w.warmSlots.insert name w.epoch, journal := w.journal.push (.warmSlot name old) }, entry, true)
+
+/-- A slot made warm without being fetched: one a transaction's access list names. -/
+def warmSlotOnly (w : World) (a key : Word) : World :=
+  let name : SlotKey := ⟨a, key⟩
+  let old := w.warmSlots.getD name 0
+  if old == w.epoch then w
+  else { w with warmSlots := w.warmSlots.insert name w.epoch, journal := w.journal.push (.warmSlot name old) }
 
 /-- A slot given a new value. `old` is the entry as `slot` or `warmSlot` last gave it. -/
 def setSlot (w : World) (a key : Word) (old : Slot) (value : Word) : World :=
@@ -293,6 +301,8 @@ def undo (w : World) : Undo → World
     { w with slots := w.slots.insert key old }
   | .transient key old => { w with transient := w.transient.insert key old }
   | .refund old => { w with refund := old }
+  | .warmAccount a old => { w with warmAccounts := w.warmAccounts.insert a old }
+  | .warmSlot key old => { w with warmSlots := w.warmSlots.insert key old }
 
 /-- Everything since `mark` undone, the latest first. -/
 def revert (w : World) (mark : Checkpoint) : World :=
@@ -311,13 +321,16 @@ def setBalance (w : World) (a : Word) (balance : Word) : World :=
   let (w, entry) := w.account a
   w.setAccount a entry { entry with present := true, balance }
 
-/-- `amount` added to what `a` has. An account that was not in the state comes into it. -/
+/-- `amount` added to what `a` has. An account that was not in the state comes into it, unless the amount
+is nothing: nothing given to no one leaves no one there. -/
 def credit (w : World) (a amount : Word) : World :=
+  if amount.isZero then w else
   let (w, entry) := w.account a
   w.setAccount a entry { entry with present := true, balance := entry.balance.add amount }
 
 /-- `amount` taken from what `a` has, which the caller has checked is enough. -/
 def debit (w : World) (a amount : Word) : World :=
+  if amount.isZero then w else
   let (w, entry) := w.account a
   w.setAccount a entry { entry with balance := entry.balance.sub amount }
 
@@ -344,7 +357,7 @@ def destruct (w : World) (a : Word) : World := { w with destructs := w.destructs
 /-- An account taken out of the state, with everything in its storage. -/
 def remove (w : World) (a : Word) : World :=
   let (w, entry) := w.account a
-  let w := w.setAccount a entry { noAccount with warmAt := entry.warmAt }
+  let w := w.setAccount a entry noAccount
   -- Its slots that are known are emptied; the rest are never asked for again, the account being fresh.
   let names := w.slots.fold (fun names name _ => if name.address == a then names.push name else names) #[]
   names.foldl (fun w name =>

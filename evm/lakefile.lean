@@ -73,6 +73,12 @@ lean_exe mkrequest where
 lean_exe «evm-test» where
   root := `EvmTest
 
+/-- The fast engine's word arithmetic against `Nat`. Its output is the same on both runtimes. -/
+@[default_target]
+lean_exe «fast-word-test» where
+  root := `FastWordTest
+  moreLinkObjs := #[platformHosted]
+
 /-- Times the hashing, the curves and the interpreter, on whichever runtime it is linked against. -/
 @[default_target]
 lean_exe «evm-bench» where

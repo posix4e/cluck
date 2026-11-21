@@ -3,6 +3,7 @@ import Jaune.MessageCall.Exec
 import Evm
 import Fast.Spike
 import Fast.Keccak
+import Fast.Wide
 import Platform
 
 /-! Times Jaune's hashing, curve arithmetic and interpreter, on whichever runtime this is linked against.
@@ -104,6 +105,20 @@ def fastKeccakBytes (n : Nat) (size : Nat) : String := Id.run do
     b := b.set! 0 (d.w3 >>> 56).toUInt8
   return (Evm.Trie.word d.bytes 0).toHex
 
+def fastMulmodChain (n : Nat) (x : U256) : String := Id.run do
+  let p := Fast.Word.ofNat (2 ^ 256 - 189)
+  let mut x := Fast.Word.ofNat x.toNat
+  for _ in [0:n] do x := Fast.Word.mulmod x (Fast.Word.add x (Fast.Word.ofUInt64 3)) p
+  return x.toNat.toU256.toHex
+
+def fastDivChain (n : Nat) (x : U256) : String := Id.run do
+  let mut x := Fast.Word.ofNat x.toNat
+  let mut y := Fast.Word.ofNat (2 ^ 200 + 12345)
+  for _ in [0:n] do
+    x := Fast.Word.add (Fast.Word.mul x y) (Fast.Word.div y.not (Fast.Word.add x Fast.Word.one))
+    y := Fast.Word.add (Fast.Word.mod x.not y) (Fast.Word.ofUInt64 7)
+  return x.toNat.toU256.toHex
+
 def fastLoop (n : Nat) : String :=
   let out := Fast.Spike.bytesRun (loopCode n) 1000000000
   s!"halt {out.halt} gasLeft {out.gas} stack {out.depth}"
@@ -126,6 +141,8 @@ def main : IO UInt32 := do
   timed "fast keccak256 of 32 bytes x 200000" fun _ => fastKeccakChain 200000 x
   timed "keccak256 of 532 bytes x 50000" fun _ => jauneKeccakBytes 50000 (532 * seed)
   timed "fast keccak256 of 532 bytes x 50000" fun _ => fastKeccakBytes 50000 (532 * seed)
+  timed "fast mulmod 256-bit x 200000" fun _ => fastMulmodChain 200000 x
+  timed "fast mul, div and mod, 256-bit, x 200000" fun _ => fastDivChain 200000 x
   timed "fast loop, stack as bytes, 200000 rounds of 8 opcodes" fun _ => fastLoop (200000 * seed)
   timed "fast loop, stack as bytes, 10000000 rounds of 8 opcodes" fun _ => fastLoop (10000000 * seed)
   timed "fast loop, stack as limbs, 10000000 rounds of 8 opcodes" fun _ => fastLimbs (10000000 * seed)

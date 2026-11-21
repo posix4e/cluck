@@ -433,6 +433,16 @@ The faster engine (`evm/Fast/`), step by step:
   inputs. The witness trie uses it now (`Evm.Trie.hashOf`): `trie-test`, `stateless-test`, `build-test`
   pass, and the 21 saved blocks as a process on the minimal runtime give the same 21 answers in 61.6
   seconds for 65.0 (two runs each), about 5% less. Not rebuilt or run: the TDX image, and the guest.
+- **The 256-bit word and its arithmetic** (`evm/Fast/Word.lean`, `evm/Fast/Wide.lean`): four machine
+  words; add, subtract, compare, the bitwise and shift operations, BYTE, SIGNEXTEND, CLZ, multiply and EXP
+  with no division and no allocation when inlined; DIV, MOD, SDIV, SMOD, ADDMOD and MULMOD by Knuth's long
+  division on 32-bit digits (there is no 128-bit multiply or divide to call). `fast-word-test` puts every
+  operation through `Nat`'s answer: 29 awkward values and 400 drawn in several shapes, every pair for the
+  operations of two (193,050 cases each) and 910,389 triples for the two of three, 5.9 million cases, all
+  agreeing, with the same output on Lean's runtime and the minimal one. On the minimal runtime 200,000
+  MULMODs take 0.21 seconds for Jaune's 0.89. A first version of the division, written with `for` loops,
+  was right and slower than Jaune's, because such a loop builds a tuple at every turn: loops in this
+  engine are functions that call themselves. Nothing here is proved.
 
 The relay's own checks, hostile input and a week of validating delivered blocks, which were next before
 the aim changed, are set aside, not done.

@@ -47,8 +47,8 @@ it, and continuous integration does not build it. What has been run and what it 
   `scripts/check-secret-code`: reads the image's machine code for the key's arithmetic.
 - `BuildWhy.lean`: what became of each transaction in a request to build, and why one was left out.
   `builder/shadow`: the builder run in shadow on the host, a block built in the guest for every slot from
-  pending transactions, signed by the guest and judged by the node's own validator, and sent to relays only with `--live`. Neither
-  goes in an image.
+  pending transactions, signed by the guest and judged by the node's own validator, and sent to relays
+  only with `--live`. Neither goes in an image.
 - `StatelessWhy.lean`: a stateless request's answer in words, with Jaune's reason for a rejection and what a
   short witness lacks. `witness/fetch`: makes a stateless request for a block from a node that follows the
   chain. Neither goes in an image.

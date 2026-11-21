@@ -601,7 +601,8 @@ times, and the block from the relay. Six stages:
     `cluck`, 20 transactions, 1.88M gas) was built by the fast engine's builder in the guest and posted
     by the guest itself, over its own TLS, to Flashbots, Ultrasound, Aestus and Titan, 7.3 s before the
     slot. All four answered 200. The proposer took it; Flashbots, Aestus and Titan list it as
-    delivered under the guest's builder key, at 0.02067 ETH.
+    delivered under the guest's builder key, at 0.02067 ETH. It was finalized a quarter of an hour
+    later.
   - Its last transaction is the one that was sealed: a transfer of nothing from the test wallet to
     itself, signed by this program as a sender, sealed to the guest's key with `demo/seal.js`, and
     handed in as 161 bytes. This program as the host never had it in a request, and was not shown the

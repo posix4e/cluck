@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Holds the browser's sealing (`demo/seal.js`) to other people's: its ChaCha20-Poly1305 to node's own, and
+whole messages it seals to OpenSSL's HPKE, which must open them.
+
+    scripts/seal-check        (from evm/; needs node)
+
+`tls-test` has the other direction: what OpenSSL seals, `Tls/Hpke.lean` opens. So what the page seals, the
+machine opens, by way of OpenSSL agreeing with each; and `builder/shadow --sealed` puts one through both
+in earnest."""
+import ctypes, ctypes.util, json, os, subprocess, sys
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+NODE = r"""
+require(process.argv[1]);
+const crypto = require("crypto");
+(async () => {
+  // The sealing of RFC 8439 against node's, on messages of many lengths.
+  let wrong = 0, tried = 0;
+  for (const size of [0, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 1000, 4097]) for (const beside of [0, 5, 16, 33]) {
+    const key = crypto.randomBytes(32), nonce = crypto.randomBytes(12), aad = crypto.randomBytes(beside), plain = crypto.randomBytes(size);
+    const cipher = crypto.createCipheriv("chacha20-poly1305", key, nonce, { authTagLength: 16 });
+    cipher.setAAD(aad);
+    const theirs = Buffer.concat([cipher.update(plain), cipher.final(), cipher.getAuthTag()]);
+    tried++;
+    if (!theirs.equals(Buffer.from(cluckSeal.sealWith(key, nonce, aad, plain)))) wrong++;
+  }
+  // Whole messages sealed to the key given, for somebody else to open.
+  const recipient = Buffer.from(process.argv[2], "hex");
+  const sealed = [];
+  for (const size of [1, 16, 100, 2000]) {
+    const info = crypto.randomBytes(size % 7), aad = crypto.randomBytes(size % 5), plain = crypto.randomBytes(size);
+    const out = await cluckSeal.hpkeSeal(recipient, info, aad, plain);
+    sealed.push({ info: info.toString("hex"), aad: aad.toString("hex"), plain: plain.toString("hex"), sealed: Buffer.from(out).toString("hex") });
+  }
+  const transaction = crypto.randomBytes(150);
+  const envelope = await cluckSeal.sealTransaction(recipient, 15700576, transaction);
+  sealed.push({ info: Buffer.from("sealed transaction v1").toString("hex"), aad: "",
+                plain: "0000000000ef9260" + transaction.toString("hex"), sealed: Buffer.from(envelope).toString("hex") });
+  console.log(JSON.stringify({ tried, wrong, sealed }));
+})();
+"""
+
+lib = ctypes.CDLL(ctypes.util.find_library("crypto"))
+class Suite(ctypes.Structure):
+    _fields_ = [("kem", ctypes.c_uint16), ("kdf", ctypes.c_uint16), ("aead", ctypes.c_uint16)]
+suite = Suite(0x0020, 0x0001, 0x0003)
+lib.OSSL_HPKE_CTX_new.restype = ctypes.c_void_p
+lib.OSSL_HPKE_CTX_new.argtypes = [ctypes.c_int, Suite, ctypes.c_int, ctypes.c_void_p, ctypes.c_char_p]
+lib.EVP_PKEY_new_raw_private_key.restype = ctypes.c_void_p
+lib.EVP_PKEY_new_raw_private_key.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t]
+lib.OSSL_HPKE_decap.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_char_p, ctypes.c_size_t]
+lib.OSSL_HPKE_open.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_size_t), ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
+
+def opened(secret, info, aad, envelope):
+    """What OpenSSL makes of an envelope (the sender's public half, then the sealed message), or None."""
+    ctx = lib.OSSL_HPKE_CTX_new(0, suite, 1, None, None)          # base mode, as the receiver
+    key = lib.EVP_PKEY_new_raw_private_key(1034, None, secret, 32)   # 1034 is X25519
+    if lib.OSSL_HPKE_decap(ctx, envelope[:32], 32, key, info, len(info)) != 1: return None
+    out, size = ctypes.create_string_buffer(len(envelope)), ctypes.c_size_t(len(envelope))
+    if lib.OSSL_HPKE_open(ctx, out, ctypes.byref(size), aad, len(aad), envelope[32:], len(envelope) - 32) != 1: return None
+    return out.raw[:size.value]
+
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+key = X25519PrivateKey.generate()
+secret = key.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
+done = subprocess.run(["node", "-e", NODE, os.path.join(here, "demo/seal.js"), key.public_key().public_bytes_raw().hex()],
+                      capture_output=True, text=True)
+if done.returncode != 0: sys.exit("seal-check: node failed:\n" + done.stderr[-2000:])
+said = json.loads(done.stdout)
+print(f"ChaCha20-Poly1305 in the page's script against node's: {said['tried'] - said['wrong']} of {said['tried']} the same")
+good = sum(opened(secret, bytes.fromhex(m["info"]), bytes.fromhex(m["aad"]), bytes.fromhex(m["sealed"])) == bytes.fromhex(m["plain"])
+           for m in said["sealed"])
+spoiled = sum(opened(secret, bytes.fromhex(m["info"]) + b"x", bytes.fromhex(m["aad"]), bytes.fromhex(m["sealed"])) is None
+              for m in said["sealed"])
+print(f"messages the page's script sealed, opened by OpenSSL's HPKE: {good} of {len(said['sealed'])}; "
+      f"with other words for `info`, refused: {spoiled} of {len(said['sealed'])}")
+ok = said["wrong"] == 0 and good == len(said["sealed"]) == spoiled
+print("seal-check: all as it should be" if ok else "seal-check: WRONG")
+sys.exit(0 if ok else 1)

@@ -20,6 +20,11 @@ lean_lib Evm
 @[default_target]
 lean_lib Fast
 
+/-- What the guest needs to keep a secret on a wire: hashes, a cipher, a key exchange, and in time a TLS
+client. Written here because nobody else's may go in an image. Imports no proofs and no Jaune. -/
+@[default_target]
+lean_lib Tls
+
 /-- The platform as an ordinary process, from the OS's own source. -/
 target platformHosted pkg : System.FilePath := do
   let src ← inputTextFile (pkg.dir / ".." / "rt" / "hosted" / "platform.c")
@@ -104,6 +109,12 @@ lean_exe «bn254-test» where
 @[default_target]
 lean_exe «fast-fixtures» where
   root := `FastFixtures
+
+/-- `Tls/` against the standards' examples and against OpenSSL (`Tls/vectors.txt`). -/
+@[default_target]
+lean_exe «tls-test» where
+  root := `TlsTest
+  moreLinkObjs := #[secretHosted]
 
 /-- Times the hashing, the curves and the interpreter, on whichever runtime it is linked against. -/
 @[default_target]

@@ -48,6 +48,9 @@ theorem size_uset (a : ByteArray) (i : USize) (v : UInt8) (h : i.toNat < a.size)
     (set1 r (off + USize.ofNat 7) (x >>> 56).toUInt8 (within 7 (by omega))).1
   else a
 
+/-- The byte at `i`, and nothing for a place past the end. -/
+@[inline] def byte (b : @& ByteArray) (i : Nat) : UInt8 := if h : i < b.size then b[i] else 0
+
 /-- The eight bytes of a word in the opposite order. -/
 @[inline] def swap (x : UInt64) : UInt64 :=
   let x := ((x &&& 0x00ff00ff00ff00ff) <<< 8) ||| ((x >>> 8) &&& 0x00ff00ff00ff00ff)

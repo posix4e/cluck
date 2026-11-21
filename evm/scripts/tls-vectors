@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Writes the cases `tls-test` checks `evm/Tls/` against: inputs drawn from a fixed seed, and what Python's
+hashlib and the `cryptography` package (OpenSSL underneath) make of them.
+
+    scripts/tls-vectors > Tls/vectors.txt        (from evm/)
+
+One case to a line: its kind, then hexadecimal fields, the last the expected answer ("-" is no bytes)."""
+import hashlib, hmac, random
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.hazmat.primitives import hashes, poly1305
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+
+rng = random.Random(0x5110)
+some = lambda n: bytes(rng.getrandbits(8) for _ in range(n))
+show = lambda b: b.hex() or "-"
+def line(kind, *fields): print(kind, *[show(f) if isinstance(f, bytes) else str(f) for f in fields])
+
+lengths = list(range(0, 140)) + [191, 192, 193, 255, 256, 257, 1000, 4096]
+for n in lengths:
+    m = some(n)
+    line("sha256", m, hashlib.sha256(m).digest())
+    line("sha384", m, hashlib.sha384(m).digest())
+    line("sha512", m, hashlib.sha512(m).digest())
+for n in [0, 1, 20, 32, 63, 64, 65, 100, 200]:
+    for size in [0, 1, 50, 64, 65, 300]:
+        key, m = some(n), some(size)
+        line("hmac", key, m, hmac.new(key, m, hashlib.sha256).digest())
+for _ in range(40):
+    salt, material, info, length = some(rng.choice([0, 16, 32])), some(rng.choice([1, 32, 48])), some(rng.randrange(0, 80)), rng.choice([1, 12, 16, 32, 33, 64, 100])
+    key = hmac.new(salt if salt else bytes(32), material, hashlib.sha256).digest()
+    line("hkdf", salt, material, info, length, HKDF(hashes.SHA256(), length, salt if salt else None, info).derive(material))
+    label, context = rng.choice(["derived", "c hs traffic", "key", "iv", "finished", "s ap traffic"]), some(rng.choice([0, 32]))
+    full = b"tls13 " + label.encode()
+    packed = length.to_bytes(2, "big") + bytes([len(full)]) + full + bytes([len(context)]) + context
+    line("label", key, label.encode(), context, length, HKDFExpand(hashes.SHA256(), length, packed).derive(key))
+for n in list(range(0, 70)) + [127, 128, 129, 200, 255, 256, 1000, 16400]:
+    key, nonce, aad, plain = some(32), some(12), some(rng.choice([0, 5, 13, 16, 40])), some(n)
+    line("aead", key, nonce, aad, plain, ChaCha20Poly1305(key).encrypt(nonce, plain, aad))
+    line("poly1305", key, plain, poly1305.Poly1305.generate_tag(key, plain))
+for i in range(120):
+    key = some(32)
+    point = some(32) if i % 3 else X25519PrivateKey.from_private_bytes(some(32)).public_key().public_bytes_raw()
+    if i == 5: key = bytes(32)
+    if i == 6: key = bytes([255]) * 32
+    if i == 7: point = bytes([255]) * 32
+    try:
+        shared = X25519PrivateKey.from_private_bytes(key).exchange(X25519PublicKey.from_public_bytes(point))
+    except Exception:
+        continue      # a point of small order, which the library refuses and this client need not make
+    line("x25519", key, point, shared)
+    line("public", key, X25519PrivateKey.from_private_bytes(key).public_key().public_bytes_raw())

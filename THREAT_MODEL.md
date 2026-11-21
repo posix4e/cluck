@@ -95,6 +95,19 @@ the block's maker had claimed the same; one that said no to a true proof makes a
 malformed it could make but one: a point on the twisted curve outside the pairing's subgroup, which the
 code refuses by multiplying by the group's order and which no test here has shown it refusing.
 
+**Cryptography of this project's own, not yet in an image.** `evm/Tls/` is the start of what the guest
+needs to keep a transaction from the host: hashes, HMAC and HKDF, ChaCha20-Poly1305 and X25519, in Lean,
+because the rules here let nobody else's into an image. Nothing reaches it from a request yet and no
+image is built with it, so today it exposes nothing; this is what it will rest on when it does. It is
+held to OpenSSL and to the standards' printed examples by `tls-test`, not proved, and it has not been
+reviewed by anyone who writes such code for a living. For time: no secret goes through `Nat`; the field
+of X25519 and Poly1305 is fixed-width limbs with no branch in the source on a value; the ladder's choice
+is the OS's `Secret.select`; a tag is compared by `Secret.equal`. What the compilers made of it was looked
+at as the signing key's arithmetic was (`scripts/check-secret-code lib`), which counts jumps and does not
+prove their absence where it matters, and one branch on a key's bit was found that way and removed.
+Nothing was measured on a running machine. The key exchange's private key will be drawn from `RDRAND`
+alone, like the signing key.
+
 **Start-up routines that do nothing.** `evm/rt/start.c` stands in for seven of mathlib's. If any code the
 service reaches reads a constant one of them would have built, it reads memory nothing has written. This is
 the rule "nothing that is not there may pass for something that is" broken on purpose, and the fixtures

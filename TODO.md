@@ -393,6 +393,35 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   published); the order privacy a builder in a trust domain is for: transactions still reach the guest in
   the clear, through the host.
 
+**Order privacy** (begun 2026-11-22; nothing of it is in an image or used by anything yet). The aim: a
+transaction sealed to a key only the attested guest holds, built into a block the guest sends to the
+relays itself over TLS, so that the host carries only ciphertext. What it will not hide, by its design:
+which accounts and storage slots such a transaction touches (the host supplies the proofs), sizes and
+times, and the block from the relay. Six stages, of which the first is half done:
+
+- [x] **The pieces that handle secrets** (`evm/Tls/`): SHA-256 on machine words, HMAC and HKDF with TLS
+  1.3's labelled expansion, ChaCha20, Poly1305 and the two as one sealed message, and X25519 on ten limbs
+  of 26 and 25 bits with the OS's `Secret.select` for the ladder's swap. None of it puts a secret through
+  `Nat`. `tls-test` holds each to OpenSSL (through Python's `cryptography` package) on cases drawn from a
+  fixed seed (`Tls/vectors.txt`, made by `scripts/tls-vectors`): 148 messages for each of three hashes,
+  54 HMACs, 80 HKDFs, 78 sealed messages and 78 Poly1305 tags of up to 16 KB, 120 X25519 exchanges and
+  120 public keys; and to the examples printed in FIPS 180-4 and RFC 7748, the thousand-fold iteration
+  among them; and a sealed message with any one of its 824 bits changed, or its key, nonce or the data
+  beside it changed, opens 0 times of 828. `scripts/check-secret-code lib` counts the conditional jumps
+  in the compiled field arithmetic: none in the carry or ChaCha20's quarter round, three or four in the
+  rest, as in the signing key's field, where they are on reference counts. Reading the generated C found
+  the ladder's "swap or not", first written as a comparison of two truth values, compiled to a branch
+  on the key's bit; it is arithmetic on two words now, and that it reaches nothing but the select was
+  read by hand, not checked by a tool. Poly1305's last carry was a question asked of a sum and is
+  arithmetic too. Not done: the same on the minimal runtime; any timing measured; SHA-512 and SHA-384
+  are written and tested here but are for certificates, which are public.
+- [ ] The pieces that only check certificates: RSA and ECDSA signature checks, a certificate reader.
+- [ ] A TLS 1.3 client as a pure state machine, against `openssl s_server` and then the relays' public pages.
+- [ ] Connections out from the guest's loop; the guest fetching a relay's public page in TDX.
+- [ ] The guest putting a submission together itself and posting it over TLS, to a stand-in first.
+- [ ] Sealed transactions in, kept in the guest and built into its blocks; a page that seals one.
+- [ ] Live, and only when asked for with the cost named.
+
 What is next, in order:
 
 1. **Building in shadow.** A program on the host follows the chain and each slot puts pending transactions

@@ -499,6 +499,9 @@ times, and the block from the relay. Six stages:
     5 records that mean nothing, 90 sealed); the path asked for was in no frame but the host's own.
     With `--during=` a saved request to build: a question put just before a block that takes 2 seconds
     was answered 0.11 and 0.17 s later, where 0.04 s is usual.
+  - The image built from `5f7b137` with a clean tree is `5964f7d0…914038b0` (the shadow image
+    `bd021ba0…50f6fc70`); its RTMR1 is `83a7cd95…6ed16f01`, with MRTD and RTMR0 as before, the firmware
+    being the same. The demo runs it since, and its page of measurements was recorded again from it.
   - What the carrier still sees, by design: the relay's name, twice (looked up in the clear, and in
     TLS's first message); the sizes and times of everything. What is not done: the part of a build
     before its first transaction and after its last does not look at the network, and for a small
@@ -720,7 +723,7 @@ The faster engine (`evm/Fast/`), step by step:
     with a clean tree; `run-fixtures tdx --limits` passes): 50 more slots in the guest with both
     builders and no cap but the block's limit, 50 blocks valid and signed, the same bytes from both 50
     times of 50; up to 12.4M gas in a block; the slowest slot 2.13 seconds by Jaune and 0.60 by the
-    engine. The demo runs this image.
+    engine. The demo ran this image until the one that connects out took its place (below).
 - **bn254 on machine words** (2026-11-21; `evm/Fast/Bn254.lean`): the field in Montgomery form on four
   words, the tower above it, both groups, and the optimal ate pairing, for the three precompiled contracts
   that use the curve. Its constants were worked out from the curve's prime, order and parameter, not

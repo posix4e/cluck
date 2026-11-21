@@ -370,7 +370,8 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   that reply, challenge the parent's hash, and refuses seven changed copies; `demo/built.html` shows it.
   What it does not show: that the builder can win a slot on what its block earns (it paid 0.02 to win
   0.0001 of fees), that it can do so twice, or anything about order privacy. Not looked at: the page in a
-  real browser. Not done: the kept files are not published anywhere public.
+  real browser. Not done: the kept files are not published anywhere public. The chain had finalized the
+  block by 12:06 UTC, with the same hash.
 - **Sending bids, as it stood before the block above.** `builder/shadow --live --relays …` posts each
   bid to the relays named, and only a block the node's validator judged valid, signed, before its slot, to
   relays that hold the registration it was built for; it asks the guest for a report with each answer

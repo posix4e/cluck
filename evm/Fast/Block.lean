@@ -95,7 +95,7 @@ def depositsOf (receipts : @& Array Receipt) : Option ByteArray :=
 
 /-- The transactions, one after another. -/
 def transactions (blk : @& BlockEnv) (host : @& Host) (input : @& BlockInput) :
-    Nat → Nat → BlockOutput → Except String BlockOutput
+    Nat → Nat → BlockOutput → Except (String × World) BlockOutput
   | 0, _, out => .ok out
   | left + 1, i, out =>
     match input.transactions[i]? with
@@ -105,16 +105,18 @@ def transactions (blk : @& BlockEnv) (host : @& Host) (input : @& BlockInput) :
         { gas := blk.gasLimit - out.gasUsed, blobs := input.maxBlobs - out.blobs, blobsPerTx := input.blobsPerTx,
           alwaysWarm := input.precompiles }
       match process blk host allowed tx out.stack out.world with
-      | .error why => .error s!"transaction {i}: {why}"
+      | .error (why, world, _) => .error (s!"transaction {i}: {why}", world)
       | .ok (world, stack, receipt) =>
         let gasUsed := out.gasUsed + receipt.cumulativeGas
         transactions blk host input left (i + 1)
           { out with world, stack, gasUsed, blobs := out.blobs + tx.blobHashes.size.toUInt64,
                      receipts := out.receipts.push { receipt with cumulativeGas := gasUsed } }
 
-/-- A block run on `world`. An error is the block being one that may not be. -/
+/-- A block run on `world`. An error is the block being one that may not be, with the world as it stood:
+whoever relies on the refusal has to know what had been fetched by then, because a refusal reached on
+answers that were not proven is no refusal. -/
 def runBlock (blk : @& BlockEnv) (host : @& Host) (input : @& BlockInput) (stack : ByteArray) (world : World) :
-    Except String BlockOutput := do
+    Except (String × World) BlockOutput := do
   -- What the block records of its parent before anything else runs. Neither call can make the block
   -- invalid: where the contract is not there, nothing happens.
   let (world, stack, _, _) := systemCall blk host beaconRootsAddress input.parentBeaconRoot.bytes stack world
@@ -125,13 +127,14 @@ def runBlock (blk : @& BlockEnv) (host : @& Host) (input : @& BlockInput) (stack
     world.credit w.address (Word.ofNat (w.gwei.toNat * 1000000000))) out.world
   let world := world.endTransaction
   -- Requests: the deposits the transactions logged, then what the two queues give up, which they must.
-  let some deposits := depositsOf out.receipts | .error "a deposit event that is not shaped as the deposit contract's"
+  let some deposits := depositsOf out.receipts
+    | .error ("a deposit event that is not shaped as the deposit contract's", world)
   let (world, stack, went, withdrawalRequests) :=
     systemCall blk host withdrawalRequestsAddress ByteArray.empty out.stack world
-  if went != 0 then .error "the withdrawal requests contract is missing or failed"
+  if went != 0 then .error ("the withdrawal requests contract is missing or failed", world)
   let (world, stack, went, consolidationRequests) :=
     systemCall blk host consolidationRequestsAddress ByteArray.empty stack world
-  if went != 0 then .error "the consolidation requests contract is missing or failed"
+  if went != 0 then .error ("the consolidation requests contract is missing or failed", world)
   let requests := #[(0x00, deposits), (0x01, withdrawalRequests), (0x02, consolidationRequests)].filterMap
     fun ((kind, data) : UInt8 × ByteArray) => if data.size == 0 then none else some ((ByteArray.mk #[kind]) ++ data)
   return { out with world, stack, requests }

@@ -59,10 +59,22 @@ structure Tally where
   shortened : Nat := 0
   noticed : Nat := 0
 
-def fixture (name : String) (shorten : Bool) (tally : Tally) (write : Bool := false) : IO Tally := do
+/-- Who judges a block: Jaune, or the fast engine, which must answer the same in every case below. -/
+structure Judge where
+  name : String
+  run : Stateless.Request → Service.Response
+  /-- The request as bytes, answered. -/
+  serve : ByteArray → ByteArray
+
+def jaune : Judge := ⟨"", Stateless.run, Stateless.serve⟩
+def engine : Judge :=
+  ⟨"the engine: ", fun r => (Engine.runWithReason r).1,
+   fun bytes => Engine.serve (Engine.magic ++ bytes.extract Stateless.magic.size bytes.size)⟩
+
+def fixture (judge : Judge) (name : String) (shorten : Bool) (tally : Tally) (write : Bool := false) : IO Tally := do
   let mut tally := tally
   let fail (what : String) (t : Tally) : IO Tally := do
-    IO.println s!"{name}: {what}"
+    IO.println s!"{judge.name}{name}: {what}"
     pure { t with failures := t.failures + 1 }
   let bytes ← IO.FS.readBinFile s!"fixtures/{name}.req"
   let some (whole, _) := (Service.request bytes).run 0 | fail "the fixture is not a request" tally
@@ -81,7 +93,7 @@ def fixture (name : String) (shorten : Bool) (tally : Tally) (write : Bool := fa
     let request : Stateless.Request :=
       { fork := some whole.fork, chainId := whole.chainId, block := block.toByteArray, headers,
         nodes := witness.nodes, codes := witness.codes, keys := witness.keys }
-    let answer := Stateless.run request
+    let answer := judge.run request
     let .ok (.inl next) := addBlockToChainAt whole.fork chain block
       | return ← fail s!"block {number}: the ordinary import does not accept it" tally
     let some tip := next.blocks.getLast? | return ← fail "an empty chain" tally
@@ -93,7 +105,7 @@ def fixture (name : String) (shorten : Bool) (tally : Tally) (write : Bool := fa
     match request.encode with
     | none => tally ← fail "a request has no encoding" tally
     | some encoded =>
-      if number == 1 && Stateless.serve encoded != wanted.encode then
+      if number == 1 && judge.serve encoded != wanted.encode then
         tally ← fail s!"block {number}: the request as bytes is answered differently" tally
     -- With `write`, the last block of the chain is kept as a request for the service as a process.
     if write && number == whole.blocks.length then
@@ -113,7 +125,7 @@ def fixture (name : String) (shorten : Bool) (tally : Tally) (write : Bool := fa
         variants := ("a code", { request with codes := witness.codes.eraseIdx i }) :: variants
       variants := ("a header", { request with headers := headers.drop 1 }) :: variants
       for (left, variant) in variants do
-        let got := Stateless.run variant
+        let got := judge.run variant
         tally := { tally with shortened := tally.shortened + 1 }
         if noVerdict got then
           tally := { tally with noticed := tally.noticed + 1 }
@@ -121,10 +133,10 @@ def fixture (name : String) (shorten : Bool) (tally : Tally) (write : Bool := fa
           tally ← fail s!"block {number}: without {left}, status {got.status}" tally
       -- A block that claims a state root its execution does not give is invalid, and provably so.
       let lying : Block := { tip with header := { tip.header with stateRoot := tip.header.stateRoot + 1 } }
-      let got := Stateless.run { request with block := lying.toRlpItem.toBytes.toByteArray }
+      let got := judge.run { request with block := lying.toRlpItem.toBytes.toByteArray }
       if got.status != 3 then
         tally ← fail s!"block {number}: a wrong state root got status {got.status}" tally
-      let got := Stateless.run { request with nodes := #[] }
+      let got := judge.run { request with nodes := #[] }
       if !noVerdict got then
         tally ← fail s!"block {number}: no nodes at all got status {got.status}" tally
     chain := next
@@ -135,12 +147,12 @@ address left out of the witness's keys in turn. The fixtures above are small cha
 little; a block of mainnet is where one contract calls another that nothing else in the block names, and
 leaving such an account out is what went unnoticed until 2026-11-21: the call was not recorded as a read,
 the account was taken to be empty, and a valid block was answered invalid. -/
-def real (path : System.FilePath) (step : Nat) (tally : Tally) : IO Tally := do
+def real (judge : Judge) (path : System.FilePath) (step : Nat) (tally : Tally) : IO Tally := do
   let mut tally := tally
-  let name := path.fileName.getD ""
+  let name := judge.name ++ path.fileName.getD ""
   let some (request, _) := (Stateless.request (← IO.FS.readBinFile path)).run 0
     | do IO.println s!"{name}: not a stateless request"; pure { tally with failures := tally.failures + 1 }
-  let wanted := Stateless.run request
+  let wanted := judge.run request
   if wanted.status != 0 then
     IO.println s!"{name}: status {wanted.status} with its whole witness"
     return { tally with failures := tally.failures + 1 }
@@ -149,7 +161,7 @@ def real (path : System.FilePath) (step : Nat) (tally : Tally) : IO Tally := do
   let mut noticed := 0
   for turn in [0 : (addresses.size + step) / (step + 1)] do
     let left := addresses[turn * (step + 1)]!
-    let got := Stateless.run { request with keys := request.keys.filter (· != left) }
+    let got := judge.run { request with keys := request.keys.filter (· != left) }
     tried := tried + 1
     if noVerdict got then noticed := noticed + 1
     else if !same got wanted then
@@ -159,24 +171,31 @@ def real (path : System.FilePath) (step : Nat) (tally : Tally) : IO Tally := do
   pure { tally with blocks := tally.blocks + 1, shortened := tally.shortened + tried, noticed := tally.noticed + noticed }
 
 def main (args : List String) : IO UInt32 := do
-  let mut tally : Tally := {}
+  let mut failures := 0
   -- `stateless-test real DIR [STEP]`: only the blocks of the real chain in DIR.
   if let "real" :: dir :: rest := args then
     let step := (rest.head?.bind String.toNat?).getD 10 - 1
     let entries := (← System.FilePath.readDir dir).filter (·.fileName.endsWith ".req")
-    for entry in entries.qsort (·.fileName < ·.fileName) do
-      tally ← real entry.path step tally
-    IO.println s!"blocks of the real chain: {tally.blocks} blocks, {tally.shortened} witnesses with an address \
-      left out, {tally.noticed} answered with no verdict, {tally.failures} answered wrongly"
-    return if tally.failures == 0 then 0 else 1
-  for name in ["highGasUsage", "wallet2outOf3txsRevokeAndConfirmAgain", "DelegateCallSpam"] do
-    tally ← fixture name true tally (args.contains "write")
-  IO.println s!"three fixtures, witness whole and then one piece short: {tally.blocks} blocks, \
-    {tally.shortened} shortened witnesses, {tally.noticed} of them answered with no verdict"
-  let before := tally.blocks
-  for name in ["walletReorganizeOwners"] ++ (if args.contains "all" then ["ShanghaiLove"] else []) do
-    tally ← fixture name false tally
-  IO.println s!"longer fixtures, witness whole: {tally.blocks - before} blocks"
-  if tally.failures == 0 then IO.println "stateless-test: all checks passed"
-  else IO.println s!"stateless-test: {tally.failures} FAILED"
-  return if tally.failures == 0 then 0 else 1
+    for judge in [jaune, engine] do
+      let mut tally : Tally := {}
+      for entry in entries.qsort (·.fileName < ·.fileName) do
+        tally ← real judge entry.path step tally
+      IO.println s!"{judge.name}blocks of the real chain: {tally.blocks} blocks, {tally.shortened} witnesses with an \
+        address left out, {tally.noticed} answered with no verdict, {tally.failures} answered wrongly"
+      failures := failures + tally.failures
+    return if failures == 0 then 0 else 1
+  for judge in [jaune, engine] do
+    let mut tally : Tally := {}
+    for name in ["highGasUsage", "wallet2outOf3txsRevokeAndConfirmAgain", "DelegateCallSpam"] do
+      -- Only Jaune's answers are kept as fixtures.
+      tally ← fixture judge name true tally (args.contains "write" && judge.name == "")
+    IO.println s!"{judge.name}three fixtures, witness whole and then one piece short: {tally.blocks} blocks, \
+      {tally.shortened} shortened witnesses, {tally.noticed} of them answered with no verdict"
+    let before := tally.blocks
+    for name in ["walletReorganizeOwners"] ++ (if args.contains "all" then ["ShanghaiLove"] else []) do
+      tally ← fixture judge name false tally
+    IO.println s!"{judge.name}longer fixtures, witness whole: {tally.blocks - before} blocks"
+    failures := failures + tally.failures
+  if failures == 0 then IO.println "stateless-test: all checks passed"
+  else IO.println s!"stateless-test: {failures} FAILED"
+  return if failures == 0 then 0 else 1

@@ -27,14 +27,16 @@ def judge (path : String) : IO Bool := do
   let t0 ← IO.monoMsNow
   let .ok known := Stateless.materialise r parent.stateRoot | do IO.println s!"{name}: the witness does not read"; return false
   let t1 ← IO.monoMsNow
-  let some body := Bridge.body fork r.chainId block | do IO.println s!"{name}: a transaction does not decode"; return false
+  let .ok decoded := block.transactions.mapM (decodeTransaction fork.ruleSet)
+    | do IO.println s!"{name}: a transaction does not decode"; return false
+  let some body := Bridge.body fork r.chainId block decoded | do IO.println s!"{name}: a transaction has no sender"; return false
   let t2 ← IO.monoMsNow
   let blk := Bridge.environment fork r.chainId block.header ancestors
   let result ← IO.lazyPure fun _ =>
     Fast.runBlock blk (Bridge.host fork) body ByteArray.empty (Fast.World.new (Bridge.backing known))
   let t3 ← IO.monoMsNow
   match result with
-  | .error why => IO.println s!"{name}: REFUSED: {why}"; return false
+  | .error (why, _) => IO.println s!"{name}: REFUSED: {why}"; return false
   | .ok out =>
     let (root, bloom) ← IO.lazyPure fun _ => Bridge.receiptsRootAndBloom out.receipts
     let requests := computeRequestsHash (out.requests.toList.map (·.toList))
@@ -72,7 +74,8 @@ def whereFetched (path : String) (hexAddress : String) : IO Unit := do
   let some ancestors := r.headers.mapM Stateless.header | IO.println "a header does not decode"
   let some parent := ancestors.getLast? | IO.println "no headers"
   let .ok known := Stateless.materialise r parent.stateRoot | IO.println "the witness does not read"
-  let some body := Bridge.body fork r.chainId block | IO.println "a transaction does not decode"
+  let .ok decoded := block.transactions.mapM (decodeTransaction fork.ruleSet) | IO.println "a transaction does not decode"
+  let some body := Bridge.body fork r.chainId block decoded | IO.println "a transaction has no sender"
   let blk := Bridge.environment fork r.chainId block.header ancestors
   let wanted := Fast.Word.ofHex hexAddress
   -- What the witness has for the account, whether or not the request names it.
@@ -90,7 +93,7 @@ def whereFetched (path : String) (hexAddress : String) : IO Unit := do
   for count in [0:body.transactions.size + 1] do
     let part := { body with transactions := body.transactions.extract 0 count }
     match Fast.runBlock blk (Bridge.host fork) part ByteArray.empty (Fast.World.new (Bridge.backing known)) with
-    | .error why => IO.println s!"with {count} transactions: {why}"; return
+    | .error (why, _) => IO.println s!"with {count} transactions: {why}"; return
     | .ok out =>
       if out.world.accounts.contains wanted then
         if count == 0 then IO.println "fetched by the block's own calls, before any transaction"

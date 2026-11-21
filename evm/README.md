@@ -28,6 +28,14 @@ it, and continuous integration does not build it. What has been run and what it 
 - `Evm/Build.lean`: the makings of a block and a witness, and out of them a block: which of the proposed
   transactions go in, in what order, and the header that follows from running them. The format, the rule
   for ordering and what is left out are at the top of the file.
+- `Fast/`: an execution engine written for speed, to take Jaune's place in what runs; it imports nothing of
+  Jaune. `Word.lean` and `Wide.lean` are the 256-bit word; `Keccak.lean` the hash; `State.lean` the world
+  as accounts and storage fetched when touched, with a journal; `Machine.lean` and `Interp.lean` the
+  interpreter; `Tx.lean` and `Block.lean` a transaction and a block. `Evm/Bridge.lean` is where Jaune's
+  types and the engine's meet, and `Evm/Engine.lean` is a stateless request judged by the engine: the
+  same request with `JWIF1` for its first five bytes, the same answer. `FastWordTest.lean`,
+  `FastOpTest.lean` and `FastReplay.lean` hold the engine to `Nat`, to Jaune's interpreter and to the
+  headers of saved blocks; `EngineTime.lean` says where its time goes.
 - `Evm/Sign.lean`, `Evm/Sign/`: a BLS key used without ever being a `Nat`. `Field.lean` is the base field on
   fixed-width words with every value-dependent choice made by the OS's `Secret.select`; `Curve.lean` is
   the key times a point by the same steps whatever the key; `Sign.lean` is public keys and signatures over
@@ -181,6 +189,9 @@ write`. For a block of mainnet, a node has to supply the witness. With reth foll
 witness/fetch 26456375 block.req block.expected
 .lake/build/bin/evm-serve < block.req | cmp - block.expected
 .lake/build/bin/stateless-why block.req
+.lake/build/bin/fast-replay block.req ...                 # saved blocks through the fast engine, their headers the judge
+.lake/build/bin/fast-replay --where ADDRESS block.req     # which transaction first makes the engine fetch an account
+.lake/build/bin/engine-time < block.req                   # where the engine's time goes (also -min, after build-min)
 ```
 
 The node these were run against was reth 2.11.0 with Lighthouse 8.3.3, started from reth's minimal

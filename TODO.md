@@ -491,8 +491,30 @@ The faster engine (`evm/Fast/`), step by step:
     should be refused, or witnesses that are short or wrong (the engine's own refusals are untested);
     Ethereum's test suites. Nothing that serves requests uses the engine yet. The precompiled contracts,
     the decoding of blocks and transactions, the recovery of senders and the receipts root are still
-    Jaune's, reached through `Evm/Bridge.lean`. A typed transaction's chain id is not checked by the
-    bridge. An empty account that is touched is not removed (EIP-161).
+    Jaune's, reached through `Evm/Bridge.lean`. An empty account that is touched is not removed
+    (EIP-161).
+- **The engine answers requests** (2026-11-21; `evm/Evm/Engine.lean`). A stateless request with `JWIF1`
+  for its first five bytes is judged by the engine and answered in the same 69 bytes. A refusal now
+  carries the engine's world back, so a block the engine refuses is answered invalid when all it had
+  read was proven, and "witness short" when not. `stateless-test` puts both judges through the same
+  cases and they agree: 279 blocks of the test chains with whole witnesses, 1,143 witnesses with one
+  node, key or code left out (564 answered with no verdict by each), a block lying about its state root
+  refused, and on three blocks of mainnet 90 of 90 addresses left out answered with no verdict.
+  - **On the minimal runtime, 21 blocks of mainnet as processes: 47.3 seconds through the engine for 64.7
+    through Jaune, the same 21 answers.** A third less, not the half and more that Lean's own runtime
+    shows (23.3 for 36.1), and `engine-time` says why. Of 44.2 seconds through the engine there, running
+    the blocks is 30.3, and with every precompiled contract answering at once that it failed (a rough
+    floor, not the same blocks) running them is 1.3: about 29 seconds, two thirds of everything, is
+    Jaune's precompiled contracts, which are arithmetic on big numbers that the minimal runtime does
+    without GMP. One bn254 pairing takes 582 ms there for 162 on Lean's runtime, a 2048-bit modexp 124
+    for 4. The 21 blocks call ecrecover 917 times, bn254 addition 226, multiplication 221, pairing 15
+    (48 pairs), modexp 37, the KZG check 8. After that: recovering senders 4.7 seconds, reading the
+    witness 2.8, the state root 2.5, the receipts root by Jaune's trie 2.2. So what is next is not the
+    engine, which is about 60 ms a block there, but bn254 and the other curves on fixed-width words,
+    which the plan had last.
+  - Not run: the engine in the guest (the image has not been rebuilt since it could not answer `JWIF1`);
+    Ethereum's test suites; the 100 further blocks on the minimal runtime. The builder does not use the
+    engine.
 
 What is known to be left in the time: the minimal runtime's allocator (issue #1), the stack held as a
 list whose length is counted at every push (3%), extension fields held as lists of big numbers (13%, in

@@ -89,6 +89,12 @@ lean_exe «fast-op-test» where
 lean_exe «fast-replay» where
   root := `FastReplay
 
+/-- Where the time goes when the fast engine checks a block, part by part, on either runtime. -/
+@[default_target]
+lean_exe «engine-time» where
+  root := `EngineTime
+  moreLinkObjs := #[platformHosted, clockHosted]
+
 /-- Times the hashing, the curves and the interpreter, on whichever runtime it is linked against. -/
 @[default_target]
 lean_exe «evm-bench» where

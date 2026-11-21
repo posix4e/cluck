@@ -1,4 +1,5 @@
 import Evm.Stateless
+import Evm.Engine
 
 /-! Building one block, from transactions somebody else proposes and a witness for the state they touch.
 
@@ -425,8 +426,10 @@ def serve (input : ByteArray) : ByteArray :=
 end Evm.Build
 
 /-- Any kind of request, told apart by how it begins: a chain with its whole state (`Evm.Service`), one
-block with a witness to be checked (`Evm.Stateless`), or the makings of a block to be built. -/
+block with a witness to be checked (`Evm.Stateless`, or by the fast engine `Evm.Engine`), or the makings of
+a block to be built. -/
 def Evm.serve (input : ByteArray) : ByteArray :=
   if input.extract 0 Evm.Build.magic.size == Evm.Build.magic then Evm.Build.serve input
+  else if input.extract 0 Evm.Engine.magic.size == Evm.Engine.magic then Evm.Engine.serve input
   else if input.extract 0 Evm.Stateless.magic.size == Evm.Stateless.magic then Evm.Stateless.serve input
   else Evm.Service.serve input

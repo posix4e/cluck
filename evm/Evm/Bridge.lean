@@ -104,11 +104,22 @@ def environment (fork : Fork) (chainId : UInt64) (header : Header) (ancestors : 
     blobBaseFee := Fast.Word.ofNat (getBaseFeePerBlobGas fork.ruleSet.blob (header.excessBlobGas.getD 0)),
     chainId, blockHash := fun n => hashes.getD n Fast.Word.zero, osaka := osaka fork }
 
-/-- A block's body as the engine takes it. None when a transaction does not decode or has no sender. -/
-def body (fork : Fork) (chainId : UInt64) (block : Block) : Option Fast.BlockInput := do
+/-- The chain a typed transaction says it is for; a legacy one says it in its signature, which recovering
+its sender has checked. -/
+def chainOf (tx : Transaction) : Option UInt64 :=
+  match tx.type with
+  | .legacy _ _ => none
+  | .eip2930 chain _ _ _ => some chain
+  | .eip1559 chain _ _ _ _ => some chain
+  | .eip4844 chain _ _ _ _ _ _ => some chain
+  | .eip7702 chain _ _ _ _ _ => some chain
+
+/-- A block's body as the engine takes it, from its transactions as Jaune decoded them. None when one has no
+sender, is for another chain, or holds a number too big to be real. -/
+def body (fork : Fork) (chainId : UInt64) (block : Block) (decoded : List Transaction) : Option Fast.BlockInput := do
   let rules := fork.ruleSet
-  let txs ← block.transactions.mapM fun slot => do
-    let tx ← (decodeTransaction rules slot).toOption
+  let txs ← decoded.mapM fun tx => do
+    if (chainOf tx).any (· != chainId) then none
     transaction chainId tx
   let maxBlobs := (rules.blob.max / 131072).toUInt64
   pure { parentHash := word block.header.parentHash,

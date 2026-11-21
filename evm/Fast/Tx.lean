@@ -96,33 +96,34 @@ structure Allowance where
   alwaysWarm : Array Word
 
 /-- A transaction run. An error is the transaction being one the block may not hold, in which case nothing
-was changed; otherwise the world after it, the stack given back, its receipt (with `cumulativeGas` holding
-only this transaction's gas, for the caller to add up), and the blobs it carried. -/
+was changed and the world and the stack come back with the reason; otherwise the world after it, the stack
+given back, and its receipt (with `cumulativeGas` holding only this transaction's gas, for the caller to
+add up). -/
 def process (blk : @& BlockEnv) (host : @& Host) (allowed : @& Allowance) (tx : @& Tx) (stack : ByteArray) (world : World) :
-    Except String (World × ByteArray × Receipt) :=
+    Except (String × World × ByteArray) (World × ByteArray × Receipt) :=
   let (intrinsic, floor) := intrinsicGas tx
-  if tx.gasLimit < max intrinsic floor then .error "less gas than the transaction costs before it runs" else
-  if tx.callee.isNone && tx.input.size > 49152 then .error "more code than a creation may carry" else
-  if blk.osaka && tx.gasLimit > 16777216 then .error "more gas than a transaction may have" else
-  if tx.gasLimit > allowed.gas then .error "more gas than the block has left" else
+  if tx.gasLimit < max intrinsic floor then .error ("less gas than the transaction costs before it runs", world, stack) else
+  if tx.callee.isNone && tx.input.size > 49152 then .error ("more code than a creation may carry", world, stack) else
+  if blk.osaka && tx.gasLimit > 16777216 then .error ("more gas than a transaction may have", world, stack) else
+  if tx.gasLimit > allowed.gas then .error ("more gas than the block has left", world, stack) else
   let baseFee := blk.baseFee.toNat
   let maxFee := tx.maxFee.toNat
   let tip := tx.maxPriorityFee.toNat
-  if maxFee < baseFee then .error "a price under the block's base fee" else
-  if tx.kind ≥ 2 && tip > maxFee then .error "a tip above the price" else
+  if maxFee < baseFee then .error ("a price under the block's base fee", world, stack) else
+  if tx.kind ≥ 2 && tip > maxFee then .error ("a tip above the price", world, stack) else
   let price := if tx.kind ≥ 2 then min maxFee (baseFee + tip) else maxFee
   let blobs := tx.blobHashes.size.toUInt64
   if tx.kind == 3 && (tx.callee.isNone || blobs == 0 || blobs > allowed.blobs || blobs > allowed.blobsPerTx ||
       tx.blobHashes.any (fun h => h.w3 >>> 56 != 1) || tx.maxBlobFee.toNat < blk.blobBaseFee.toNat) then
-    .error "blobs it may not carry, or a price for them under the block's" else
-  if tx.kind == 4 && (tx.callee.isNone || tx.authorizations.size == 0) then .error "a set-code transaction with nothing to set" else
+    .error ("blobs it may not carry, or a price for them under the block's", world, stack) else
+  if tx.kind == 4 && (tx.callee.isNone || tx.authorizations.size == 0) then .error ("a set-code transaction with nothing to set", world, stack) else
   let (world, sender) := world.withCode tx.sender
-  if sender.nonce != tx.nonce then .error s!"nonce {tx.nonce.toNat} where the sender's is {sender.nonce.toNat}" else
-  if sender.nonce == 0xffffffffffffffff then .error "a sender whose nonce is at its end" else
-  if sender.code.size != 0 && (delegate? sender.code).isNone then .error "a sender that is a contract" else
+  if sender.nonce != tx.nonce then .error (s!"nonce {tx.nonce.toNat} where the sender's is {sender.nonce.toNat}", world, stack) else
+  if sender.nonce == 0xffffffffffffffff then .error ("a sender whose nonce is at its end", world, stack) else
+  if sender.code.size != 0 && (delegate? sender.code).isNone then .error ("a sender that is a contract", world, stack) else
   let blobGas := (gasPerBlob * blobs).toNat
   if sender.balance.toNat < tx.gasLimit.toNat * maxFee + tx.value.toNat + blobGas * tx.maxBlobFee.toNat then
-    .error "a sender who cannot pay for it" else
+    .error ("a sender who cannot pay for it", world, stack) else
   -- From here on the transaction is in the block whatever happens to what it runs.
   let world := world.debit tx.sender (Word.ofNat (tx.gasLimit.toNat * price + blobGas * blk.blobBaseFee.toNat))
   let world := world.setNonce tx.sender (tx.nonce + 1)

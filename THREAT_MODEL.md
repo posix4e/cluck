@@ -56,6 +56,27 @@ witness node is the one its hash names, rest on it. Nothing proves it equal to J
 and the tests and saved blocks that compare roots with a node's would fail if it differed where they look.
 The EVM's own KECCAK256 and Jaune's tries are still Jaune's.
 
+A second way in runs the rest of the engine. A request whose first five bytes are `JWIF1` is a stateless
+request in every other byte and is judged by the engine (`Evm/Engine.lean`): this project's interpreter,
+state, transaction and block rules, with Jaune still deciding what needs no state (the header against its
+parent, the decoding of blocks and transactions, the recovery of senders), still running the precompiled
+contracts, and still making three of the roots. The answer says "valid" only when the gas used, the five
+roots and the requests hash the engine arrives at are the header's, by the same comparison Jaune's path
+ends with, and only after everything the engine fetched has been found supplied or proven absent; the
+engine cannot read what it holds no entry for, so what it fetched is what its world holds. A refusal by
+the engine is answered as a verdict (3) when all it had fetched by then was proven, where Jaune's path
+answers 8, no verdict, because Jaune cannot say what it had read. What holds the engine: its arithmetic
+to `Nat` on 5.9 million cases; its interpreter to Jaune's on 170,000 programs that need no world; 121
+blocks of mainnet, whose headers it reproduces in every field compared; and `stateless-test`, where on 279
+blocks of test chains it gives Jaune's answers, on 1,143 witnesses with one node, key or code left out it
+gives the same answer or none, as Jaune does and in the same 564 cases, and a block that lies about its
+state root is refused. Nothing proves any of it, Ethereum's own test suites have not been run on it, and
+no transaction or block that breaks a rule, other than that one lie, has been put to it: its refusals are
+written and all but untested. A flaw in it that made a block's wrong execution agree with a header would
+have to match what the block's maker claimed; a flaw that makes a right block disagree is a false
+"invalid", which is the likelier kind. Both paths are in the image; nothing but the first five bytes of a
+request chooses between them, and the builder still uses Jaune.
+
 **Start-up routines that do nothing.** `evm/rt/start.c` stands in for seven of mathlib's. If any code the
 service reaches reads a constant one of them would have built, it reads memory nothing has written. This is
 the rule "nothing that is not there may pass for something that is" broken on purpose, and the fixtures

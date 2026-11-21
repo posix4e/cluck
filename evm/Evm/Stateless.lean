@@ -317,8 +317,12 @@ def validate (r : Request) (fork : Fork) (parent : Header) (ancestors : List Hea
     | .error e => return ⟨3, 0, (TransitionError.block e).render⟩
     | .ok () => return ⟨0, blockHash, ""⟩
 
-/-- The response, and Jaune's reason when there is one. -/
-def runWithReason (r : Request) : Response × String :=
+/-- The response, and the reason for it when there is one, with the block judged by `judge`: Jaune
+(`validate`), or the fast engine (`Evm.Engine.validate`). What is the same whoever judges is here: the block
+and the headers decode, the headers are a chain that ends at the block's parent, and the fork is one this
+service knows. -/
+def runWithReasonBy (judge : Request → Fork → Header → List Header → Block → U256 → M Verdict) (r : Request) :
+    Response × String :=
   let nothing : Response × String := (⟨5, 0, 0, 0⟩, "")
   match rlpToBlockE r.block.toList with
   | .error _ => nothing
@@ -343,12 +347,15 @@ def runWithReason (r : Request) : Response × String :=
         if !linked || parent.hash != block.header.parentHash then nothing
         else if ancestors.length != min 255 block.header.number then answer 6 0
         else
-          match validate r fork parent ancestors block blockHash with
+          match judge r fork parent ancestors block blockHash with
           | .ok ⟨0, hash, _⟩ => (⟨0, 1, hash, block.header.stateRoot⟩, "")
           | .ok ⟨status, _, reason⟩ => answer status parent.stateRoot reason
           | .error (.lacking hash what) => answer 6 hash what
           | .error .malformed => answer 7 parent.stateRoot
           | .error .failure => answer 4 parent.stateRoot
+
+/-- The response, and Jaune's reason when there is one. -/
+def runWithReason (r : Request) : Response × String := runWithReasonBy validate r
 
 def run (r : Request) : Response := (runWithReason r).1
 

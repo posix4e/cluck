@@ -1,9 +1,10 @@
 import Tls
+import Platform
 import Std.Data.HashMap
 
 /-! `evm/Tls/` against the standards' examples and against OpenSSL.
 
-    .lake/build/bin/tls-test Tls/vectors.txt        (from evm/)
+    .lake/build/bin/tls-test < Tls/vectors.txt        (from evm/; and tls-test-min, after scripts/build-min tls-test)
 
 The file of cases is made by `scripts/tls-vectors` from Python's hashlib and `cryptography` package. For
 each case the same inputs are given to the Lean and the answers must be the same bytes; for a signature or
@@ -16,29 +17,45 @@ it, of its tag, of the data beside it or of its key is changed, and X25519's own
 arrive at the same secret. -/
 open Tls
 
-def unhex (s : String) : ByteArray :=
-  if s == "-" then ByteArray.empty else
-  let digit (c : Char) : UInt8 := (if c.isDigit then c.toNat - 48 else c.toNat - 87).toUInt8
-  let rec go (cs : List Char) (out : ByteArray) : ByteArray :=
-    match cs with
-    | a :: b :: rest => go rest (out.push (digit a * 16 + digit b))
-    | _ => out
-  go s.toList ByteArray.empty
+/-- Bytes from their hexadecimal digits, themselves as bytes; `-` is no bytes. -/
+def unhexBytes (s : ByteArray) : ByteArray :=
+  let digit (c : UInt8) : UInt8 := if c ≤ 0x39 then c - 0x30 else c - 0x57
+  (List.range (s.size / 2)).foldl (fun out i => out.push (digit s[2 * i]! * 16 + digit s[2 * i + 1]!)) ByteArray.empty
+
+def unhex (s : String) : ByteArray := unhexBytes s.toUTF8
 
 def hex (b : ByteArray) : String :=
   b.foldl (fun out x => out ++ String.ofList [Nat.digitChar (x.toNat / 16), Nat.digitChar (x.toNat % 16)]) ""
 
 def verdict (yes : Bool) : ByteArray := (if yes then "ok" else "no").toUTF8
 
-def main (args : List String) : IO UInt32 := do
-  let [path] := args | do IO.eprintln "usage: tls-test VECTORS"; return 2
+partial def readAll (soFar : ByteArray) : IO ByteArray := do
+  let chunk ← Platform.read 65536
+  if chunk.isEmpty then pure soFar else readAll (soFar ++ chunk)
+
+def say (s : String) : IO Unit := Platform.write (s ++ "\n").toUTF8
+
+/-- Bytes that are plain letters, as a string. -/
+def ascii (b : ByteArray) : String := String.ofList (b.toList.map fun c => Char.ofNat c.toNat)
+
+/-- `b` cut at each byte `mark`. -/
+def cut (b : ByteArray) (mark : UInt8) : Array ByteArray := Id.run do
+  let mut parts := #[]
+  let mut start := 0
+  for i in [0:b.size] do
+    if b[i]! == mark then
+      parts := parts.push (b.extract start i)
+      start := i + 1
+  return if start < b.size then parts.push (b.extract start b.size) else parts
+
+def main : IO UInt32 := do
   let mut failures := 0
   let mut counts : Std.HashMap String Nat := {}
-  for line in (← IO.FS.lines path) do
-    let fields := line.splitOn " "
-    let kind := fields.headD ""
-    let f (i : Nat) : ByteArray := unhex (fields.getD i "-")
-    let n (i : Nat) : Nat := (fields.getD i "0").toNat!
+  for line in cut (← readAll .empty) 0x0a do
+    let fields := cut line 0x20
+    let kind := ascii (fields.getD 0 .empty)
+    let f (i : Nat) : ByteArray := unhexBytes (fields.getD i .empty)
+    let n (i : Nat) : Nat := (fields.getD i .empty).foldl (fun n c => n * 10 + (c.toNat - 48)) 0
     let (got, want) : ByteArray × ByteArray :=
       match kind with
       | "sha256" => (Sha256.hash (f 1), f 2)
@@ -46,7 +63,7 @@ def main (args : List String) : IO UInt32 := do
       | "sha512" => (Sha512.hash512 (f 1), f 2)
       | "hmac" => (hmac (f 1) (f 2), f 3)
       | "hkdf" => (Hkdf.expand (Hkdf.extract (if (f 1).size == 0 then ByteArray.mk (Array.replicate 32 0) else f 1) (f 2)) (f 3) (n 4), f 5)
-      | "label" => (Hkdf.expandLabel (f 1) (String.fromUTF8! (f 2)) (f 3) (n 4), f 5)
+      | "label" => (Hkdf.expandLabel (f 1) (ascii (f 2)) (f 3) (n 4), f 5)
       | "aead" =>
         -- Sealing gives the library's bytes, and they open to what was sealed.
         let sealed := Aead.encrypt (f 1) (f 2) (f 3) (f 4)
@@ -55,21 +72,21 @@ def main (args : List String) : IO UInt32 := do
       | "x25519" => (X25519.x25519 (f 1) (f 2), f 3)
       | "public" => (X25519.publicKey (f 1), f 2)
       -- Signatures and chains: the answer is yes or no, and OpenSSL's is the last field.
-      | "rsa1" => (verdict (Rsa.verifyPkcs1 ⟨natOf (f 1), natOf (f 2), (f 1).size⟩ (f 3) (f 4)), (fields.getD 5 "").toUTF8)
-      | "rsapss" => (verdict (Rsa.verifyPss ⟨natOf (f 1), natOf (f 2), (f 1).size⟩ (f 3) (f 4)), (fields.getD 5 "").toUTF8)
+      | "rsa1" => (verdict (Rsa.verifyPkcs1 ⟨natOf (f 1), natOf (f 2), (f 1).size⟩ (f 3) (f 4)), fields.getD 5 .empty)
+      | "rsapss" => (verdict (Rsa.verifyPss ⟨natOf (f 1), natOf (f 2), (f 1).size⟩ (f 3) (f 4)), fields.getD 5 .empty)
       | "ecdsa" =>
-        (verdict (Ecdsa.verify (if fields.getD 1 "" == "p256" then Ecdsa.p256 else Ecdsa.p384) (natOf (f 2)) (natOf (f 3)) (f 4)
-          (natOf (f 5)) (natOf (f 6))), (fields.getD 7 "").toUTF8)
+        (verdict (Ecdsa.verify (if fields.getD 1 .empty == "p256".toUTF8 then Ecdsa.p256 else Ecdsa.p384) (natOf (f 2)) (natOf (f 3)) (f 4)
+          (natOf (f 5)) (natOf (f 6))), fields.getD 7 .empty)
       | "chain" =>
         let anchors := match X509.Anchor.of (f 3) with | some a => #[a] | none => #[]
-        let chain := ((fields.getD 4 "-").splitOn ",").toArray.filterMap fun c => if c == "-" || c == "" then none else some (unhex c)
-        (verdict (X509.validate anchors chain (String.fromUTF8! (f 1)) (n 2)).isOk, (fields.getD 5 "").toUTF8)
+        let chain := (cut (fields.getD 4 .empty) 0x2c).map unhexBytes
+        (verdict (X509.validate anchors chain (f 1) (n 2)).isOk, fields.getD 5 .empty)
       | _ => (ByteArray.empty, ByteArray.mk #[1])
     counts := counts.insert kind (counts.getD kind 0 + 1)
     if got != want then
       failures := failures + 1
-      if failures < 12 then IO.println s!"{kind}: {(line.take 150)}…\n  got {(hex got).take 150}"
-  for (kind, count) in counts.toList do IO.println s!"{kind}: {count} cases against OpenSSL"
+      if failures < 12 then say s!"{kind}: {ascii (line.extract 0 150)}…\n  got {hex (got.extract 0 75)}"
+  for (kind, count) in counts.toList do say s!"{kind}: {count} cases against OpenSSL"
   -- The standards' own examples.
   let abc := "abc".toUTF8
   let printed : List (String × ByteArray × String) := [
@@ -85,7 +102,7 @@ def main (args : List String) : IO UInt32 := do
   for (what, got, want) in printed do
     if hex got != want then
       failures := failures + 1
-      IO.println s!"{what}: {hex got}"
+      say s!"{what}: {hex got}"
   -- RFC 7748's iteration: the answer becomes the key and the key the point, a thousand times.
   let mut k := (ByteArray.mk (Array.replicate 32 0)).set! 0 9
   let mut u := k
@@ -95,16 +112,16 @@ def main (args : List String) : IO UInt32 := do
     k := next
     if i == 0 && hex k != "422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079" then
       failures := failures + 1
-      IO.println s!"X25519 iterated once: {hex k}"
+      say s!"X25519 iterated once: {hex k}"
   if hex k != "684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51" then
     failures := failures + 1
-    IO.println s!"X25519 iterated a thousand times: {hex k}"
+    say s!"X25519 iterated a thousand times: {hex k}"
   -- Two sides, each with the other's public key, arrive at the same secret.
   let a := Sha256.hash "one side".toUTF8
   let b := Sha256.hash "the other".toUTF8
   if X25519.x25519 a (X25519.publicKey b) != X25519.x25519 b (X25519.publicKey a) then
     failures := failures + 1
-    IO.println "X25519: the two sides do not agree"
+    say "X25519: the two sides do not agree"
   -- A sealed message opens only as it was sealed: one bit changed anywhere and it does not.
   let key := Sha256.hash "a key".toUTF8
   let nonce := (Sha256.hash "a nonce".toUTF8).extract 0 12
@@ -115,7 +132,7 @@ def main (args : List String) : IO UInt32 := do
   let mut tried := 0
   if Aead.decrypt? key nonce aad sealed != some plain then
     failures := failures + 1
-    IO.println "a sealed message did not open"
+    say "a sealed message did not open"
   for i in [0:sealed.size * 8] do
     tried := tried + 1
     let changed := sealed.set! (i / 8) (sealed.get! (i / 8) ^^^ (1 <<< (i % 8).toUInt8))
@@ -127,7 +144,7 @@ def main (args : List String) : IO UInt32 := do
   if (Aead.decrypt? key nonce aad (sealed.extract 0 15)).isSome then failures := failures + 1
   if refused != tried then
     failures := failures + 1
-    IO.println s!"a sealed message with something changed opened {tried - refused} times of {tried}"
-  IO.println s!"the standards' examples: {printed.length + 2}; a sealed message changed in {tried} ways, refused {refused} times"
-  if failures == 0 then IO.println "tls-test: all checks passed" else IO.println s!"tls-test: {failures} FAILED"
+    say s!"a sealed message with something changed opened {tried - refused} times of {tried}"
+  say s!"the standards' examples: {printed.length + 2}; a sealed message changed in {tried} ways, refused {refused} times"
+  if failures == 0 then say "tls-test: all checks passed" else say s!"tls-test: {failures} FAILED"
   return if failures == 0 then 0 else 1

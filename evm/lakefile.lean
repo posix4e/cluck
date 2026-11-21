@@ -114,7 +114,7 @@ lean_exe «fast-fixtures» where
 @[default_target]
 lean_exe «tls-test» where
   root := `TlsTest
-  moreLinkObjs := #[secretHosted]
+  moreLinkObjs := #[platformHosted, secretHosted]
 
 /-- Times the hashing, the curves and the interpreter, on whichever runtime it is linked against. -/
 @[default_target]

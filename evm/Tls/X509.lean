@@ -87,7 +87,7 @@ structure Certificate where
   notAfter : Nat
   key : Key
   /-- The DNS names it is for. -/
-  names : Array String
+  names : Array ByteArray
   /-- Whether it may sign other certificates. -/
   authority : Bool
 
@@ -190,7 +190,7 @@ def read? (der : @& ByteArray) : Option Certificate := do
   let last := fields[fields.size - 1]!
   if last.tag != 0xa3 then none
   let listed ← inside? der (← element? der last.start last.stop)
-  let mut names : Array String := #[]
+  let mut names : Array ByteArray := #[]
   let mut authority := false
   for extension in listed do
     let parts ← inside? der extension
@@ -205,7 +205,7 @@ def read? (der : @& ByteArray) : Option Certificate := do
           let text := contents der entry
           -- A DNS name is plain letters; one with any other byte in it is left out, not guessed at.
           if text.data.all (fun c => c > 0x20 && c < 0x7f) then
-            names := names.push (String.ofList (text.data.toList.map fun c => Char.ofNat c.toNat))
+            names := names.push text
     else if name == oidBasicConstraints then
       let inner ← inside? der (← element? der value.start value.stop)
       authority := match inner[0]? with
@@ -239,16 +239,25 @@ def signedBy (cert : Certificate) (key : Key) : Bool :=
   | .ecdsaSha256, .p384 x y | .ecdsaSha384, .p384 x y => ecdsa Ecdsa.p384 x y
   | _, _ => false
 
+/-- A name with its capital letters made small. -/
+def lower (name : @& ByteArray) : ByteArray :=
+  ByteArray.mk (name.data.map fun c => if c ≥ 0x41 && c ≤ 0x5a then c + 0x20 else c)
+
 /-- Whether a certificate's name covers `host`: the same name, letter case aside, or a name whose first
-label is `*` and whose rest is the rest of `host` after its own first label. -/
-def covers (name host : String) : Bool :=
-  let name := name.toLower
-  let host := host.toLower
+label is `*` and whose rest, with its dot, is `host` after a first label that is not empty and holds no
+dot, so that a star stands for one label and never for none or for two. -/
+def covers (name host : @& ByteArray) : Bool :=
+  let name := lower name
+  let host := lower host
   if name == host then true
-  else if name.startsWith "*." then
-    match host.splitOn "." with
-    | first :: rest => first != "" && rest.length ≥ 2 && ".".intercalate rest == name.drop 2
-    | [] => false
+  else if name.size > 2 && Fast.byte name 0 == 0x2a && Fast.byte name 1 == 0x2e then
+    let rest := name.extract 1 name.size            -- from the dot
+    if host.size ≤ rest.size then false
+    else
+      let first := host.extract 0 (host.size - rest.size)
+      host.extract (host.size - rest.size) host.size == rest && !first.data.any (· == 0x2e)
+        -- What follows the star is itself a name of two labels at the least.
+        && (rest.extract 1 rest.size).data.any (· == 0x2e)
   else false
 
 /-- A root this client trusts: its name, as DER, and its key. -/
@@ -262,12 +271,12 @@ def Anchor.of (der : @& ByteArray) : Option Anchor := (read? der).map fun c => �
 
 /-- A chain as a server sends it, its own certificate first, checked for `host` at the time `now`: the key
 in the server's certificate if every link holds, and otherwise the reason it does not. -/
-def validate (anchors : @& Array Anchor) (chain : @& Array ByteArray) (host : String) (now : Nat) : Except String Key := do
+def validate (anchors : @& Array Anchor) (chain : @& Array ByteArray) (host : @& ByteArray) (now : Nat) : Except String Key := do
   let certs ← chain.mapM fun der => match read? der with
     | some c => pure c
     | none => .error "a certificate that cannot be read"
   let some leaf := certs[0]? | .error "no certificate"
-  if !leaf.names.any (covers · host) then .error s!"a certificate that is not for {host}"
+  if !leaf.names.any (covers · host) then .error "a certificate for another name"
   walk anchors certs now leaf.key 0 certs.size
 where
   walk (anchors : @& Array Anchor) (certs : @& Array Certificate) (now : Nat) (found : Key) : Nat → Nat → Except String Key

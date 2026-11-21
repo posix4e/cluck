@@ -95,18 +95,17 @@ the block's maker had claimed the same; one that said no to a true proof makes a
 malformed it could make but one: a point on the twisted curve outside the pairing's subgroup, which the
 code refuses by multiplying by the group's order and which no test here has shown it refusing.
 
-**Cryptography of this project's own, not yet in an image.** `evm/Tls/` is the start of what the guest
-needs to keep a transaction from the host: hashes, HMAC and HKDF, ChaCha20-Poly1305 and X25519, in Lean,
-because the rules here let nobody else's into an image. Nothing reaches it from a request yet and no
-image is built with it, so today it exposes nothing; this is what it will rest on when it does. It is
+**Cryptography of this project's own.** `evm/Tls/` is what the guest needs to keep a transaction from
+the host: hashes, HMAC and HKDF, ChaCha20-Poly1305 and X25519, in Lean, because the rules here let nobody
+else's into an image. It is in the image now and is what a connection out rests on (below). It is
 held to OpenSSL and to the standards' printed examples by `tls-test`, not proved, and it has not been
 reviewed by anyone who writes such code for a living. For time: no secret goes through `Nat`; the field
 of X25519 and Poly1305 is fixed-width limbs with no branch in the source on a value; the ladder's choice
 is the OS's `Secret.select`; a tag is compared by `Secret.equal`. What the compilers made of it was looked
 at as the signing key's arithmetic was (`scripts/check-secret-code lib`), which counts jumps and does not
 prove their absence where it matters, and one branch on a key's bit was found that way and removed.
-Nothing was measured on a running machine. The key exchange's private key will be drawn from `RDRAND`
-alone, like the signing key. Beside it is what will decide whether the far end of a connection is the
+Nothing was measured on a running machine. The key exchange's private key is drawn from `RDRAND`
+alone, like the signing key, a new one for every connection. Beside it is what decides whether the far end of a connection is the
 relay it claims to be (`Tls/X509.lean`): a reader of certificates and a walk up a chain to a root built
 into the image. It reads bytes that anyone on the path, the host first, can choose, so it is written to
 refuse whatever it does not expect, and a certificate it cannot read is a refusal. What it does not do is
@@ -114,7 +113,7 @@ said in its first lines and matters: nothing is checked for revocation, so a rel
 until its certificate runs out; and "runs out" is judged by a time the caller supplies, and the guest has
 no clock but what the host tells it.
 
-The client that will use these (`Tls/Client.lean`) is written to be small before anything else: TLS 1.3
+The client that uses these (`Tls/Client.lean`) is written to be small before anything else: TLS 1.3
 only, one key exchange, one cipher, no resumption, no early data, and a refusal for every message it does
 not expect. Every byte it reads before the server's finishing word is chosen by whoever is on the path,
 which for the guest is the host. What it relies on: that the server's proof of its key is checked over
@@ -124,6 +123,41 @@ is taken out, and that was tried. What it does not do: it sends no alert, so a s
 why it was dropped; a key that is dropped is not wiped from memory; the lengths of records, and so
 roughly of what is said, are plain to the carrier, and it pads nothing. It is tested against OpenSSL's
 server and against one written here, and is neither proved nor reviewed.
+
+**Connections out.** The machine now speaks first: it opens TCP connections of its own, to the relays
+its image names (`Evm/Relays.lean`), and until now it only ever answered. What that adds:
+
+- *More of the network's bytes are read.* Answers to name lookups and to questions about Ethernet
+  addresses were dropped before and are parsed now (`Kernel/Net/Dns.lean`, `Route.lean`, both the OS's and
+  both tested, neither proved), and so is everything on a connection out before TLS has judged it. All of
+  it comes from the host. None of it is believed: an address for a name, or an Ethernet address for the
+  way out, only decides where packets go, and the certificate is what says who answered. So the host can
+  make a call fail, slowly if it likes (ten seconds, then it is given up), and cannot make it reach
+  anyone else as the relay.
+- *Whom it believes is in the image.* Four roots, Let's Encrypt's two and two of Google's, copied from
+  this machine's store with their hashes beside them (`Evm/Roots.lean`). Any certificate authority under
+  those roots can make the guest believe a server is a relay; that is what trusting a root means, and
+  the list is as short as the four relays allow. A second image, `evm-os-shadow`, believes a root whose
+  key is public, for a stand-in relay on the host: it is for trying things and protects nothing. The
+  two differ in measurement, and a relying party that means the real one must check for it.
+- *The date is the host's word.* A certificate is good between two dates and the guest has no clock that
+  knows the date; the request names the time. A host that lies can have a certificate believed after it
+  has run out, which matters if it also holds that certificate's key, stolen. It cannot go back before
+  the day the roots were written into the image, and it cannot make a certificate good that never was.
+  Nothing better is on offer inside a trust domain without trusting someone for the time.
+- *What a carrier sees of a call.* The relay's name, in the lookup and again in TLS's first message;
+  when, how much, and how long. `scripts/run-ask` has QEMU write down every frame and checks that
+  nothing else is in the clear.
+- *A request that makes the guest ask.* `JASK1` has the guest GET a path from a relay and hand back the
+  answer. It can send a relay nothing but that line: the path is refused unless it is plain printing
+  characters with no space, so it cannot carry a second request. The sender learns nothing it could not
+  fetch itself, except, with a report, that this image got that answer from the server its roots vouch
+  for. A sender can keep the guest's eight connections busy this way, as it can by other means.
+- *The loop was rewritten for it* (`Evm/Machine.lean`). Requests are run in the order they came on each
+  connection, one at a time over all; a client waiting on a relay holds up only itself. While a block is
+  built for a bid the network is looked at before each transaction, so frames are now read in the
+  middle of that request: they are handled by the same code as at any other time, and no request is
+  begun there.
 
 **Start-up routines that do nothing.** `evm/rt/start.c` stands in for seven of mathlib's. If any code the
 service reaches reads a constant one of them would have built, it reads memory nothing has written. This is
@@ -144,11 +178,12 @@ Lean, and the other two files hold no data at all.
 seconds in the guest for 47M gas, and another took 26 for 60M. A pairing check costs far more time for its
 gas than most of what a block does, and nothing here bounds what a sender can make of that.
 The machine reads no packet while an import runs, so one request holds off every other client for as long
-as it takes, and a sender who wants that can have it. Jaune holds byte strings as lists, many bytes of heap
+as it takes, and a sender who wants that can have it (a block built for a bid is the one exception: the
+network is looked at between its transactions, though no other request is begun). Jaune holds byte strings as lists, many bytes of heap
 for each byte of input, on a heap of 256 MiB; a request that needs more stops the machine, which says so.
 A request is held as the pieces it came in until it is whole and is then joined once, so for a moment it is
 held twice. Eight clients may each be part way through a request, and what is held for all of them together
-is kept to 40 MiB (`maxHeld` in `evm/EfiMain.lean`): the client whose bytes would pass that is closed. So
+is kept to 40 MiB (`maxHeld` in `evm/Evm/Machine.lean`): the client whose bytes would pass that is closed. So
 unfinished requests cannot fill the heap, and a sender who holds most of that 40 MiB keeps large requests
 from everyone else for as long as its connections live, which is no more than a slow block already gives
 it. The largest request seen ran in this heap; one of the full 32 MiB has not been tried and may not.
@@ -255,7 +290,7 @@ host. And the guest signs nothing yet, so a block built here binds no one until 
 bid for it.
 
 **A signing key.** The machine now holds a secret: a BLS key, drawn from the platform's randomness when it
-starts (`drawKey` in `evm/EfiMain.lean`), with which it signs the builder's bids (`evm/Evm/Bid.lean`). It is
+starts (`drawKey` in `evm/Evm/Machine.lean`), with which it signs the builder's bids (`evm/Evm/Bid.lean`). It is
 the first secret this package has held, and what follows is what protects it and what does not.
 
 *What the key is worth.* It guards no funds. Whoever has it can sign bids in this builder's name: say that

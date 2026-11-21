@@ -393,11 +393,12 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   published); the order privacy a builder in a trust domain is for: transactions still reach the guest in
   the clear, through the host.
 
-**Order privacy** (begun 2026-11-22; nothing of it is in an image or used by anything yet). The aim: a
+**Order privacy** (begun 2026-11-21; three stages of six done, and the image can now reach a relay by
+itself; no transaction is hidden from anyone yet). The aim: a
 transaction sealed to a key only the attested guest holds, built into a block the guest sends to the
 relays itself over TLS, so that the host carries only ciphertext. What it will not hide, by its design:
 which accounts and storage slots such a transaction touches (the host supplies the proofs), sizes and
-times, and the block from the relay. Six stages, of which the first is half done:
+times, and the block from the relay. Six stages:
 
 - [x] **The pieces that handle secrets** (`evm/Tls/`): SHA-256 on machine words, HMAC and HKDF with TLS
   1.3's labelled expansion, ChaCha20, Poly1305 and the two as one sealed message, and X25519 on ten limbs
@@ -433,7 +434,7 @@ times, and the block from the relay. Six stages, of which the first is half done
   curves and other hashes are refused). On the minimal runtime all of `tls-test` passes, in 4.3 s where
   the ordinary runtime takes 1.1 s; names are compared as bytes because that runtime has no changing of
   a string's letters.
-- [x] **A TLS 1.3 client** (`evm/Tls/Client.lean`, with `Wire.lean` and `Http.lean`), 2026-11-22. A
+- [x] **A TLS 1.3 client** (`evm/Tls/Client.lean`, with `Wire.lean` and `Http.lean`), 2026-11-21. A
   value and functions on it, with no connection of its own, as `Kernel/Net/Tcp.lean` is: bytes that
   arrived go in, bytes to send and data come out. One of everything (TLS 1.3, X25519, ChaCha20-Poly1305
   with SHA-256, the server proving its key by RSA-PSS or ECDSA, HTTP/1.1), nothing resumed, nothing sent
@@ -465,7 +466,45 @@ times, and the block from the relay. Six stages, of which the first is half done
   a server that asks to begin again (refused); sessions resumed; a certificate from this side; telling
   the server why it was refused (the connection is just dropped); wiping a key's memory when it is
   dropped; any measurement of time; anything in the guest.
-- [ ] Connections out from the guest's loop; the guest fetching a relay's public page in TDX.
+- [x] **Connections out from the guest**, 2026-11-21. The guest opens connections of its own, over TLS,
+  to the relays named in its image and to nobody else.
+  - `Evm/Relays.lean` and `Evm/Roots.lean`: which relays, and which roots are believed about them, are
+    text in the image and so under its measurement. Two lists, two images. `evm-os` (`EfiMain.lean`)
+    has the four real relays under Let's Encrypt's two roots and two of Google's, taken from this
+    machine's store and written with their SHA-256s (`scripts/relay-roots`). `evm-os-shadow`
+    (`EfiShadow.lean`) has one stand-in, `relay.test` at the host's own address, under a root whose key
+    is printed in `scripts/standin.py`; it keeps nothing from anyone and has a measurement of its own.
+  - `Evm/Outbound.lean`: one call out as a value, from a name to an answer: the name looked up, the way
+    out found, TCP opened, TLS and the certificate, the question, the answer. Uses the OS's resolver,
+    routes and `Endpoint.connect` as they were, with one addition to `Kernel/Net/Tcp.lean`: giving a
+    connection up at once (`Endpoint.abort`, three checks in `net-tcp-test`).
+  - `Evm/Machine.lean` is the loop, rewritten from `EfiMain.lean`: everything about the network is a
+    value and functions on it, and the loop only reads frames, sends frames and runs requests. A request
+    to build and bid looks at the network before each transaction, so a call out goes on while a block
+    is built. The old checks pass on it in TDX (`run-fixtures tdx --limits --key`), and requests still
+    arrive at 8.5 to 9 MB a second (blocks of 11 and 14 MB).
+  - `Evm/Ask.lean`, a request `JASK1`: ask relay number N for a path with GET, judging its certificate
+    at a time the sender names, and answer with what the relay said. The smallest thing that has the
+    guest talk to a relay with nobody in between.
+  - `scripts/run-ask`, the check. In a trust domain, with the shadow image and `openssl s_server` as
+    the stand-in: the page fetched (40 ms, handshake and all), and refused or failed as it should be
+    for a relay it does not have, a time before the roots were written, a path with a space, a time at
+    which the certificate has run out, a certificate for another name, one under another root, and no
+    server; the same with a report, whose 64 bytes are the hashes of the request and the answer. With
+    the real image and `--live`: the four relays' public lists of coming proposers, fetched by the
+    guest itself in 0.11 to 0.23 s each, name lookup to answer. QEMU wrote down every frame the guest
+    sent or was sent (`SILO_NET_DUMP`, 629 of them in the live run): each was the host's own
+    conversation with the service, a question about an Ethernet address, a name looked up, or a
+    connection to a relay on which every byte was part of a TLS record (10 first messages in the clear,
+    5 records that mean nothing, 90 sealed); the path asked for was in no frame but the host's own.
+    With `--during=` a saved request to build: a question put just before a block that takes 2 seconds
+    was answered 0.11 and 0.17 s later, where 0.04 s is usual.
+  - What the carrier still sees, by design: the relay's name, twice (looked up in the clear, and in
+    TLS's first message); the sizes and times of everything. What is not done: the part of a build
+    before its first transaction and after its last does not look at the network, and for a small
+    block that is most of it; a question cannot begin while another request runs; nothing is sent to
+    a relay but GET for a page; at most eight connections, in and out together; the date is the
+    sender's word (see `THREAT_MODEL.md`).
 - [ ] The guest putting a submission together itself and posting it over TLS, to a stand-in first.
 - [ ] Sealed transactions in, kept in the guest and built into its blocks; a page that seals one.
 - [ ] Live, and only when asked for with the cost named.

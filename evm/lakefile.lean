@@ -67,6 +67,12 @@ lean_exe «evm-os» where
   root := `EfiMain
   moreLinkObjs := #[platformHosted, efiHosted, secretHosted]
 
+/-- The same machine with the stand-in relay for its only relay, for trying things on one machine. -/
+@[default_target]
+lean_exe «evm-os-shadow» where
+  root := `EfiShadow
+  moreLinkObjs := #[platformHosted, efiHosted, secretHosted]
+
 /-- Turns one case of a blockchain-test fixture into a request and the response the fixture calls for.
 Runs on Lean's own runtime only: it reads JSON. -/
 @[default_target]

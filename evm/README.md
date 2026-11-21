@@ -43,7 +43,7 @@ it, and continuous integration does not build it. What has been run and what it 
   HMAC and HKDF, ChaCha20-Poly1305, X25519, and for certificates RSA and ECDSA signatures checked and a
   reader and checker of chains (`X509.lean`); a TLS 1.3 client that is a value with no connection of its
   own (`Client.lean`) and enough HTTP/1.1 to ask a question (`Http.lean`). Imports no Jaune. Used by
-  nothing in the image yet. `TlsTest.lean` holds the pieces to OpenSSL through `Tls/vectors.txt`, which
+  `Evm/Outbound.lean` in the image. `TlsTest.lean` holds the pieces to OpenSSL through `Tls/vectors.txt`, which
   `scripts/tls-vectors` makes, and the client to `Tls/handshakes.txt`, conversations with a server that
   misbehaves on purpose, which `scripts/tls-handshakes` makes. `TlsFetch.lean` and `scripts/tls-get`
   drive the client over a real connection from the host; `scripts/tls-against-openssl` puts it to
@@ -52,8 +52,14 @@ it, and continuous integration does not build it. What has been run and what it 
   fixed-width words with every value-dependent choice made by the OS's `Secret.select`; `Curve.lean` is
   the key times a point by the same steps whatever the key; `Sign.lean` is public keys and signatures over
   those. Not yet reached from the service. `BlsTest.lean` holds it to `Jaune` and `JauneConsensus`.
-- `EfiMain.lean`: the service as a whole machine, an EFI guest answering framed requests on TCP port 5005
-  over the OS's own Ethernet, IP and TCP.
+- `Evm/Machine.lean`: the service as a whole machine, an EFI guest answering framed requests on TCP port
+  5005 over the OS's own Ethernet, IP and TCP, and opening connections of its own to relays.
+  `Evm/Outbound.lean` is one such connection, from a name to an answer over TLS; `Evm/Relays.lean` and
+  `Evm/Roots.lean` (written by `scripts/relay-roots`) say which relays and which roots; `Evm/Ask.lean`
+  is the request that has the guest ask a relay for a page. `EfiMain.lean` is the machine with the four
+  real relays (`evm-os`); `EfiShadow.lean` is the machine with a stand-in on the host whose key everyone
+  knows (`evm-os-shadow`, `scripts/standin.py`). `scripts/run-ask dev|tdx [--live]` has the guest ask,
+  and checks every frame that crossed its network.
 - `MkRequest.lean`: turns a case of a blockchain-test fixture into a request and the response the fixture
   calls for. The only program here that reads JSON, and it never goes in an image.
 - `EvmTest.lean`: pure tests of the format and of `Evm.powMod`. `TrieTest.lean`: the trie against Jaune's

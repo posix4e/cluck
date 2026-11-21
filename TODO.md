@@ -407,7 +407,11 @@ What is next, in order:
 5. **A faster engine** in place of Jaune, tested against it.
 
 Steps 2 to 4 are done as far as one block (above); step 1's line of 1,000 was not reached and was passed
-over by decision. Step 5 is what is next.
+over by decision. Step 5 is what is next. Its mark, read from the node's own log on this machine
+(2026-11-20 to 21, 3,186 blocks as they arrived, not the 121 saved ones, which the log no longer holds):
+reth takes 43 ms for a block at the median (28.6M gas, about 640M gas a second), 88 ms at the ninetieth
+percentile and 0.6 seconds at the most, outside a trust domain and with its caches warm. The guest takes
+3.0 seconds at the median for a block of the same chain, about seventy times as long.
 
 The relay's own checks, hostile input and a week of validating delivered blocks, which were next before
 the aim changed, are set aside, not done.

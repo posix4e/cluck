@@ -286,10 +286,19 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   at the median and the guest's would have been 0.00016: short by 0.0054 ETH or less in a quarter of
   slots, 0.0073 at the median, 0.0195 or less in three quarters, and 2.2 at the most.
 - **A top-up, tried against the node's validator only.** `builder/shadow --top-up` puts a transaction from
-  a wallet on the host to itself in front of what is proposed, moving nothing and tipping the amount, which
-  goes to the proposer as the block's fee recipient. Four slots as a process with 0.001 ETH: each bid was
-  worth that much more, and the validator, which checks that the proposer is paid what the bid says,
-  judged each block valid. Nothing was sent to a relay and the wallet's balance did not change.
+  a wallet on the host in front of what is proposed. At first it was a transfer to itself with a large
+  tip (four slots as a process with 0.001 ETH, each bid worth that much more, each block judged valid by
+  the validator, which checks that the proposer is paid what the bid says). That one was a payment to
+  whoever put it in a block, in any slot, for as long as its nonce was unused, and every relay sent a
+  block would have held a copy. It is now a transaction that pays the block's fee recipient only in a
+  block with the slot's number and the proposer's fee recipient, and reverts anywhere else, at the cost
+  of its gas (53,892 on the node, at 2 gwei over the base fee). On the node: with the right number and
+  recipient the recipient gained the amount, and with either wrong it reverted. Four slots as a process
+  with 0.001 ETH: each bid was worth that much more and each block was judged valid. Nothing was sent to
+  a relay and the wallet's balance did not change. What it does not close: someone who sees the block
+  within its slot and builds another for the same proposer with the proposer as fee recipient could use
+  it, which is a relay or its builder turning on a builder, and is what every builder trusts a relay not
+  to do.
 - **1,300 slots with the key in the guest, and the line not reached** (2026-11-21, TDX, image
   `df9f34be…74dc64fe`, one key throughout, 8M gas asked for). 1,045 slots built a block; the node's
   validator judged all 1,045 valid and none was refused, every one was signed and `bid-verify` found every

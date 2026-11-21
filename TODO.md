@@ -335,6 +335,24 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   the node's validator has not judged valid. What a win would cost, over 283 of these slots that one of
   the four relays delivered: the winning bid 0.0076 ETH at the median; a top-up of 0.01 ETH would have
   beaten it in 66% of them, 0.015 in 81%, 0.02 in 87%, 0.03 in 91%, 0.05 in 95%.
+- **A dry run of what is to go live found the guest ended by its own large requests** (2026-11-21, 100
+  slots in TDX with a report asked for each bid and the 0.02 ETH payment in each block, nothing sent). 97
+  slots built a block, all valid and signed, the payment in every one built for a registered proposer.
+  Three slots got no answer: each request was over 4 MB (the contract with over 1,024 slots again, now
+  that the host can prove it), and with a report asked for the guest hashed it as a list of bytes, which
+  the 256 MiB heap does not hold; the guest stopped and the host started another, with another key. The
+  same requests without a report took under a second. The report's hash now walks the bytes where they
+  lie (`Evm.Attest.sha256`, tested against Jaune's and the standard, not proved), and the three requests
+  are answered with a report in about a second each in TDX (image `05169195…92fdac45`), the report's data
+  checked against another SHA-256. Still so: a 21.7 MB block request with a report ends the guest (memory
+  again: a report holds two more copies of the request); a guest out of memory stops instead of refusing;
+  and after a slot nobody proposed the host builds for a slot already past (one such block here, empty and
+  1.9 seconds late, which would not have been sent).
+- **The payment cannot be made twice.** Every payment a run signs carries the transaction count the
+  wallet had when the run began, and the run ends when the chain's count has moved, whether or not it saw
+  its own block land; it also looks for its block at its number, not only as the head. Tried as a process
+  against a stand-in relay with a stand-in for the node that reported the count moved: the run sent its
+  bid and stopped at the next slot.
 - **Sending bids is written and has been sent to no relay.** `builder/shadow --live --relays …` posts each
   bid to the relays named, and only a block the node's validator judged valid, signed, before its slot, to
   relays that hold the registration it was built for; it asks the guest for a report with each answer

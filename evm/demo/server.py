@@ -296,6 +296,10 @@ class Handler(BaseHTTPRequestHandler):
             self.file("page.html", "text/html; charset=utf-8")
         elif path == "/verify.js":
             self.file("verify.js", "text/javascript; charset=utf-8")
+        elif path == "/seal":
+            self.file("seal.html", "text/html; charset=utf-8")
+        elif path == "/seal.js":
+            self.file("seal.js", "text/javascript; charset=utf-8")
         elif path == "/built":
             self.file("built.html", "text/html; charset=utf-8")
         elif path == "/built.js":
@@ -317,6 +321,24 @@ class Handler(BaseHTTPRequestHandler):
             self.json(404, {"error": "no such page"})
 
     def do_POST(self):
+        if self.path == "/api/sealkey":
+            # The machine's key for sealed transactions (Evm/Seal.lean), asked for with a report.
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 256:
+                    raise ValueError("a request for the key is a small JSON object")
+                challenge = bytes.fromhex(json.loads(self.rfile.read(length))["challenge"])
+                if len(challenge) != 32:
+                    raise ValueError("a challenge is 32 bytes")
+            except (ValueError, KeyError, TypeError) as error:
+                return self.json(400, {"error": str(error)})
+            try:
+                with turn:
+                    reply = guest.ask(b"JATT1" + challenge + b"JSEK1", 30)
+                quote = tdx_quote.get_quote(qgs_socket, reply[32:]) if len(reply) == 32 + 1024 else b""
+                return self.json(200, {"key": reply[:32].hex(), "quote": base64.b64encode(quote).decode()})
+            except (RuntimeError, ValueError, OSError) as error:
+                return self.json(502, {"error": str(error)})
         if self.path != "/api/run":
             return self.json(404, {"error": "no such page"})
         try:

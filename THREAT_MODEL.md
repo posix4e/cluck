@@ -212,6 +212,21 @@ half way through (three test chains, three blocks of mainnet) and puts each to t
 does the same for a bid; in the TDX guest four slots' pending transactions with one millisecond allowed
 came back as four empty blocks, signed, that the node's validator judged valid.
 
+*A bid that was sent.* On 2026-11-21 one bid went to four relays and its block is on mainnet (26463293).
+What that shows and what it does not: the relays' simulation and the chain accepted a block whose
+transactions were ordered and run in the guest and a bid the guest's key signed, and the quote kept with it
+says a trust domain with the quoted measurements gave that reply, the builder's key and signature in it,
+to that request after the block's parent existed. It won because of a payment to the proposer of 0.02 ETH,
+against 0.0076 for the next bid: that payment is a transaction signed on the host, by a wallet key in a
+file on the host, which the guest was handed like any other pending transaction. So money, and the secret
+that moves it, are outside the trust domain, and the host could have signed that payment for any block.
+The payment's own code binds it to one block number and one fee recipient, and every payment of a run
+carries one nonce, so the copies the relays were sent can cost the wallet no more than one payment; a
+relay that passed one to another builder for the same slot could still have had it paid without this
+block. Which transactions were offered, the proofs, the assembling of the payload, the posting, and the
+making of the quote are the host's as before. The relays learned this machine's address and the builder's
+key; the chain shows the wallet's address.
+
 *Time.* The rule is the OS's: a secret never passes through `Nat` or `Int`, and decides no branch, no
 address and no division. Jaune's own BLS code is on `Nat` and is not used on the key. `evm/Evm/Sign/` holds
 field elements as fifteen 26-bit limbs in machine words; where a value decides something, both answers are

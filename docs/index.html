@@ -222,24 +222,35 @@
       </div>
     </div>
 
-    <h3 id="builder">Building blocks, in shadow</h3>
+    <h3 id="builder">Building blocks: one is on mainnet</h3>
     <p class="wide">Since 21 November 2026 the guest also builds. Each slot, a program on the host hands it
       the transactions pending in public and proofs of the state they touch. The guest orders them by what
       they pay the proposer, runs them, throws out any that read something the proofs do not cover, and
       answers with a block header and a bid for it, signed with a key it drew when it started and that
       never leaves it. It is told how long it has, and ends the block with what is in it when that is up.
-      Nothing is sent to a relay yet. Each block goes instead to the node's own validator, which is the
-      code relays run on a builder's block.</p>
+      Each block goes first to the node's own validator, which is the code relays run on a builder's
+      block.</p>
+    <p class="wide"><strong>Mainnet block 26463293</strong> (21 November 2026, 11:50:59 UTC, hash
+      <code>0xb24cccb2…b509382b</code>, extra data <code>cluck</code>) was built this way inside the TDX
+      guest and signed by the guest's key. It went to four relays seven seconds before its slot; all four
+      took it, the proposer chose it, and Flashbots, Aestus and Titan list it as delivered under that key.
+      Kept with it is an Intel-signed quote that covers the exact request the guest was sent and the exact
+      reply it gave, the key and signature included, made after the block's parent existed. It won because
+      0.02 ETH was paid to the proposer on top, by a transaction signed outside the guest: the next bid was
+      0.0076 ETH, and what the block's own transactions paid was 0.0001.</p>
     <p class="wide">Over 1,300 consecutive mainnet slots in the TDX guest, 1,045 blocks were built. The
       validator judged all 1,045 valid and every signature checked from outside. The other 255 slots were
       lost in one stretch to a fault in the host program after the chain replaced a block, and one block
-      came back after its slot had begun; both have been dealt with and the run is being repeated. The
-      line set for going further is 1,000 slots in a row, each with a valid block two seconds early.</p>
+      came back after its slot had begun. A second run built 765 more, all valid and none late, and lost 24
+      slots to another fault in the host program. The line set beforehand, 1,000 slots in a row each with
+      a valid block two seconds early, was not reached: in 1,810 blocks none was wrong, and every break
+      but the one late block was a slot with no block.</p>
 
-    <div class="note"><strong>What this is not, yet:</strong> no block built here has been sent to a
-      relay, so none is on the chain. The builder sees only transactions that are already public, and they
-      reach it in the clear through the host, so it keeps nobody's orders private. Its blocks are small and
-      would win a slot only with a payment added on top. Its signing is written to take the same time
+    <div class="note"><strong>What this is not, yet:</strong> one block is one block, and it was paid
+      for: the builder cannot win a slot on what its blocks earn. The payment was signed on the host, so
+      money and the key that moves it sit outside the trust domain. The request, reply and quote for the
+      block are kept but not published here yet. The builder sees only transactions that are already
+      public, and they reach it in the clear through the host, so it keeps nobody's orders private. Its signing is written to take the same time
       whatever the key and was checked in the places looked at, not proved. As a checker, one block in a
       hundred still takes 19 seconds and a hostile block can hold the machine for a long time. Three fast
       paths and one correction in the EVM it runs are tested against the specification, not proved equal

@@ -353,7 +353,25 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   its own block land; it also looks for its block at its number, not only as the head. Tried as a process
   against a stand-in relay with a stand-in for the node that reported the count moved: the run sent its
   bid and stopped at the next slot.
-- **Sending bids is written and has been sent to no relay.** `builder/shadow --live --relays …` posts each
+- **A block built in the guest is on mainnet** (2026-11-21 11:50:59 UTC). Block 26463293, slot 15703153,
+  hash `0xb24cccb2e34a33014f6b0509ad980f7ae67d558e3a1a157e55602db5b509382b`, 20 transactions, 871,663
+  gas, extra data `cluck`; built in the TDX guest (image `05169195…92fdac45`, commit `cf1ee2d`, tree
+  clean) in 0.31 seconds and sent 7.1 seconds before its slot. The bid was signed by the key the guest drew
+  at that start (`0xa5eaab83…e2dfc12c`), which went with the guest when the run ended. After a second
+  dry run of 100 slots on that image (100 blocks, all valid and signed, the payment in each of the 91 for
+  a registered proposer), the live run sent one bid in all: its first slot was built late (the first after
+  a start, the parent 11.7 seconds old) and not sent; its second went to Flashbots, Ultra Sound, Aestus
+  and Titan, each answered 200, and the proposer took it. Flashbots, Aestus and Titan list the block as
+  delivered under the guest's key; Ultra Sound took the bid and lists no delivery for the slot. The bid
+  was 0.02013 ETH, of which 0.02 was the payment (`0xd1b5a717…f2d130c7`, last in the block, 61,828 gas);
+  the best bid from anyone else was 0.0076. The wallet went from 0.2881772635 to 0.2681681779 ETH: the
+  0.02 and 0.0000090856 of gas, once, and the run stopped itself. The request, reply, report and quote
+  are kept (`/data/eth/shadow/landed/`); `demo/test-built.mjs` finds the quote good, for that request and
+  that reply, challenge the parent's hash, and refuses seven changed copies; `demo/built.html` shows it.
+  What it does not show: that the builder can win a slot on what its block earns (it paid 0.02 to win
+  0.0001 of fees), that it can do so twice, or anything about order privacy. Not looked at: the page in a
+  real browser. Not done: the kept files are not published anywhere public.
+- **Sending bids, as it stood before the block above.** `builder/shadow --live --relays …` posts each
   bid to the relays named, and only a block the node's validator judged valid, signed, before its slot, to
   relays that hold the registration it was built for; it asks the guest for a report with each answer
   (the challenge is the parent's hash), stops at the first block built here that becomes the chain's
@@ -368,10 +386,11 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   2026-11-21: Flashbots, Ultra Sound, Aestus and Titan take bids from a key they have not seen (as
   low-priority, fully simulated); bloXroute wants a paid plan; a bid below a relay's floor is skipped, not
   refused, and Flashbots drops an empty block without saying so.
-- Not done: no relay has been sent anything, so no relay has said whether it accepts a block or a
-  signature from here; 1,000 slots in a row with a valid block ready in time (two runs fell short, above); the
-  report that ties the key to the image has not been fetched and checked by anything outside; the order privacy a builder in a trust domain is for:
-  transactions still reach the guest in the clear, through the host.
+- Not done: 1,000 slots in a row with a valid block ready in time (two runs fell short, above); a second
+  landed block, or one that wins without a payment on top; the report that ties the key to the image has
+  not been fetched by anything outside (the kept quote covers the reply, which holds the key, and is not
+  published); the order privacy a builder in a trust domain is for: transactions still reach the guest in
+  the clear, through the host.
 
 What is next, in order:
 
@@ -385,6 +404,9 @@ What is next, in order:
 3. **What a win costs.** A day of comparing the bid the guest would have made with the bid that won.
 4. **Live.** A top-up signed outside the guest, submission to relays, one block landed, its quote shown.
 5. **A faster engine** in place of Jaune, tested against it.
+
+Steps 2 to 4 are done as far as one block (above); step 1's line of 1,000 was not reached and was passed
+over by decision. Step 5 is what is next.
 
 The relay's own checks, hostile input and a week of validating delivered blocks, which were next before
 the aim changed, are set aside, not done.

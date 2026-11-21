@@ -600,6 +600,11 @@ The faster engine (`evm/Fast/`), step by step:
     blocks worth more. Since the test suites passed, `builder/shadow` asks the engine's builder
     unless told otherwise, with no cap but the block's own limit; a run that sends bids (`--live`)
     still asks Jaune's unless told otherwise, and nothing built by the engine has been sent to a relay.
+  - After the test suites' two fixes, on the image built from them (`8a1e7d43…3739f134`, at `a973efe`
+    with a clean tree; `run-fixtures tdx --limits` passes): 50 more slots in the guest with both
+    builders and no cap but the block's limit, 50 blocks valid and signed, the same bytes from both 50
+    times of 50; up to 12.4M gas in a block; the slowest slot 2.13 seconds by Jaune and 0.60 by the
+    engine. The demo runs this image.
 - **bn254 on machine words** (2026-11-21; `evm/Fast/Bn254.lean`): the field in Montgomery form on four
   words, the tower above it, both groups, and the optimal ate pairing, for the three precompiled contracts
   that use the curve. Its constants were worked out from the curve's prime, order and parameter, not

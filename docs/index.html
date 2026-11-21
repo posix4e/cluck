@@ -249,8 +249,11 @@
     <p class="wide"><strong>A second engine, written for speed.</strong> Jaune was written to be proved
       about, and it is slow. Beside it in the image there is now an engine of this project's own, in Lean,
       that holds a 256-bit number in four machine words and undoes a failed call from a journal. It is
-      held to Jaune, not proved: on 121 blocks of mainnet it reproduces every commitment in the block's
-      own header, the state root among them; it passes the same tests of short and wrong witnesses; and
+      held to Jaune and to Ethereum's own tests, not proved: it passes all 4,723 files of the chain tests
+      for Prague, Osaka and the forks since, accepting every block it should and refusing every one of the
+      3,575 it should (the first run found two faults no mainnet block had met); on 121 blocks of mainnet
+      it reproduces every commitment in the block's own header, the state root among them; it passes the
+      same tests of short and wrong witnesses; and
       over 150 slots in the TDX guest the block it built and signed was, byte for byte, the block Jaune
       built. Checking a mainnet block takes it 1.1 seconds at the median where Jaune takes 2.6 (as a
       process on the guest's runtime), and building a slot's block in the guest takes at most a third of

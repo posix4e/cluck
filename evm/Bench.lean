@@ -5,6 +5,7 @@ import Fast.Spike
 import Fast.Keccak
 import Fast.Wide
 import Fast.Interp
+import Fast.Bn254
 import Platform
 
 /-! Times Jaune's hashing, curve arithmetic and interpreter, on whichever runtime this is linked against.
@@ -120,6 +121,21 @@ def fastDivChain (n : Nat) (x : U256) : String := Id.run do
     y := Fast.Word.add (Fast.Word.mod x.not y) (Fast.Word.ofUInt64 7)
   return x.toNat.toU256.toHex
 
+/-- The same pair `pairingOnce` gives Jaune, as bytes, and the engine's check of it. -/
+def fastPairing (seed : Nat) (times : Nat) : String := Id.run do
+  let data : ByteArray := ⟨(seed.toU256.toBytes ++ (2 : Nat).toU256.toBytes ++ g2Generator).toArray⟩
+  let mut held := 0
+  for _ in [0:times] do
+    if Fast.Bn254.pairingCheck data == some true then held := held + 1
+  return s!"{held} held of {times}"
+
+def fastEcmul (seed : Nat) (times : Nat) : String := Id.run do
+  let mut point : ByteArray := ⟨(seed.toU256.toBytes ++ (2 : Nat).toU256.toBytes).toArray⟩
+  for i in [0:times] do
+    let scalar : ByteArray := ⟨((0xfedcba9876543210fedcba9876543210fedcba9876543210 + i : Nat).toU256.toBytes).toArray⟩
+    point := (Fast.Bn254.mulPoint (point ++ scalar)).getD point
+  return (Evm.Trie.word point 0).toHex
+
 def fastLoop (n : Nat) : String :=
   let out := Fast.Spike.bytesRun (loopCode n) 1000000000
   s!"halt {out.halt} gasLeft {out.gas} stack {out.depth}"
@@ -157,6 +173,8 @@ def main : IO UInt32 := do
   timed "fast keccak256 of 32 bytes x 200000" fun _ => fastKeccakChain 200000 x
   timed "keccak256 of 532 bytes x 50000" fun _ => jauneKeccakBytes 50000 (532 * seed)
   timed "fast keccak256 of 532 bytes x 50000" fun _ => fastKeccakBytes 50000 (532 * seed)
+  timed "fast bn254 pairing check, one pair, x 20" fun _ => fastPairing seed 20
+  timed "fast bn254 point times a number, x 200" fun _ => fastEcmul seed 200
   timed "fast mulmod 256-bit x 200000" fun _ => fastMulmodChain 200000 x
   timed "fast mul, div and mod, 256-bit, x 200000" fun _ => fastDivChain 200000 x
   timed "fast loop, stack as bytes, 200000 rounds of 8 opcodes" fun _ => fastLoop (200000 * seed)

@@ -529,7 +529,14 @@ The faster engine (`evm/Fast/`), step by step:
   witness 2.8, the state root 2.5, the receipts root by Jaune's trie 2.3. Not tested: a point of the
   twist that is on its curve and not in the pairing's subgroup (making one needs a square root the test
   does not have; the check is there, by multiplying by the order). Nothing is proved, and none of it is
-  constant time, which nothing here needs.
+  constant time, which nothing here needs. On the minimal runtime a pairing check of one pair takes 4.5
+  ms for Jaune's 574, and a point times a number 0.39 ms.
+  - What the precompiled contracts that are still Jaune's cost in those 10.2 seconds, roughly, by
+    running the blocks again with one kind failing at once (`engine-time`): the KZG check about 7.4
+    seconds for 8 calls, most of a second each; ecrecover 1.3 seconds for 917; the three on bn254, now
+    the engine's, 0.9; SHA-256, RIPEMD-160 and identity 0.4; modexp 0.1. With all of them failing the
+    21 blocks run in 1.2 seconds. The KZG check is BLS12-381, which is to be done as bn254 was. It
+    matters to a checker of blocks; a builder that takes no blob transactions seldom meets it.
 
 What is known to be left in the time: the minimal runtime's allocator (issue #1), the stack held as a
 list whose length is counted at every push (3%), extension fields held as lists of big numbers (13%, in

@@ -58,13 +58,19 @@ def main : IO UInt32 := do
   let .ok out ← part "the block run" (fun _ => Fast.runBlock blk (Bridge.host fork) body ByteArray.empty (Fast.World.new backing))
       (fun x => match x with | .ok o => o.gasUsed.toNat | .error _ => 0)
     | do say "the block was refused\n"; return 1
-  -- The same block with every precompiled contract answering at once that it failed: not the block that
-  -- was, since what a contract does after a failed call differs, but a rough floor for what the engine
-  -- takes without them.
-  let quick : Fast.Host := { Bridge.host fork with precompile := fun _ _ _ => ⟨false, 0, ByteArray.empty⟩ }
-  let _ ← part "the block run again, precompiled contracts failing at once (a rough floor)" (fun _ =>
-    Fast.runBlock blk quick body ByteArray.empty (Fast.World.new backing))
-      (fun x => match x with | .ok o => o.gasUsed.toNat | .error _ => 0)
+  -- The same block with one precompiled contract, or all of them, answering at once that it failed: not
+  -- the block that was, since what a contract does after a failed call differs, but a rough measure of
+  -- what each costs, by what the block takes without it.
+  let real := Bridge.host fork
+  for (name, skipped) in [("ecrecover", [1]), ("sha256, ripemd160 and identity", [2, 3, 4]), ("modexp", [5]),
+      ("the three on bn254", [6, 7, 8]), ("the KZG check", [10]), ("the seven on BLS12-381", [11, 12, 13, 14, 15, 16, 17]),
+      ("all of them", (List.range 257).map (·.toUInt64))] do
+    let without : Fast.Host :=
+      { real with precompile := fun a input gas =>
+          if skipped.contains a.w0 then ⟨false, 0, ByteArray.empty⟩ else real.precompile a input gas }
+    let _ ← part s!"the block run again without {name}" (fun _ =>
+      Fast.runBlock blk without body ByteArray.empty (Fast.World.new backing))
+        (fun x => match x with | .ok o => o.gasUsed.toNat | .error _ => 0)
   let _ ← part "the state root" (fun _ => Bridge.rootAfter known out.world) (fun x => match x with | .ok root => root.toNat % 2 | .error _ => 2)
   let _ ← part "the receipts root and the bloom" (fun _ => Bridge.receiptsRootAndBloom out.receipts) (fun x => x.1.toNat % 2)
   let kept : BlockOutput :=

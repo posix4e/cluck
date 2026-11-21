@@ -79,6 +79,11 @@ lean_exe «fast-word-test» where
   root := `FastWordTest
   moreLinkObjs := #[platformHosted]
 
+/-- The fast engine's interpreter against Jaune's, a program at a time. -/
+@[default_target]
+lean_exe «fast-op-test» where
+  root := `FastOpTest
+
 /-- Times the hashing, the curves and the interpreter, on whichever runtime it is linked against. -/
 @[default_target]
 lean_exe «evm-bench» where

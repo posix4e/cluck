@@ -443,6 +443,24 @@ The faster engine (`evm/Fast/`), step by step:
   MULMODs take 0.21 seconds for Jaune's 0.89. A first version of the division, written with `for` loops,
   was right and slower than Jaune's, because such a loop builds a tuple at every turn: loops in this
   engine are functions that call themselves. Nothing here is proved.
+- **The interpreter** (`evm/Fast/State.lean`, `Machine.lean`, `Interp.lean`): every instruction of Prague
+  and Osaka; calls and creations as the loop running itself again on one shared stack; memory as bytes;
+  accounts and storage fetched from what stands behind the first time they are touched, changed in place,
+  and undone by a journal. `fast-op-test` runs programs through it and through Jaune's interpreter and
+  compares how each ends, the gas left and the bytes returned: 166,566 programs of one arithmetic,
+  comparison or bitwise instruction on awkward and random operands, and 3,000 programs of 20 to 200
+  instructions drawn at random from those that need no world (stack, arithmetic, memory, input, code),
+  each returning four words of its stack and a kilobyte of its memory. All agree. On the minimal runtime
+  the benchmark's loop runs at 39 million instructions a second for Jaune's 3.1 million; the trial did 94
+  million, and why the whole loop is 2.4 times slower than the trial is not found (the profiler needs a
+  setting only root can change). Two things found on the way and kept as rules: a function handed to a
+  helper from inside the loop was built before every instruction, so calls are made ready and settled
+  outside the loop and run by the loop itself; and where two ways of computing a word meet again the word
+  is built as an object, so such values are handed on as four numbers. **Not tested at all yet:**
+  anything that needs a world or a second call (storage, balances, CALL, CREATE, logs, SELFDESTRUCT,
+  precompiles), jumps, running out of gas, and the stack's limits; nothing proves anything; and nothing
+  uses it. An empty account that is touched is not removed (EIP-161), which mainnet no longer needs and
+  some tests do.
 
 The relay's own checks, hostile input and a week of validating delivered blocks, which were next before
 the aim changed, are set aside, not done.

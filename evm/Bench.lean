@@ -4,6 +4,7 @@ import Evm
 import Fast.Spike
 import Fast.Keccak
 import Fast.Wide
+import Fast.Interp
 import Platform
 
 /-! Times Jaune's hashing, curve arithmetic and interpreter, on whichever runtime this is linked against.
@@ -123,6 +124,21 @@ def fastLoop (n : Nat) : String :=
   let out := Fast.Spike.bytesRun (loopCode n) 1000000000
   s!"halt {out.halt} gasLeft {out.gas} stack {out.depth}"
 
+def fastEngineLoop (n : Nat) (padding : Nat := 0) : String :=
+  -- With bytes after its STOP the loop's pushes are read a word at a time, as nearly all are in real code.
+  let code := loopCode n ++ ⟨Array.replicate padding 0⟩
+  let blk : Fast.BlockEnv :=
+    { coinbase := Fast.Word.zero, number := 1, timestamp := 1, gasLimit := 1000000000, prevRandao := Fast.Word.zero,
+      baseFee := Fast.Word.zero, blobBaseFee := Fast.Word.zero, chainId := 1, blockHash := fun _ => Fast.Word.zero,
+      osaka := true }
+  let tx : Fast.TxEnv := { origin := Fast.Word.zero, gasPrice := Fast.Word.zero, blobHashes := #[] }
+  let host : Fast.Host := { isPrecompile := fun _ => false, precompile := fun _ _ _ => ⟨false, 0, ByteArray.empty⟩ }
+  let frame : Fast.Frame :=
+    { address := Fast.Word.one, caller := Fast.Word.zero, value := Fast.Word.zero, input := ByteArray.empty, code,
+      jumps := Fast.World.jumpBits code, static := false, depth := 0, base := 0 }
+  let out := Fast.execute blk tx host frame ByteArray.empty 1000000000 (Fast.World.new default)
+  s!"halt {out.halt} gasLeft {out.gas}"
+
 def fastLimbs (n : Nat) : String :=
   let out := Fast.Spike.limbsRun (loopCode n) 1000000000
   s!"halt {out.halt} gasLeft {out.gas} stack {out.depth}"
@@ -145,5 +161,8 @@ def main : IO UInt32 := do
   timed "fast mul, div and mod, 256-bit, x 200000" fun _ => fastDivChain 200000 x
   timed "fast loop, stack as bytes, 200000 rounds of 8 opcodes" fun _ => fastLoop (200000 * seed)
   timed "fast loop, stack as bytes, 10000000 rounds of 8 opcodes" fun _ => fastLoop (10000000 * seed)
+  timed "fast engine, 200000 rounds of 8 opcodes" fun _ => fastEngineLoop (200000 * seed)
+  timed "fast engine, 10000000 rounds of 8 opcodes" fun _ => fastEngineLoop (10000000 * seed)
+  timed "fast engine, 10000000 rounds of 8 opcodes, code with a tail" fun _ => fastEngineLoop (10000000 * seed) 40
   timed "fast loop, stack as limbs, 10000000 rounds of 8 opcodes" fun _ => fastLimbs (10000000 * seed)
   return 0

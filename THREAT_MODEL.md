@@ -146,6 +146,30 @@ come back unchanged. Nobody is asked to keep the transactions secret: they arriv
 host. And the guest signs nothing yet, so a block built here binds no one until something outside signs a
 bid for it.
 
+**A signing key, written but not yet held.** `evm/Evm/Sign/` is the arithmetic for a BLS key that is to be
+made inside the guest and sign the builder's bids. Nothing calls it yet and the image holds no key. It is
+here ahead of its use because it is the part that has to be right about time, and what it can and cannot
+claim should be on record before a key depends on it.
+
+The rule is the OS's: a secret never passes through `Nat` or `Int`, and a secret decides no branch, no
+address and no division. Jaune's own BLS code is on `Nat` throughout and cannot be used on a key. This code
+holds field elements as fifteen 26-bit limbs in machine words; where a value decides something, both
+answers are computed and `Secret.select` (checked in `Mini/Constant.lean`) picks one; points are added by
+one formula that is right in every case, so nothing asks which case it is in; and the multiplication does a
+doubling and an addition for each of 255 bits whatever they are. The message's point and the finished
+signature are public and go through `JauneConsensus` as before.
+
+What holds it: `bls-test`, in which 54,850 field operations agree with `Nat`, 242 sums of points agree
+with Jaune's in every case the formula covers, and the public keys and signatures of 23 keys are byte for
+byte `JauneConsensus`'s. That is correctness. For time there is less: the discipline in the source, and
+the machine code of the build on Lean's runtime read once (2026-11-21): the product, the sum and the
+reduction have no conditional jump and no division; the difference and the choice have four jumps each,
+all on the reference count of an argument, which is how many things hold it and not what it holds. The
+image's own build has not been read, the reading is not a test that runs, and nothing was measured on a
+running guest. The OS's checker covers the two functions of `Mini/Secret.lean`, not Lean code that calls
+them; the Lean and C compilers are between this source and the machine. And the host can time the guest as
+finely as it likes. So "constant time" here means written to be and read to be in one build, not proved.
+
 **A branch of Jaune.** The image now holds `posix4e/jaune`, eleven commits ahead of the upstream commit
 this section was written about. Four of them change how something is computed and prove the result the
 same (how EVM memory grows, a polynomial division, and what holds the machine's state while an instruction

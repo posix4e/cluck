@@ -28,6 +28,10 @@ it, and continuous integration does not build it. What has been run and what it 
 - `Evm/Build.lean`: the makings of a block and a witness, and out of them a block: which of the proposed
   transactions go in, in what order, and the header that follows from running them. The format, the rule
   for ordering and what is left out are at the top of the file.
+- `Evm/Sign.lean`, `Evm/Sign/`: a BLS key used without ever being a `Nat`. `Field.lean` is the base field on
+  fixed-width words with every value-dependent choice made by the OS's `Secret.select`; `Curve.lean` is
+  the key times a point by the same steps whatever the key; `Sign.lean` is public keys and signatures over
+  those. Not yet reached from the service. `BlsTest.lean` holds it to `Jaune` and `JauneConsensus`.
 - `EfiMain.lean`: the service as a whole machine, an EFI guest answering framed requests on TCP port 5005
   over the OS's own Ethernet, IP and TCP.
 - `MkRequest.lean`: turns a case of a blockchain-test fixture into a request and the response the fixture

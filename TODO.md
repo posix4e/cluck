@@ -243,8 +243,14 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   over 16 to 32 connections, 3 MB of nodes. Those proofs do not include the neighbour a trie needs when a
   slot is cleared and its branch collapses; about one transaction in nine clears a slot, and a block that
   needs such a node is answered with status 6.
-- Not done: nothing has been built from pending transactions; nothing is signed; nothing has been sent to
-  a relay; building has not been timed against a slot.
+- The arithmetic for a signing key is written (`evm/Evm/Sign/`), with no key yet and nothing calling it:
+  BLS12-381 on fixed-width words, a secret deciding no branch. `bls-test`: 54,850 field operations against
+  `Nat`, 242 sums of points against Jaune's, and the public keys and signatures of 23 keys byte for byte
+  those `JauneConsensus` makes with the key as a number. The key's part of a signature takes 8 ms as a
+  process on Lean's runtime; hashing the message to a point, which is public and still Jaune's, takes 29.
+  What is and is not known about its timing is in `THREAT_MODEL.md`.
+- Not done: nothing has been built from pending transactions; no key is made or held and nothing is
+  signed; nothing has been sent to a relay; building has not been timed against a slot.
 
 What is next, in order:
 

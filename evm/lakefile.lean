@@ -34,6 +34,18 @@ target clockHosted pkg : System.FilePath := do
   buildO (pkg.buildDir / "rt" / "clock_hosted.o") src
     #["-I", (← getLeanIncludeDir).toString] #["-O2", "-fPIC"] "cc"
 
+/-- The OS's two functions for secrets (`Secret.lean` above, over `Mini/Secret.lean`) printed as C and
+compiled, for what runs on Lean's own runtime. The minimal runtime prints them with the rest. -/
+target secretHosted pkg : System.FilePath := do
+  let some printer ← findLeanExe? `«mini-print» | error "no mini-print"
+  let printed ← (← printer.fetch).mapM fun exe => do
+    let c := pkg.buildDir / "printed" / "secret.c"
+    IO.FS.createDirAll (pkg.buildDir / "printed")
+    IO.FS.writeFile c (← captureProc { cmd := exe.toString, args := #["secret"] })
+    return c
+  buildO (pkg.buildDir / "printed" / "secret.o") printed
+    #["-I", (← getLeanIncludeDir).toString] #["-O2", "-fPIC"] "cc"
+
 /-- The service as a process: one request on standard input, one response on standard output. -/
 @[default_target]
 lean_exe «evm-serve» where
@@ -77,6 +89,12 @@ lean_exe «stateless-test» where
 @[default_target]
 lean_exe «build-test» where
   root := `BuildTest
+
+/-- The signing key's arithmetic against `Nat`, and its signatures against `JauneConsensus`'s. -/
+@[default_target]
+lean_exe «bls-test» where
+  root := `BlsTest
+  moreLinkObjs := #[secretHosted]
 
 /-- A stateless request's answer in words, with Jaune's reason for a rejection. For making witnesses. -/
 @[default_target]

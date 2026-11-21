@@ -492,7 +492,7 @@ The faster engine (`evm/Fast/`), step by step:
     Ethereum's test suites. Nothing that serves requests uses the engine yet. The precompiled contracts,
     the decoding of blocks and transactions, the recovery of senders and the receipts root are still
     Jaune's, reached through `Evm/Bridge.lean`. An empty account that is touched is not removed
-    (EIP-161).
+    (EIP-161); the test suites from Prague on do not notice.
 - **The engine answers requests** (2026-11-21; `evm/Evm/Engine.lean`). A stateless request with `JWIF1`
   for its first five bytes is judged by the engine and answered in the same 69 bytes. A refusal now
   carries the engine's world back, so a block the engine refuses is answered invalid when all it had
@@ -515,6 +515,37 @@ The faster engine (`evm/Fast/`), step by step:
   - Not run: the engine in the guest (the image has not been rebuilt since it could not answer `JWIF1`);
     Ethereum's test suites; the 100 further blocks on the minimal runtime. The builder does not use the
     engine.
+- **Ethereum's own tests of chains, all of them from Prague on** (2026-11-21; `evm/FastFixtures.lean`,
+  `evm/scripts/run-eest`). execution-spec-tests' blockchain tests (v21.0.2, the copy Jaune is held to):
+  for each block of each test chain a whole witness is cut from the state as it stands and the block is
+  put to the engine as the stateless request the service would be sent, and the fixture is the judge: a
+  block it does not mark must be answered valid with its hash and state root, one it marks
+  `expectException` must be refused, and the chain must end at the block it names. Jaune imports each
+  block too, for the next state and as a second opinion, and agreed with the fixture every time.
+
+  | Suite | Files | Passed |
+  |---|---|---|
+  | Osaka | 2,333 | 2,333 |
+  | Prague | 2,341 | 2,341 |
+  | BPO1, BPO2 | 11, 11 | 11, 11 |
+  | Cancun to Prague, Prague to Osaka, Osaka to BPO1, BPO1 to BPO2 | 11, 9, 4, 3 | all |
+
+  In all 4,723 files and 34,561 cases: 37,295 blocks accepted and 3,575 blocks refused, every refusal
+  a verdict of invalid by the engine (status 3), none a "no verdict". 416 blocks, all in the suite that
+  begins in Cancun, are of a fork the engine has no rules for; it now says so (status 4) instead of
+  running them by Prague's rules, and those were left to Jaune. The first run of Osaka passed 2,330 of
+  2,333 files and found two faults that no block of mainnet had met, both fixed:
+  - an account that destroys itself naming itself as the beneficiary, in the transaction it was made
+    in, kept its balance until the transaction's end; it is burnt at once, which a later call in the
+    same transaction can see (`create_selfdestruct_same_tx`, `selfdestruct_sequences`);
+  - RETURNDATACOPY added its offset and length in 64 bits, so an offset near the top with a small length
+    wrapped round and read zeros where it should have ended the call (`buffer_src_offset`).
+  The pairing check's refusal of a point outside the subgroup, which `bn254-test` could not make, is
+  among what passed (`invalid_g2_subgroup`, 79 cases). Not run: the engine- and sync-format fixtures,
+  state tests and transaction tests in the same download, which this runner does not read; any fork
+  before Prague or after BPO2; any of it on the minimal runtime or in the guest, since it needs JSON.
+  The fixture's `expectException` names a reason, and the runner checks only that the block was
+  refused, not that it was for that reason.
 - **The engine reads the witness as it goes** (2026-11-21; `Witness` in `evm/Evm/Bridge.lean`). An account
   or slot is looked up in the witness's trie when the engine comes to it, by the hash of what it has in
   hand, and the answer is found, proven absent, or not said, which marks the world and ends in "witness

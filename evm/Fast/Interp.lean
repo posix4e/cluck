@@ -343,8 +343,12 @@ def selfDestruct (world : World) (address beneficiary : Word) (gas : UInt64) : W
     if beneficiary == address then world
     else (world.debit address self.balance).credit beneficiary self.balance
   -- Only an account made in this same transaction is removed, at the transaction's end, with whatever it
-  -- holds then.
-  let world := if self.createdAt == world.epoch then world.destruct address else world
+  -- holds then. What it held now has gone to the beneficiary, and when that is itself it is burnt, now:
+  -- an account that has destroyed itself and is called again in the same transaction has nothing.
+  let world :=
+    if self.createdAt == world.epoch then
+      (if beneficiary == address then world.setBalance address Word.zero else world).destruct address
+    else world
   (world, gas - cost, true)
 
 /-- The topics of a LOG, read from under its two memory arguments. -/
@@ -501,7 +505,9 @@ def run (blk : @& BlockEnv) (tx : @& TxEnv) (host : @& Host) (f : @& Frame) :
         let cost := 3 + 3 * wordsOf len.w0 + expansionCost mem.size.toUInt64 stop
         if gas < cost then lost stack world else
         -- Return data, unlike the others, has no zeros past its end: reading there ends the call.
-        if op == 0x3e && (!from_.small || !len.small || from_.w0 + len.w0 > ret.size.toUInt64) then lost stack world else
+        -- (The sum of the two is not taken: it can wrap round past the end of a machine word.)
+        if op == 0x3e && (!from_.small || !len.small || from_.w0 > ret.size.toUInt64 ||
+            len.w0 > ret.size.toUInt64 - from_.w0) then lost stack world else
         let mem := reach mem stop
         let mem := copyIn mem dst.w0.toNat (if op == 0x37 then f.input else if op == 0x39 then f.code else ret) from_ len.w0.toNat
         run blk tx host f fuel stack (sp - 3) mem (pc + 1) (gas - cost) ret world

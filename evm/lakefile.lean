@@ -100,6 +100,11 @@ lean_exe «engine-time» where
 lean_exe «bn254-test» where
   root := `Bn254Test
 
+/-- Ethereum's own tests of chains, put to the fast engine, the fixture the judge. -/
+@[default_target]
+lean_exe «fast-fixtures» where
+  root := `FastFixtures
+
 /-- Times the hashing, the curves and the interpreter, on whichever runtime it is linked against. -/
 @[default_target]
 lean_exe «evm-bench» where

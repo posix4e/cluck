@@ -28,6 +28,7 @@ def magic : ByteArray := "JWIF1".toUTF8
 def validate (r : Stateless.Request) (fork : Fork) (parent : Header) (ancestors : List Header) (block : Block)
     (blockHash : U256) : Stateless.M Stateless.Verdict := do
   let rules := fork.ruleSet
+  if !Bridge.supported fork then return ⟨4, 0, "the engine has no rules for this fork"⟩
   if let .error e := checkBlockRlpSize rules.block r.block.size then
     return ⟨3, 0, (TransitionError.block e).render⟩
   -- Jaune's checks of a header want a chain with a state, and read none of it.

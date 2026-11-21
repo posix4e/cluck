@@ -37,7 +37,8 @@ it, and continuous integration does not build it. What has been run and what it 
   same request with `JWIF1` for its first five bytes, the same answer. A request to build with `JBLF1`
   for its first five bytes is built by the engine (`Evm/Build.lean`). `FastWordTest.lean`,
   `FastOpTest.lean` and `FastReplay.lean` hold the engine to `Nat`, to Jaune's interpreter and to the
-  headers of saved blocks; `EngineTime.lean` says where its time goes.
+  headers of saved blocks; `FastFixtures.lean` puts execution-spec-tests' chains to it (`scripts/run-eest`),
+  with witnesses cut from the whole state by `Evm/Cut.lean`; `EngineTime.lean` says where its time goes.
 - `Evm/Sign.lean`, `Evm/Sign/`: a BLS key used without ever being a `Nat`. `Field.lean` is the base field on
   fixed-width words with every value-dependent choice made by the OS's `Secret.select`; `Curve.lean` is
   the key times a point by the same steps whatever the key; `Sign.lean` is public keys and signatures over
@@ -194,6 +195,7 @@ witness/fetch 26456375 block.req block.expected
 .lake/build/bin/fast-replay block.req ...                 # saved blocks through the fast engine, their headers the judge
 .lake/build/bin/fast-replay --where ADDRESS block.req     # which transaction first makes the engine fetch an account
 .lake/build/bin/engine-time < block.req                   # where the engine's time goes (also -min, after build-min)
+scripts/run-eest osaka                                    # Ethereum's own tests of chains through the engine, a suite at a time
 ```
 
 The node these were run against was reth 2.11.0 with Lighthouse 8.3.3, started from reth's minimal

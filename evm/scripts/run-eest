@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Ethereum's own tests of chains (execution-spec-tests' blockchain_tests) put to the fast engine.
+#
+#   scripts/run-eest SUITE [--jobs N]        (from evm/, after: lake build fast-fixtures)
+#
+# SUITE is one of the directories of fixtures without its "for_": prague, osaka, bpo1, bpo2,
+# cancuntopragueattime15k, praguetoosakaattime15k, osakatobpo1attime15k, bpo1tobpo2attime15k.
+# The fixtures are looked for under $EEST_FIXTURES (default
+# /data/eth/jaune-fixtures/mainnet/fixtures/blockchain_tests). Each file is run in a process of its own,
+# N at a time (default: the number of processors), by .lake/build/bin/fast-fixtures, which prints PASS or
+# FAIL for it. A file that takes over half an hour, or whose process dies, is a FAIL. Every line is kept
+# in .lake/build/eest/SUITE.txt, the failures are printed, and the exit status is 0 only if every file
+# passed.
+set -euo pipefail
+here="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$here"
+suite="${1:?usage: scripts/run-eest SUITE [--jobs N]}"
+jobs="$(nproc)"
+if [ "${2:-}" = "--jobs" ]; then jobs="${3:?--jobs needs a number}"; fi
+root="${EEST_FIXTURES:-/data/eth/jaune-fixtures/mainnet/fixtures/blockchain_tests}/for_$suite"
+[ -d "$root" ] || { echo "run-eest: no fixtures at $root" >&2; exit 2; }
+[ -x .lake/build/bin/fast-fixtures ] || { echo "run-eest: run lake build fast-fixtures first" >&2; exit 2; }
+mkdir -p .lake/build/eest
+report=".lake/build/eest/$suite.txt"
+one() {
+  out="$(timeout 1800 .lake/build/bin/fast-fixtures "$1" 2>&1)" || true
+  case "$out" in
+    PASS*|FAIL*) printf '%s\n' "$out" ;;
+    *) printf 'FAIL\t%s\tno answer: %s\n' "$1" "$(printf '%s' "$out" | tail -c 300 | tr '\n' ' ')" ;;
+  esac
+}
+export -f one
+find "$root" -name '*.json' -print0 | sort -z | xargs -0 -P "$jobs" -I{} bash -c 'one "$1"' _ {} > "$report"
+files="$(find "$root" -name '*.json' | wc -l)"
+passed="$(grep -c '^PASS' "$report" || true)"
+failed="$(grep -c '^FAIL' "$report" || true)"
+grep -A5 '^FAIL' "$report" | cut -c1-700 | head -200 || true
+echo "$suite: $files files, $passed passed, $failed failed (every line is in $report)"
+[ "$failed" = 0 ] && [ "$passed" = "$files" ]

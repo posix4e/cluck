@@ -22,6 +22,13 @@ def osaka (fork : Fork) : Bool :=
   | .osaka | .bpo1 | .bpo2 => true
   | _ => false
 
+/-- Whether the engine has this fork's rules: Prague and what has come after it on mainnet. An earlier
+fork's blocks are not the engine's to judge or to build, and it must say so, not run them by later rules. -/
+def supported (fork : Fork) : Bool :=
+  match fork with
+  | .prague | .osaka | .bpo1 | .bpo2 => true
+  | _ => false
+
 /-- The addresses of the precompiled contracts at a fork. -/
 def precompiles (fork : Fork) : Array Fast.Word :=
   let upTo17 := (List.range 17).toArray.map fun i => Fast.Word.ofUInt64 (i + 1).toUInt64

@@ -73,9 +73,11 @@ to `Nat` on 5.9 million cases; its interpreter to Jaune's on 170,000 programs th
 blocks of mainnet, whose headers it reproduces in every field compared; and `stateless-test`, where on 279
 blocks of test chains it gives Jaune's answers, on 1,143 witnesses with one node, key or code left out it
 gives the right answer (734, the keys among them) or none (409), never another, and a block that lies
-about its state root is refused. Nothing proves any of it, Ethereum's own test suites have not been run on it, and
-no transaction or block that breaks a rule, other than that one lie, has been put to it: its refusals are
-written and all but untested. A flaw in it that made a block's wrong execution agree with a header would
+about its state root is refused; and Ethereum's own tests of chains for Prague, Osaka and the two forks after
+(execution-spec-tests' blockchain tests, 4,723 files), where it accepts every block it should and refuses
+as invalid every one of the 3,575 it should. Nothing proves any of it. The tests say why a block is to be
+refused and the runner checks only that it was. A block of a fork before Prague is not judged by the
+engine at all: it answers that it has no rules for it. A flaw in it that made a block's wrong execution agree with a header would
 have to match what the block's maker claimed; a flaw that makes a right block disagree is a false
 "invalid", which is the likelier kind. Both paths are in the image; nothing but the first five bytes of a
 request chooses between them. The builder has the same two ways in: a request to build that begins `JBLF1`

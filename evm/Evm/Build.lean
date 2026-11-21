@@ -363,6 +363,7 @@ def short (witness : Bridge.Witness) (world : Fast.World) (notes : Array Note :=
 /-- The same beginning for the fast engine: the template checked against the parent, the engine's world
 over the witness, the block's two opening calls, and what the fee recipient has before any transaction. -/
 def startFast (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) : Stage :=
+  if !Bridge.supported fork then .done { status := 4 } #[] "the engine has no rules for this fork" else
   -- Jaune's checks of a header want a chain with a state, and read none of it.
   let chain : BlockChain :=
     { blocks := ancestors.map fun h => ⟨h, [], [], []⟩, state := State.ofPresentList [], chainId := r.witness.chainId }

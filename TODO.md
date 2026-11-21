@@ -539,8 +539,15 @@ The faster engine (`evm/Fast/`), step by step:
   both, and by the rule both put in the same number (97, 104, 101). On Lean's runtime the engine takes
   171 to 279 ms for those where Jaune's builder takes 422 to 749, and 32 ms for the test block of 8M gas
   of delegate calls where Jaune's takes 401. A request for a bid (`JBID2`) carries either kind, so the
-  guest will sign a block built either way once an image has both. Not run: the minimal runtime, the
-  guest, the shadow builder; blocks of mainnet with addresses left out (`build-test real`) by the engine.
+  guest will sign a block built either way once an image has both. Not run: the guest; blocks of mainnet
+  with addresses left out (`build-test real`) by the engine.
+  - **Side by side on the chain as it goes** (`builder/shadow --engine both`): each slot's request is put
+    to Jaune's builder and then, the same bytes but for its name, to the engine's, with no limit of time
+    on either, and the two signed answers must be the same bytes. As processes on the minimal runtime,
+    25 slots of mainnet: 25 blocks built, all judged valid by the node's validator, and the engine's
+    answer the same as Jaune's in 25 of 25. A slot took Jaune's builder 0.31 seconds at the median and
+    1.86 at the most, the engine's 0.26 and 0.38, each time with a process started for it, which is most
+    of the smaller figures. Blocks here were small (1.1M gas at the median, 3.9M at the most).
 - **bn254 on machine words** (2026-11-21; `evm/Fast/Bn254.lean`): the field in Montgomery form on four
   words, the tower above it, both groups, and the optimal ate pairing, for the three precompiled contracts
   that use the curve. Its constants were worked out from the curve's prime, order and parameter, not

@@ -319,6 +319,17 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   What a win would cost, again, over the 189 of these slots whose winning bid the relays' public data
   still gave: the winning bid 0.0099 ETH at the median, the guest's 0.0002; short by 0.0067 or less in a
   quarter of slots, 0.0097 at the median, 0.2746 at the most.
+- **Sending bids is written and has been sent to no relay.** `builder/shadow --live --relays …` posts each
+  bid to the relays named, and only a block the node's validator judged valid, signed, before its slot, to
+  relays that hold the registration it was built for; it asks the guest for a report with each answer
+  (the challenge is the parent's hash), stops at the first block built here that becomes the chain's
+  head, and keeps the request, reply, report and quote for it. Tried as a process against a stand-in
+  relay on the same machine: four slots, four bids posted in the builder API's shape, the stand-in's
+  "payload attributes not yet known" answered by asking again. Not run: the report with a bid, noticing a
+  landed block and making its quote, and any real relay. From the relays' documentation and code, read on
+  2026-11-21: Flashbots, Ultra Sound, Aestus and Titan take bids from a key they have not seen (as
+  low-priority, fully simulated); bloXroute wants a paid plan; a bid below a relay's floor is skipped, not
+  refused, and Flashbots drops an empty block without saying so.
 - Not done: no relay has been sent anything, so no relay has said whether it accepts a block or a
   signature from here; 1,000 slots in a row with a valid block ready in time (a second run, with the time
   limit and the host's fix, image `346c4ffd…61df038a`, was started on 2026-11-21 and is not finished); the

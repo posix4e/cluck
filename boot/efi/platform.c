@@ -8,7 +8,11 @@ static SystemTable *system_table;
 static Handle image_handle;
 static Network *nic;
 void *boot_heap_start;
-size_t boot_heap_size = 256 * 1024 * 1024;
+// How much the runtime's heap is. A package whose program needs more says so when it compiles this file.
+#ifndef BOOT_HEAP_BYTES
+#define BOOT_HEAP_BYTES (256 * 1024 * 1024)
+#endif
+size_t boot_heap_size = BOOT_HEAP_BYTES;
 static uint64_t epoch, ticks_per_ms;
 
 void boot_serial_write(char const *bytes, size_t length) {
@@ -238,6 +242,7 @@ Status EFIAPI efi_main(Handle image, SystemTable *table) {
     if (table->boot->allocate_pages(0, 2, boot_heap_size / 4096, &heap_address) != 0) {
         // A 512 MiB guest can have two free extents split by the EFI image.
         boot_heap_size /= 2;
+        rt_print("silo: the runtime heap is half of what was asked for\n");
         if (table->boot->allocate_pages(0, 2, boot_heap_size / 4096, &heap_address) != 0) {
             rt_print("silo: firmware could not allocate the runtime heap\n");
             return EFI_ERROR_CODE(9);

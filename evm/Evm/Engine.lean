@@ -79,10 +79,9 @@ def runWithReason (r : Stateless.Request) : Service.Response × String := Statel
 
 /-- A request for the engine is a stateless request under another name. -/
 def serve (input : ByteArray) : ByteArray :=
-  let asStateless := Stateless.magic ++ input.extract magic.size input.size
-  match (Stateless.request asStateless).run 0 with
+  match (Stateless.body input).run magic.size with
   | some (r, pos) =>
-    if pos = asStateless.size then (runWithReason r).1.encode else (⟨5, 0, 0, 0⟩ : Service.Response).encode
+    if pos = input.size then (runWithReason r).1.encode else (⟨5, 0, 0, 0⟩ : Service.Response).encode
   | none => (⟨5, 0, 0, 0⟩ : Service.Response).encode
 
 end Evm.Engine

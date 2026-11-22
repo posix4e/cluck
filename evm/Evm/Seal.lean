@@ -49,8 +49,8 @@ goes in is still up to whoever asks for blocks.
 
 carries with the transaction the proofs of the state it reads (`withProofs?` has the layout): the sender
 knows what its own transaction touches and can ask any node for the proofs, and then nobody has to be
-asked on the transaction's behalf. The proofs are at a block the sender names, which must be one of the
-last few this machine has itself checked (`Evm/Follow.lean`); from then on the machine keeps them good,
+asked on the transaction's behalf. The proofs are at a block the sender names, which must be the newest
+this machine has itself checked or the one before it (`Evm/Follow.lean`); from then on the machine keeps them good,
 block by block, from what each block it checks wrote. The answer is one byte as above, with 4 for proofs
 at a block this machine does not know, or that do not reach what they say they prove.
 

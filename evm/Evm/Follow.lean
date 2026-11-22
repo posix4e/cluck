@@ -56,8 +56,10 @@ structure Seen where
 structure Chain where
   recent : Array Seen := #[]
 
-/-- How many are kept: a sender's proofs may be at any of them. -/
-def maxRecent : Nat := 4
+/-- How many are kept: a sender's proofs may be at either, the newest block or the one before it. Each
+kept block is some megabytes of the nodes it wrote, and memory is what following the chain is short of
+(`scripts/follow-memory`). -/
+def maxRecent : Nat := 2
 
 def Chain.head? (c : Chain) : Option Seen := c.recent.back?
 
@@ -107,11 +109,10 @@ def advance (pool : Seal.Pool) (block : Seen) (carried : Bool) : Seal.Pool :=
 /-- A block shown to the machine: the answer, and the chain and the pool after it. -/
 def serve (chain : Chain) (pool : Seal.Pool) (input : ByteArray) : ByteArray × Chain × Seal.Pool :=
   let refuse : ByteArray × Chain × Seal.Pool := ((⟨5, 0, 0, 0⟩ : Service.Response).encode, chain, pool)
-  let asStateless := Stateless.magic ++ input.extract magic.size input.size
-  match (Stateless.request asStateless).run 0 with
+  match (Stateless.body input).run magic.size with
   | none => refuse
   | some (r, pos) =>
-    if pos != asStateless.size then refuse else
+    if pos != input.size then refuse else
     let (response, _, kept) := Stateless.runWithBy (Engine.validateWith true) r
     match kept with
     | none => (response.encode, chain, pool)

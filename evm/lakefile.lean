@@ -128,6 +128,12 @@ lean_exe «follow-test» where
   root := `FollowTest
   moreLinkObjs := #[secretHosted]
 
+/-- Blocks put to `Evm/Follow.lean` in one process, to measure the memory following takes (`scripts/follow-memory`). -/
+@[default_target]
+lean_exe «follow-run» where
+  root := `FollowRun
+  moreLinkObjs := #[platformHosted, secretHosted]
+
 /-- Drives the TLS client over a real connection, against other people's servers (`scripts/tls-get`). -/
 @[default_target]
 lean_exe «tls-fetch» where

@@ -86,8 +86,9 @@ def forkCode : Fork → Option Nat
 
 def sized (input : ByteArray) : P ByteArray := do take input (← nat input 4)
 
-def request (input : ByteArray) : P Request := do
-  if (← take input magic.size) != magic then stop
+/-- A request after the five bytes that say what kind it is: for the kinds that are a stateless request
+under another name, read where they lie with nothing copied to rename them. -/
+def body (input : ByteArray) : P Request := do
   let code ← nat input 1
   let fork ← if code == 255 then pure none else match forkOf code with
     | some fork => pure (some fork)
@@ -99,6 +100,10 @@ def request (input : ByteArray) : P Request := do
   let codes ← many (← nat input 4) (sized input)
   let keys ← many (← nat input 4) (sized input)
   pure { fork, chainId := chainId.toUInt64, block, headers, nodes := nodes.toArray, codes, keys }
+
+def request (input : ByteArray) : P Request := do
+  if (← take input magic.size) != magic then stop
+  body input
 
 def Request.encode (r : Request) : Option ByteArray := do
   let fork ← match r.fork with

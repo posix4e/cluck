@@ -915,6 +915,15 @@ times, and the block from the relay. Six stages:
     - What it does not show: a relay's own check of the blocks it answered 202 to; anything about
       a sealed transaction (none was handed in); more than an hour; a relay that answers slowly
       for long. Kept under `/data/eth/shadow/live4/`, not published.
+  - **A second try at 1,000 slots, on the image that did the live hour, was stopped at 312**: 2,040
+    blocks sent, every one valid, signed and the same at the stand-in, no round without a block,
+    and one block 0.36 s late. Its time for transactions ran out while one long transaction was
+    running (the clock is looked at between transactions, not within one), and the block was ended
+    a second after. The guest now keeps a block it ends more than half a second after its time was
+    up (`Send.grace`), as it keeps one that pays no more. The image with that is
+    `91aa389b…38485b475` (the shadow image `e688e930…7c0f3268`); `check-secret-code tdx` and
+    `run-fixtures tdx --limits --key` pass on it, and 22 slots against the stand-in: 157 blocks,
+    all valid, none late.
   - Not done: the 1,000 slots in a row have not been run to the end on this image; a bid can still
     be answered after its slot has begun when the parent comes very late; the builders that win go
     on to the slot's start or past it, and ours stops short of it on purpose; transactions with

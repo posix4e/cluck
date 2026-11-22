@@ -477,6 +477,11 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) (since
     | some (slot, parent, value) => slot == built.slot && parent == built.parent && built.value ≤ value
     | none => false
   if beaten then return ← finish bid built.wanted "it pays no more than one already sent for this slot"
+  -- Nor one ended too long after its time was up: it would reach the relay late, if at all in time.
+  let allowed := Evm.Bid.allowed r.bid
+  let began := if since == 0 then started else since
+  if allowed != 0 && now > began + allowed + Send.grace then
+    return ← finish bid built.wanted "it was ended too long after the time allowed for it"
   let relays := (← get).relays
   let anchors := (← get).anchors
   let mut calls : Array (Nat × Outbound.Call) := #[]

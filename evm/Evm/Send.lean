@@ -49,6 +49,10 @@ the clock would otherwise take the place of a fuller one. The answer then names 
 block was built. With sealed transactions tried this tells the request's sender that the block paid no
 more than the last, which a relay's public list of bids would have told it too.
 
+Nor is a block sent that was ended more than half a second after the time allowed for its transactions
+ran out (`grace`): the allowance is there so that the block reaches the relay before its slot, and one
+long transaction can carry a block past it. The answer names no relay then either.
+
 What goes to a relay is made up, inside TLS, to a whole number of 16384 bytes, so that the length of
 what the machine sends, which whoever carries it can see, does not say whether a transaction of a few
 hundred bytes is in it.
@@ -105,6 +109,12 @@ def hidden : ByteArray := ByteArray.mk #[8] ++ four 0
 
 /-- What is sent to a relay is made up to a whole number of this many bytes inside TLS. -/
 def bucket : Nat := 16384
+
+/-- How long after the time allowed for transactions has run out a block may be ended and still be sent,
+in milliseconds. The time is looked at between transactions, so one long transaction, or a long ending,
+can carry a block well past it; whoever set the allowance set it to have the block at the relay in time,
+and a block this far over would not be. -/
+def grace : Nat := 500
 
 /-- The answer: the bid's, then what each relay said, then what the witness lacked. -/
 def answer (bid : ByteArray) (told : Array (Nat × Outbound.Outcome)) (wanted : Array Fast.Lack := #[]) : ByteArray :=

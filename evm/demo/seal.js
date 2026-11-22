@@ -7,6 +7,9 @@
 // browsers offer, so it is written out here from RFC 8439, and `scripts/seal-check` holds it to node's and
 // the whole of this to OpenSSL's HPKE.
 //
+// A transaction can also be sealed together with proofs of the state it reads (`sealWithProofs`), which
+// keeps the builder from having to ask anyone which accounts it touches.
+//
 // Nothing here is constant-time, and it need not be on the sender's side for the secrets it holds: a key
 // made for one message and thrown away, and the sender's own transaction.
 //
@@ -130,5 +133,31 @@
     return hpkeSeal(key, text("sealed transaction v1"), new Uint8Array(0), concat(slot, transaction));
   }
 
-  scope.cluckSeal = { sealTransaction, hpkeSeal, sealWith };
+  // The same with the proofs of the state the transaction reads, so that nobody has to be asked for them
+  // on its behalf: what follows "JSEA2". `anchor` is the hash of the block the proofs are at, which must
+  // be among the last few the builder has checked. `accounts` is a list of { address, slots }, 20 bytes
+  // and 32 bytes each; `nodes` the nodes of the state's tries that eth_getProof gave for them (account
+  // proofs and storage proofs alike, in any order); `codes` the code of each contract among them.
+  async function sealWithProofs(key, lastSlot, transaction, anchor, accounts, nodes, codes) {
+    if (key.length !== 32 || anchor.length !== 32) throw new Error("a sealing key and a block's hash are 32 bytes each");
+    const number = (n, width) => {
+      const out = new Uint8Array(width);
+      for (let i = 0; i < width; i++) out[width - 1 - i] = Math.floor(n / 2 ** (8 * i)) & 255;
+      return out;
+    };
+    const slot = new Uint8Array(8);
+    new DataView(slot.buffer).setBigUint64(0, BigInt(lastSlot), false);
+    const parts = [slot, number(transaction.length, 4), transaction, anchor, number(accounts.length, 2)];
+    for (const account of accounts) {
+      if (account.address.length !== 20 || account.slots.some((s) => s.length !== 32)) throw new Error("an address is 20 bytes and a slot's number 32");
+      parts.push(account.address, number(account.slots.length, 2), ...account.slots);
+    }
+    parts.push(number(nodes.length, 4));
+    for (const node of nodes) parts.push(number(node.length, 2), node);
+    parts.push(number(codes.length, 2));
+    for (const code of codes) parts.push(number(code.length, 4), code);
+    return hpkeSeal(key, text("sealed transaction with proofs v1"), new Uint8Array(0), concat(...parts));
+  }
+
+  scope.cluckSeal = { sealTransaction, sealWithProofs, hpkeSeal, sealWith };
 })(typeof window !== "undefined" ? window : globalThis);

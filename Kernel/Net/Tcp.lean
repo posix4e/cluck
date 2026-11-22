@@ -246,7 +246,19 @@ private def synchronized (e : Endpoint) (c : Conn) (s : Segment) (now : Nat) (ev
     Endpoint × Array Event := Id.run do
   let first := (s.seq - c.rcv).toNat < rxWindow.toNat
   let coversNext := (c.rcv - s.seq).toNat < s.length
-  if !first && !coversNext then return (e, if s.has rst then events else events.push c.ack)
+  if !first && !coversNext then
+    if s.has rst then return (e, events)
+    -- A segment wholly behind what has been received is answered with an ACK and otherwise dropped, but
+    -- not its acknowledgement of what was sent: BSD's TCP, QEMU's among them, acknowledges bytes that
+    -- reach it after its FIN by sending the FIN again, and with that dropped every such byte waited a
+    -- second for its retransmission (seen on each connection out, whose last bytes follow the peer's FIN).
+    let behind := (c.rcv - (s.seq + s.length.toUInt32)).toNat
+    let sound := s.has ack && !s.has syn && behind ≤ 65535 &&
+      !(before c.snd s.answer || (c.snd - s.answer).toNat > 65535)
+    if sound then
+      let c := acknowledge { c with touched := now } s now
+      return complete e c now (events.push c.ack)
+    return (e, events.push c.ack)
   if s.has rst then
     if s.seq != c.rcv then return (e, events.push c.ack)
     return (e.remove c.key, events.push (.closed c.key))

@@ -156,6 +156,24 @@ def main : IO UInt32 := do
   check "lost final ACK recovered in TIME-WAIT" ((packets finalAck)[0]!.answer == 102)
   check "TIME-WAIT expires" ((waiting.tick 120100).1.conns.isEmpty)
 
+  -- The peer closes first, bytes are sent to it afterwards, and it acknowledges them by repeating its FIN.
+  let (again, _) := listener.connect 0 20 remote 51002 443
+  let hello : Segment := { src := 443, dst := 51002, seq := 100, answer := 21, flags := syn ||| ack, window := 3000 }
+  let (again, _) := rx again hello
+  let itsFin := { hello with seq := 101, answer := 21, flags := fin ||| ack }
+  let (again, _) := rx again itsFin 1
+  let there : Key := ⟨remote.ip, 443, 51002⟩
+  let (again, said) := again.send 2 there (bytes [7,8,9])
+  check "bytes still go out after the peer's FIN" ((packets said)[0]!.data == bytes [7,8,9])
+  let (again, answered) := rx again { itsFin with answer := 24 } 3
+  check "a repeated FIN is answered" ((packets answered)[0]!.answer == 102)
+  let (_, last) := again.close 4 there
+  check "a repeated FIN's new acknowledgement releases what it acknowledges"
+    ((packets last).any fun p => p.has fin && p.seq == 24)
+  let (_, stale) := rx again { itsFin with answer := 30 } 3
+  check "a repeated FIN acknowledging what was never sent releases nothing"
+    ((packets stale).size == 1 && !(packets stale)[0]!.has fin)
+
   let (gone, given) := est.abort key
   check "giving a connection up resets the peer and frees its place at once"
     (gone.conns.isEmpty && closed given && (packets given)[0]!.has rst && (packets given)[0]!.seq == est.conns[0]!.snd)

@@ -142,10 +142,11 @@
     <h2>What this does and does not keep from others</h2>
     <ul>
       <li>The sealed bytes show how long your transaction is, and nothing else of it.</li>
-      <li>To build a block the machine needs proofs of the state your transaction reads, and it gets
-      them from the computer it runs on. So that computer learns <strong>which accounts and storage
-      slots</strong> your transaction touches. It does not learn amounts, call data, or what the
-      transaction does.</li>
+      <li>To build a block the machine needs proofs of the state your transaction reads. Sealed as
+      this page seals it, the machine gets them from the computer it runs on, so that computer learns
+      <strong>which accounts and storage slots</strong> your transaction touches, though not amounts,
+      call data, or what it does. To keep that too, seal the proofs in with the transaction:
+      <code>scripts/seal-with-proofs</code> in the repository does it, with a node of your choosing.</li>
       <li>The relay the block is sent to sees the block, as with every builder.</li>
       <li>If the checks above pass, the key belongs to a machine with the measurements shown on
       <a href="./">the first page</a>. Whether those are the published source is for you to check by

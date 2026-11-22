@@ -277,8 +277,12 @@
       for: the builder cannot win a slot on what its blocks earn. The payment was signed on the host, so
       money and the key that moves it sit outside the trust domain. The request, reply and quote for the
       block are kept but not published here yet. The second block kept one transaction from the host, once, and the transaction was this
-      project's own. The host still learns which accounts such a transaction touches, because it is the
-      host that proves the state; it learns the transaction's length and when it came; and the relay
+      project's own. In that block the host still learned which account the transaction touched,
+      because the host proved the state. Since then a sender can seal the proofs in with the
+      transaction, and the guest keeps them good by following the chain itself, block by block; the
+      host is then told nothing of what the transaction touches. That has been tried against a
+      stand-in relay and not sent to a real one. Either way the host learns the length of what was
+      sealed, when it came, and whether it went into a block; and the relay
       sees the whole block, as from any builder. The TLS, the sealing and the certificate checks behind
       it are tested against OpenSSL, not proved and not reviewed by anyone else. Certificates are
       judged at a date the host supplies, since the guest has no clock that knows one. Its signing is written to take the same time

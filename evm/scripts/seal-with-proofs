@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Seals a signed transaction to a builder's key together with proofs of the state it reads, so that the
+builder has to ask nobody which accounts it touches (Evm/Seal.lean, "With proofs").
+
+    scripts/seal-with-proofs --key HEX --from ADDRESS [--rpc URL] [--slots N] [--out FILE] TRANSACTION
+                                                                         (from evm/; needs node)
+
+TRANSACTION is the signed transaction as it goes on the wire, in hexadecimal (a fee-market transaction,
+the kind that begins 0x02); ADDRESS is who signed it; HEX is the builder's sealing key, 32 bytes, which a
+sender in earnest has checked the quote for (demo/seal.html does that). The transaction may go in a
+block for the next N slots (default 4) and is dropped after.
+
+A node is asked three things, at its newest block: which accounts and slots the transaction would touch
+there (`eth_createAccessList`), proofs of those and of the sender's and the receiver's accounts
+(`eth_getProof`), and the code of the contracts among them (`eth_getCode`). The node learns what a wallet's
+node always learns: that somebody asked about this transaction. It is the sender's own choice of node, and
+it is not the builder's host. The sealing is done by the page's own script (demo/seal.js), under node.
+
+What comes out, in hexadecimal or to FILE as bytes, is the request that hands the transaction in:
+"JSEA2", then the sealed bytes. The builder must have checked the block the proofs are at, or one of
+the three before it; if the chain has moved further by the time it arrives, seal again.
+
+A transaction whose path depends on state that changes before it is built may read something these
+proofs do not cover. It is then left out, and nothing is said to anyone."""
+import json, os, subprocess, sys, time, urllib.request
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def rpc_at(url):
+    def rpc(method, params):
+        request = urllib.request.Request(url, json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode(),
+                                         {"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            answer = json.load(response)
+        if "error" in answer:
+            raise RuntimeError(f"{method}: {answer['error'].get('message', answer['error'])}")
+        return answer["result"]
+    return rpc
+
+def items(b, at=0):
+    """The item of RLP at `at`: what it holds (bytes, or a list of items), and where the next begins."""
+    p = b[at]
+    if p < 0x80: return b[at:at + 1], at + 1
+    if p <= 0xb7: return b[at + 1:at + 1 + p - 0x80], at + 1 + p - 0x80
+    if p <= 0xbf:
+        n = p - 0xb7; size = int.from_bytes(b[at + 1:at + 1 + n], "big")
+        return b[at + 1 + n:at + 1 + n + size], at + 1 + n + size
+    if p <= 0xf7: start, size = at + 1, p - 0xc0
+    else:
+        n = p - 0xf7; start, size = at + 1 + n, int.from_bytes(b[at + 1:at + 1 + n], "big")
+    found, here_ = [], start
+    while here_ < start + size:
+        item, here_ = items(b, here_)
+        found.append(item)
+    return found, start + size
+
+def touched(rpc, wire, sender, at):
+    """The accounts a transaction reads at block `at`, each with the slots of its storage it reads: what
+    the node says it would touch, and the sender and the receiver, which the node leaves out."""
+    if wire[:1] != b"\x02":
+        raise ValueError("only a fee-market transaction (0x02) is read here")
+    fields, _ = items(wire, 1)
+    number = lambda b: hex(int.from_bytes(b, "big"))
+    call = {"from": sender, "gas": number(fields[4]), "value": number(fields[6]), "input": "0x" + fields[7].hex(),
+            "maxFeePerGas": number(fields[3]), "maxPriorityFeePerGas": number(fields[2]), "nonce": number(fields[1])}
+    if fields[5]: call["to"] = "0x" + fields[5].hex()
+    accounts = {sender.lower(): set()}
+    if fields[5]: accounts.setdefault("0x" + fields[5].hex(), set())
+    for entry in rpc("eth_createAccessList", [call, at])["accessList"]:
+        accounts.setdefault(entry["address"].lower(), set()).update(entry["storageKeys"])
+    return {address: sorted(slots) for address, slots in accounts.items()}
+
+def proofs(rpc, accounts, at):
+    """What the node proves of these accounts and slots at block `at`: the nodes, and the contracts' codes."""
+    nodes, codes = set(), set()
+    for address, slots in accounts.items():
+        proof = rpc("eth_getProof", [address, slots, at])
+        nodes.update(proof["accountProof"])
+        for storage in proof["storageProof"]:
+            nodes.update(storage["proof"])
+        code = rpc("eth_getCode", [address, at])
+        if len(code) > 2: codes.add(code)
+    unhex = lambda text: bytes.fromhex(text[2:])
+    return sorted(unhex(n) for n in nodes), sorted(unhex(c) for c in codes)
+
+def seal(key, last_slot, wire, anchor, accounts, nodes, codes):
+    """The sealing, by demo/seal.js under node: the bytes that follow "JSEA2"."""
+    script = ("""require(process.argv[1]); let text = ""; process.stdin.on("data", (d) => text += d); process.stdin.on("end", () => {
+      const a = JSON.parse(text), un = (h) => Buffer.from(h, "hex");
+      cluckSeal.sealWithProofs(un(a.key), BigInt(a.last), un(a.wire), un(a.anchor),
+        a.accounts.map(([address, slots]) => ({ address: un(address), slots: slots.map(un) })), a.nodes.map(un), a.codes.map(un))
+        .then((e) => console.log(Buffer.from(e).toString("hex"))); });""")
+    given = {"key": key.hex(), "last": last_slot, "wire": wire.hex(), "anchor": anchor[2:],
+             "accounts": [[a[2:], [s[2:] for s in slots]] for a, slots in accounts.items()],
+             "nodes": [n.hex() for n in nodes], "codes": [c.hex() for c in codes]}
+    done = subprocess.run(["node", "-e", script, os.path.join(here, "demo/seal.js")], input=json.dumps(given),
+                          capture_output=True, text=True, check=True)
+    return bytes.fromhex(done.stdout.strip())
+
+def main():
+    args = sys.argv[1:]
+    def option(name, default=None):
+        if name in args:
+            i = args.index(name); value = args[i + 1]; del args[i:i + 2]; return value
+        return default
+    key, sender = option("--key"), option("--from")
+    rpc, ahead, out = rpc_at(option("--rpc", "http://127.0.0.1:8545")), int(option("--slots", "4")), option("--out")
+    if not key or not sender or len(args) != 1:
+        sys.exit(__doc__)
+    wire = bytes.fromhex(args[0].removeprefix("0x"))
+    block = rpc("eth_getBlockByNumber", ["latest", False])
+    accounts = touched(rpc, wire, sender, block["number"])
+    nodes, codes = proofs(rpc, accounts, block["number"])
+    last = (int(block["timestamp"], 16) - 1606824023) // 12 + ahead
+    sealed = b"JSEA2" + seal(bytes.fromhex(key.removeprefix("0x")), last, wire, block["hash"], accounts, nodes, codes)
+    print(f"proofs at block {int(block['number'], 16)}: {len(accounts)} accounts, {sum(len(s) for s in accounts.values())} slots, "
+          f"{len(nodes)} nodes, {len(codes)} codes; good for a block up to slot {last}; {len(sealed)} bytes", file=sys.stderr)
+    if out:
+        with open(out, "wb") as f: f.write(sealed)
+    else:
+        print(sealed.hex())
+
+if __name__ == "__main__":
+    main()

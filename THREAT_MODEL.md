@@ -138,11 +138,35 @@ to read. What that rests on, and where it gives:
 - *An opened transaction is ordinary data* to everything after it: Jaune decodes it, the engine runs
   it. None of that code was written to keep its input secret, and its time and memory depend on the
   transaction. The host sees how long a block took.
-- *What the host is told on purpose.* Which accounts and which slots of storage a sealed transaction
-  touched and the witness did not prove: the guest has no state and must ask. That a block has sealed
+- *What the host is told on purpose.* For a transaction sealed without proofs: which accounts and
+  which slots of storage it touched and the witness did not prove, since the guest has no state and
+  must ask. That a block has sealed
   transactions in it, and how many. Not the block: when a sealed transaction is in it the answer
   carries no header, no hash and no value, because the host has the chain's state and could check a
   guess against any of them.
+- *A sender can bring the proofs*, and then the host is told nothing of what the transaction touches
+  (`Evm/Seal.lean`, "With proofs"; `Evm/Follow.lean`). The guest keeps such proofs good by following
+  the chain: it is shown every block with the block's own witness, checks it, and keeps what it wrote.
+  That adds things to say:
+  - The guest checks that each block follows from its parent by the EVM's rules. It cannot check that
+    the chain is the one validators agreed on, so the host can show it a chain of its own making, as
+    long as each block on it is valid. A sealed transaction built on such a chain goes into a block no
+    relay will take. The host cannot make up state freely that way, since state only changes by
+    transactions somebody signed and by the block's own rules, but it can choose among real pending
+    transactions and order them, and see afterwards whether the sealed transaction went in.
+  - That one bit, whether it went in, is still told, with how long the block took. Whoever asks for
+    blocks also chooses what else is proposed. Over several blocks that is enough to learn roughly what
+    a sealed transaction pays and how much gas it allows, by filling blocks to different levels and
+    watching. It is not enough to learn whom it is from or what it calls.
+  - The sealed bytes are longer the more state the transaction reads: 13 KB for a call that reads one
+    contract and one slot. Their length says something, and nothing pads it.
+  - Proofs are bytes the sender chose, read by the trie code (`Evm/Trie.lean`), which already reads
+    witnesses from the host. Each node is found by its hash from a root in a header the guest checked,
+    so wrong nodes prove nothing; too many are refused by size.
+  - A transaction whose proofs fall short of what it reads is left out and nothing is said, to the
+    host or to the sender. The sender finds out by its not being built.
+  - A block the guest must follow can take seconds to check (9 s was seen for one). While it does, no
+    block is built, and a host that wants to keep proofs from being used can simply not show blocks.
 - *What the host can do anyway.* Not hand a sealed transaction in; not prove what it needs, so that it
   is never built; choose, among the slots up to the last the sender named, which blocks it is tried in.
   It cannot have it built after that slot, cannot read it, and cannot change it. It can hand the same

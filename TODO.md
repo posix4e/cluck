@@ -628,6 +628,60 @@ times, and the block from the relay. Six stages:
     host knew the sender's address, as it must. And the block is public now, as every block is: what
     was kept from the host was kept until then.
 
+- [x] **A sealed transaction that brings its own proofs**, 2026-11-22, against the stand-in. The leak
+  that was left: the host learned which accounts and slots a sealed transaction touched, because it
+  was the host that proved them. Now the sender can prove them, and the host is asked nothing.
+  - `Evm/Follow.lean`: the guest follows the chain. A request `JFOL1` shows it a block with the node's
+    own witness for it; it checks the block with the fast engine and keeps the nodes the block wrote to
+    the state's tries (`Bridge.rootAndNodes`; a block of mainnet writes 2.6 MB of them at the median
+    and 5 MB at most, over 121 blocks). A proof of an account before a block, with what the block
+    wrote, holds a proof of it after: each kept proof is walked again from each new root
+    (`Trie.trail`, `Follow.forward`) and holds only the nodes on its own ways.
+  - `Evm/Seal.lean`, a request `JSEA2`: a transaction sealed together with the accounts and slots it
+    reads, the nodes that prove them at a block the sender names, and the contracts' codes. The block
+    must be one of the last four the guest checked; the proofs are walked from there to the newest,
+    which is also what shows they reach what they name.
+  - A block built to be sent tries such a transaction only on the newest block the guest has checked.
+    What it lacks is never said; if the block cannot be built with it, it is built again without it
+    and that is not said either (`Bid.buildWith`, `Build.Request.loud`).
+  - `scripts/seal-with-proofs` is the sender's side for anyone: given a signed transaction it asks a
+    node what the transaction would touch (`eth_createAccessList`), for proofs of that
+    (`eth_getProof`) and the codes, and seals with `demo/seal.js` (`sealWithProofs`).
+  - `follow-test`, on saved blocks of mainnet in a row, takes each block's witness for proofs of what
+    the block reads at the state before it, has the guest's code follow the block, and requires the
+    proofs to come out good at the state after: walkable from the kept nodes alone, and the same as
+    the next block's own witness wherever that proves the same thing. Over 100 blocks in a row
+    (26458315 to 26458414): 99 sets of proofs carried across a block, of about a thousand accounts
+    and tens of thousands of slots each; 871,606 values compared with the next block's witness, all
+    the same; 9,180 accounts changed on the way; and where anything changed, the proofs did not come
+    through without what the block wrote. A block was followed in 0.68 s at the median.
+  - `builder/shadow --proofs`, in TDX: the host shows the guest every block; this program as the
+    sender signs a deposit of nothing into the wrapped-ether contract (a call that runs a contract and
+    reads one slot of it), has the tool gather proofs and seal, and hands it in. 40 slots in a row
+    (26467165 to 26467204): 36 blocks built, all valid and signed (four slots were lost to this
+    program's old trouble with tracing a large pool); in 29 the sealed transaction was in the block
+    that reached the stand-in; the other 7 were blocks with no time left to put anything in, after
+    this program had fallen behind. Ten transactions were sealed and handed in, each kept, five of
+    them with proofs at the block before the newest, which the guest brought on; proofs with a node
+    taken out, and proofs said to be at a block never shown, were refused. The tool found the slot by
+    asking the node. Looked for in every request and answer, in every frame of the guest's network
+    (329 MB) and on its console: the transactions and their signatures, and also the wallet's address,
+    the slot's number, and where each lies in its trie. None was found; the contract's own address,
+    which is public, was found 9,825 times.
+  - With proofs that leave the slot out on purpose, five slots: handed in and kept, never built in,
+    every block built and valid without it, nothing said of what it lacked, nothing found.
+  - What this costs: the host must show the guest every block (0.4 to 0.75 s to get the witness from
+    the node, 2 to 11 MB to send, 0.2 to 2 s for the guest to check, 9 s seen once): 2.5 s a slot at
+    the median and 6.3 at most in that run, taken from the time there is to build in, and in 7 slots
+    of 36 that left none. The sealed bytes are 13 KB where they were 161.
+  - What is still told, and what is not done: whether a sealed transaction went in, and how long the
+    block took (`THREAT_MODEL.md` says what can be made of that); the length of the sealed bytes. The
+    guest cannot tell the real chain from a made-up one whose blocks are valid. A transaction that
+    empties a slot can need a node its proofs do not hold (a neighbour's, when a branch of the trie
+    folds up), and is then left out. Proofs are kept for the newest block only, so a block built on
+    an older one does not get the transaction. Nothing with proofs has been sent to a real relay; the
+    one live block's sealed transaction came without them, and the host proved its account.
+
 What is next, in order:
 
 1. **Building in shadow.** A program on the host follows the chain and each slot puts pending transactions

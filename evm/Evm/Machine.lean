@@ -3,6 +3,7 @@ import Evm.Bid
 import Evm.Ask
 import Evm.Send
 import Evm.Seal
+import Evm.Follow
 import Evm.Outbound
 import Kernel.Efi
 import Kernel.Net.Tcp
@@ -144,6 +145,8 @@ structure State where
   /-- The key transactions are sealed to, and those that have been (`Evm/Seal.lean`). -/
   sealing : Seal.Key
   pool : Seal.Pool := {}
+  /-- The last few blocks of the chain this machine has checked for itself (`Evm/Follow.lean`). -/
+  chain : Follow.Chain := {}
   relays : Relays.Table
   anchors : Array Tls.X509.Anchor
   wire : Outbound.Wire
@@ -404,7 +407,7 @@ def pump : M Bool := do
 of the others. A request for a bid may name the milliseconds it allows for transactions, counted from
 here, where the whole request has arrived; this machine's clock is what says they have run out. Between
 transactions it also looks at the network. -/
-def buildWith (request : ByteArray) (more : Array ByteArray := #[]) : M Evm.Bid.Outcome := do
+def buildWith (request : ByteArray) (added : ByteArray → Evm.Bid.Extra := fun _ => {}) : M Evm.Bid.Outcome := do
   if !Evm.Bid.mine request then return { reply := ← IO.lazyPure fun _ => Evm.serve request }
   let key := (← get).key
   let allowed := Evm.Bid.allowed request
@@ -412,7 +415,7 @@ def buildWith (request : ByteArray) (more : Array ByteArray := #[]) : M Evm.Bid.
   let over : M Bool := do
     let _ ← pump
     if allowed == 0 then pure false else return (← Efi.millis).toNat ≥ stopAt
-  Evm.Bid.buildWith over key request more
+  Evm.Bid.buildWith over key request added
 
 def serveWith (request : ByteArray) : M ByteArray := do return (← buildWith request).reply
 
@@ -428,10 +431,14 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Un
   let refused := ({ status := 5 } : Evm.Build.Response).encode
   let some r := Send.request? request | finish refused #[] "a request that cannot be read"
   if r.seconds < Relays.earliest then return ← finish refused #[] "a time before this image's roots were written down"
-  -- The sealed transactions still good for this slot; those whose time is up are dropped here.
+  -- The sealed transactions still good for this slot; those whose time is up are dropped here. Which of
+  -- them are tried depends on the block built on: those that brought proofs only on the block the
+  -- proofs have been kept good at (`Follow.extra`).
   let slot := Evm.Bid.slotOf r.bid
-  let more ← modifyGet fun s => let (pool, more) := s.pool.forSlot slot; (more, { s with pool })
-  let built ← buildWith r.bid more
+  let (pool, chain) ← modifyGet fun s =>
+    let pool : Seal.Pool := { kept := s.pool.kept.filter (·.last ≥ slot) }
+    ((pool, s.chain), { s with pool })
+  let built ← buildWith r.bid (Follow.extra pool chain slot)
   let now := (← Efi.millis).toNat
   let sealed := if built.added.isEmpty then "" else s!", {built.added.size} sealed transactions in it"
   Platform.write s!"evm: status {built.reply[0]!}, {now - started} ms{sealed}\n".toUTF8
@@ -484,6 +491,25 @@ partial def work : M Unit := do
       | none => (none, request)
     if Ask.mine inner then ask key asked inner
     else if Send.mine inner then send key asked inner
+    else if Follow.mine inner then
+      -- A block of the chain shown to the machine: checked, and if it is valid, what it wrote is kept
+      -- and the proofs that sealed transactions brought are made good at it.
+      let answer ← modifyGet fun s =>
+        let (answer, chain, pool) := Follow.serve s.chain s.pool inner
+        (answer, { s with chain, pool })
+      let reply ← attested asked answer
+      let ended ← Efi.millis
+      Platform.write s!"evm: status {answer[0]!}, {(ended - started).toNat} ms\n".toUTF8
+      transmit (← modifyGet (·.reply ended.toNat key (frame reply)))
+    else if Seal.withProofs inner then
+      -- A transaction sealed with its own proofs, handed in.
+      let status ← modifyGet fun s =>
+        let (pool, status) := Follow.handIn s.sealing s.pool s.chain inner
+        (status, { s with pool })
+      let reply ← attested asked (ByteArray.mk #[status])
+      let ended ← Efi.millis
+      Platform.write s!"evm: status {status}, {(ended - started).toNat} ms\n".toUTF8
+      transmit (← modifyGet (·.reply ended.toNat key (frame reply)))
     else if Seal.mine inner then
       -- The sealing key asked for, or a sealed transaction handed in: answered at once, and nothing
       -- said on the console of what was in it.

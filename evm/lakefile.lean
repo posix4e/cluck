@@ -122,6 +122,12 @@ lean_exe «tls-test» where
   root := `TlsTest
   moreLinkObjs := #[platformHosted, secretHosted]
 
+/-- `Evm/Follow.lean` on consecutive saved blocks of the real chain: proofs carried from block to block. -/
+@[default_target]
+lean_exe «follow-test» where
+  root := `FollowTest
+  moreLinkObjs := #[secretHosted]
+
 /-- Drives the TLS client over a real connection, against other people's servers (`scripts/tls-get`). -/
 @[default_target]
 lean_exe «tls-fetch» where

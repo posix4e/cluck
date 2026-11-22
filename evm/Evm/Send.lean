@@ -41,10 +41,16 @@ would let a guess at a hidden transaction be checked. The relays are sent the bl
 say; the sender is told that.
 
 A sealed transaction reads state the sender's witness may not prove, since the sender did not know to
-prove it. It is then left out, like any transaction the witness falls short for, and the last part of
-the answer says what was lacking, so that the sender can prove that too and ask again. This is how the
-sender comes to know which accounts and slots a sealed transaction touches, and it is all it comes to
-know of it. -/
+prove it. One that came without proofs of its own is then left out, like any transaction the witness
+falls short for, and the last part of the answer says what was lacking, so that the sender can prove
+that too and ask again. This is how the sender comes to know which accounts and slots such a transaction
+touches, and it is all it comes to know of it.
+
+One that came with its own proofs (`Evm/Seal.lean`, "With proofs") is tried only in a block built on the
+newest block this machine has checked for itself (`Evm/Follow.lean`), where its proofs are good. What it
+lacks is never said, and if the block cannot be built with it in, the block is built again without it and
+that is not said either. The sender of this request then learns of it only that a sealed transaction
+went in, or nothing. -/
 
 namespace Evm.Send
 

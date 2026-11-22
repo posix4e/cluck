@@ -94,6 +94,10 @@ structure Request where
   gasCap : Nat
   /-- Whether the fast engine builds it: which of the two beginnings the request had. -/
   engine : Bool := false
+  /-- Of the transactions proposed, how many from the first may have what the witness lacked for them
+  said in the answer (`Response.wanted`). Not part of a request as it is written: every transaction a
+  request proposes may; the ones added to it by the machine itself may or may not (`Evm/Bid.lean`). -/
+  loud : Nat := 1000000000
 
 def request (input : ByteArray) : P Request := do
   let begins ← take input magic.size
@@ -291,6 +295,8 @@ structure FastJob where
   notes : Array Note := #[]
   /-- What the witness lacked for the transactions left out because of it. -/
   wanted : Array Fast.Lack := #[]
+  /-- The place from which nothing is said of what a transaction lacked. -/
+  loud : Nat := 1000000000
 
 /-- How far a request to build has got: answered, or a block still being filled, by Jaune or by the fast
 engine. -/
@@ -387,19 +393,20 @@ def startFast (r : Request) (fork : Fork) (parent : Header) (ancestors : List He
       if world.missing then short witness world
       else .goingFast
         { fork, chainId := r.witness.chainId, witness, blank, template, gasCap := min r.gasCap blank.gasLimit, blk, host,
-          body, paidBefore := recipient.balance.toNat, rest := ordered,
+          body, paidBefore := recipient.balance.toNat, rest := ordered, loud := r.loud,
           out := { world, stack, receipts := #[], gasUsed := 0, blobs := 0, requests := #[] } }
 
 /-- The next proposed transaction, put in or left out, by the fast engine. One the engine refuses, or that
 asked the witness for what it cannot prove, leaves the world and the block as they were before it. -/
 def FastJob.step : FastJob → FastJob
-  | ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included, notes, wanted⟩ =>
+  | ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included, notes, wanted, loud⟩ =>
     match rest with
-    | [] => ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, [], out, taken, included, notes, wanted⟩
+    | [] => ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, [], out, taken, included, notes, wanted, loud⟩
     | c :: rest =>
       let leftOut (why : String) (out : Fast.BlockOutput) (lacks : Array Fast.Lack := #[]) : FastJob :=
         ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included,
-         notes.push ⟨c.place, false, why⟩, if wanted.size < 4 * Fast.maxLacks then wanted ++ lacks else wanted⟩
+         notes.push ⟨c.place, false, why⟩,
+         if c.place < loud && wanted.size < 4 * Fast.maxLacks then wanted ++ lacks else wanted, loud⟩
       if out.gasUsed.toNat + c.tx.gasLimit > gasCap then leftOut "would pass the gas asked for" out
       else if (Bridge.chainOf c.tx).any (· != chainId) then leftOut "rejected: made for another chain" out
       else
@@ -422,7 +429,7 @@ def FastJob.step : FastJob → FastJob
             ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest,
              ⟨world, stack, receipts.push { receipt with cumulativeGas := gasUsed }, gasUsed,
               blobs + tx.blobHashes.size.toUInt64, requests⟩,
-             taken.push c.tx, included.push c.place, notes.push ⟨c.place, true, s!"{gasUsed.toNat}"⟩, wanted⟩
+             taken.push c.tx, included.push c.place, notes.push ⟨c.place, true, s!"{gasUsed.toNat}"⟩, wanted, loud⟩
 
 /-- Everything after the last transaction, by the fast engine: withdrawals, the block's requests, the state
 root and the header. -/

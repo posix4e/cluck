@@ -155,17 +155,30 @@ structure Outcome where
   /-- What the witness lacked for transactions left out because of it (the fast engine's builder only). -/
   wanted : Array Fast.Lack := #[]
 
+/-- Transactions the machine adds to those a request proposes, which the request's sender has not seen. -/
+structure Extra where
+  /-- Each as it goes on the wire, in the order they are to be proposed after the request's own. -/
+  wires : Array ByteArray := #[]
+  /-- How many of the first of them may have what the witness lacked for them said in the answer: those
+  that came with no proofs of their own. Of the rest nothing is said. -/
+  loud : Nat := 0
+  /-- Proofs and codes that came with them, added to the witness. -/
+  nodes : Array ByteArray := #[]
+  codes : Array ByteArray := #[]
+
 /-- A request to build and bid, or a request for the key, carried out. `over` is asked before each
 transaction whether the time allowed has run out (`Build.Stage.finishWith`); whoever has a clock supplies
 it. Whatever it says, what comes back is a whole block and a bid for that block.
 
-`more` is transactions the request's sender did not propose and is not shown, each as it goes on the
-wire: they are tried with the rest, by the fast engine's builder only (Jaune's wants to be told
+`added`, given the hash of the block built on, is transactions the request's sender did not propose and
+is not shown: they are tried with the rest, by the fast engine's builder only (Jaune's wants to be told
 beforehand everything a transaction will read, and nobody can say that of a transaction they have not
 seen). The response tells the sender nothing of them but, in the places of those that went in, numbers
-past the end of what it proposed. -/
+past the end of what it proposed. If the block cannot be built with them in it, whatever the reason, it
+is built again without them, and the reason is not said: a block must not fail, or name a node of the
+state, because of a transaction the sender is not to know about. -/
 def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input : ByteArray)
-    (more : Array ByteArray := #[]) : m Outcome := do
+    (added : ByteArray → Extra := fun _ => {}) : m Outcome := do
   if input == keyMagic then return { reply := key.publicKey }
   let refuse : Outcome := { reply := ({ status := 5 } : Build.Response).encode }
   if input.size < magic.size + 64 || input.extract 0 magic.size != magic then return refuse
@@ -178,11 +191,24 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
   | some (request, _) =>
     -- The block the request proposed, with the added transactions after its own.
     let own := (Submit.proposed? request.witness.block).getD 0
-    let request := if more.isEmpty || !request.engine then request else
-      match Submit.withMore? request.witness.block more with
-      | some block => { request with witness := { request.witness with block } }
+    let parent := match request.witness.headers.getLast? with
+      | some header => Trie.wordBytes (Trie.hashOf header)
+      | none => .empty
+    let extra := if request.engine then added parent else {}
+    let plain := request
+    let request := if extra.wires.isEmpty then request else
+      match Submit.withMore? request.witness.block extra.wires with
+      | some block =>
+        { request with
+          loud := own + extra.loud
+          witness := { request.witness with
+            block, nodes := request.witness.nodes ++ extra.nodes, codes := request.witness.codes ++ extra.codes.toList } }
       | none => request
     let (response, _, _) ← Build.runWith over request
+    let (response, request) ← if response.built.isNone && !extra.wires.isEmpty then do
+        let (again, _, _) ← Build.runWith over plain
+        pure (again, plain)
+      else pure (response, request)
     match response.built with
     | none => return { reply := response.encode, wanted := response.wanted }
     | some built =>

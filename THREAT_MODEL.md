@@ -175,6 +175,20 @@ to read. What that rests on, and where it gives:
   - What the host is no longer told: whether a sealed transaction went into a block (the answer says
     only that there were some to try), and how long what the guest sent to the relay was, except to
     the nearest 16 KB (padding inside TLS). It still sees how long the block took to build.
+  - **What a relay publishes, which undoes part of that.** Found on 2026-11-22, after two blocks had
+    been sent this way. Each of the four relays lists every bid it receives, for anyone to read
+    (`/relay/v1/data/bidtraces/builder_blocks_received`): the block's hash and parent, the gas it
+    used, what it pays, how many transactions are in it, and when it arrived, to the millisecond.
+    The host knows the builder's key and exactly what it proposed. So against a real relay it learns
+    at once, from the relay, whether a sealed transaction went in, how much gas it used and what it
+    paid, whatever this machine declines to say; and the hash lets it check a guess at the whole
+    block. What this machine keeps back is kept back only where the relay publishes nothing (the
+    stand-in on the host does not), or for a block no relay takes. What a real relay's list does not
+    give is what the transaction is: who sent it, to what, with what data. That is hidden until the
+    block is in the chain, and for good if it never is.
+  - It also means the host can ask questions. It chooses the transactions that run before a sealed
+    one in the block, and may put its own there; the gas the sealed one then uses, read off the
+    relay's list, says how it fared in the state the host arranged. Nothing here stops that yet.
 - *What the host can do anyway.* Not hand a sealed transaction in; not prove what it needs, so that it
   is never built; choose, among the slots up to the last the sender named, which blocks it is tried in.
   It cannot have it built after that slot, cannot read it, and cannot change it. It can hand the same

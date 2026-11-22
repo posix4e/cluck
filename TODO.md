@@ -766,6 +766,15 @@ times, and the block from the relay. Six stages:
     machine had the second key all along. The transfer that funded the second account is public and
     ties it to the test wallet for anyone who looks. Nothing here tried a host that shows the guest a
     made-up chain. And the block is public now.
+  - **A correction, found the same day.** The record above says the host was not told whether the
+    sealed transaction went in. This machine did not tell it. The relays did, and tell anyone: all
+    four list this bid with its hash, 174,508 gas, 5 transactions, 0.020042 ETH and the millisecond
+    it arrived (`builder_blocks_received`, asked without a key). The host proposed four
+    transactions and knows their gas, so the fifth and its gas were there to be read before the
+    block was chosen. What the search showed still stands: the transaction's bytes, its signature,
+    its sender and the slot it reads were in nothing the host handled. What does not stand, for any
+    real relay, is that whether it went in, its gas and what it paid are kept from the host.
+    `THREAT_MODEL.md` says what follows from that.
 
 What is next, in order:
 

@@ -257,7 +257,7 @@
       to a contract from an account of its own, 16 KB in all. The guest, which holds none of the
       chain's state, was shown each new block with that block's witness, checked it, and brought the
       proofs forward itself. The host was asked nothing about the account or the storage the call
-      reads, and was not told whether the transaction went into the block. Everything the host
+      reads. Everything the host
       handled, 20 MB of it, was searched for the transaction, its signature, the account's address
       and the storage slot, and none was there. Ultra Sound and Titan list the block as delivered
       under the guest's builder key. The 0.02 ETH that won the slot came from a different account,
@@ -297,7 +297,11 @@
       handled. The guest checks that each block it is shown follows from the one before, not that it
       is the chain validators agreed on. Either way the host learns the length of what was
       sealed to the nearest 16 KB, when it came, and how long the block took to build; and the relay
-      sees the whole block, as from any builder. The TLS, the sealing and the certificate checks behind
+      sees the whole block, as from any builder. The relays also publish, for every bid they are
+      sent, its hash, the gas it used, what it pays and how many transactions it holds. So whether a
+      hidden transaction went into a block, and how much gas it used, can be read off a relay by
+      anyone who knows what else was in the block, as the host does. What stays hidden is what the
+      transaction is: who sent it, to what, and with what data. The TLS, the sealing and the certificate checks behind
       it are tested against OpenSSL, not proved and not reviewed by anyone else. Certificates are
       judged at a date the host supplies, since the guest has no clock that knows one. Its signing is written to take the same time
       whatever the key and was checked in the places looked at, not proved. As a checker, one block in a

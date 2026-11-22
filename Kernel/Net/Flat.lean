@@ -23,12 +23,12 @@ What is different from the system's, and why each thing is so:
 
 What it does: the handshake by cookie; data in, in order; an answer of any length out, cut to the
 peer's largest segment and kept within the peer's window and a window of its own that opens as
-acknowledgements come and shuts to one segment when a timer fires; sending again on a timer; both orders
-of closing; a reset for a segment that belongs to nothing.
+acknowledgements come, halves when a segment is seen to be lost and shuts to one segment when a timer
+fires; sending again on a timer, and at once when the same acknowledgement has come `repeats` times;
+both orders of closing; a reset for a segment that belongs to nothing.
 
 What it does not do, and a TCP must or should: keep segments that come out of order (it asks again for
-the next byte); measure the round trip (the wait before sending again is a setting); send again on three
-repeated acknowledgements; probe a window that has shut to nothing; any option but the largest segment
+the next byte); measure the round trip (the wait before sending again is a setting); probe a window that has shut to nothing; any option but the largest segment
 (so no window scaling, timestamps or selective acknowledgement); IPv6; IP options or fragments. The
 application is one fixed thing, for measuring: when `request` bytes have come it sends `answer` and
 closes.
@@ -38,10 +38,11 @@ Laid out:
     table   128 bytes of counters and marks, then 2^slotBits entries of 64 bytes
             eight bytes each: 0 live, 8 accepted, 16 closed, 24 SYNs, 32 dropped, 40 out of order,
             48 resets taken, 56 no room, 64 where the sweep has got to, 72 sent again, 80 timed out,
-            88 resets sent
+            88 resets sent, 96 sent again on repeated acknowledgements
     entry   0 state (0 free, 1 open, 2 answering and closing, 3 waiting out its end)
             1 flags (1: the peer has closed; 2: there is no answer, only the end)
-            2 times sent again without an acknowledgement   4 the time by which something must happen
+            2 times sent again without an acknowledgement   3 acknowledgements repeated
+            4 the time by which something must happen
             8 the key: remote address, remote port, local port
             16 next to send   20 oldest unacknowledged   24 next expected   28 where the answer began
             32 bytes got   36 the peer's window   38 the peer's largest segment
@@ -76,6 +77,9 @@ structure Tuning where
   wait : UInt32 := 200
   waitMost : UInt32 := 3000
   tries : UInt8 := 5
+  /-- How many times the same acknowledgement must come, with something still unacknowledged, before
+  the segment after it is taken for lost and sent again without waiting for the timer. 0 for never. -/
+  repeats : UInt8 := 3
   /-- Milliseconds a connection may say nothing new before it is reset. -/
   idle : UInt32 := 10000
   /-- Milliseconds an entry is kept after both ends have closed, to answer a last segment sent again. -/
@@ -512,6 +516,19 @@ partial def loop (cfg : @& Tuning) (answer : @& ByteArray) (now : UInt32) (rx : 
   let own := if begins then cfg.firstWindow * mss
     else if moved && own < cfg.mostWindow * mss then own + mss else own
   let window := (rd16 rx (f + 48)).toUInt32
+  -- The same acknowledgement again, with nothing else in the segment and something still owed: counted,
+  -- and at the count set, the segment after it is sent again and this end's window halved.
+  let repeated := state == 2 && !begins && !moved && length == 0 && !fin && acked == was && sent != was
+  let count := rd8 t (off + 3)
+  let count : UInt8 := if moved || begins then 0 else if repeated && count < 255 then count + 1 else count
+  let again := repeated && cfg.repeats != 0 && count == cfg.repeats
+  let own := if again then (if own / 2 < mss then mss else own / 2) else own
+  let tx :=
+    if again then
+      let one := reach unacked unacked first size mss mss
+      segments cfg answer tx macHigh macLow rip rport expected first size mss unacked (if one - unacked ≤ sent - unacked then one else sent)
+    else tx
+  let t := if again then bump t 96 else t
   let to := if state == 2 then reach sent unacked first size window own else sent
   let tx :=
     if to != sent then segments cfg answer tx macHigh macLow rip rport expected first size mss sent to
@@ -529,6 +546,7 @@ partial def loop (cfg : @& Tuning) (answer : @& ByteArray) (now : UInt32) (rx : 
     let due := now + (if unacked != to then wait else cfg.idle)
     let t := wr8 (wr8 t off state) (off + 1) ((if peerClosed then 1 else 0) ||| (if bare then 2 else 0))
     let t := if moved then wr8 t (off + 2) 0 else t
+    let t := wr8 t (off + 3) count
     let t := st32 t (off + 4) due
     let t := st32 (st32 t (off + 16) to) (off + 20) unacked
     let t := st32 (st32 (st32 t (off + 24) expected) (off + 28) first) (off + 32) got

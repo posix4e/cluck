@@ -141,7 +141,7 @@ def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes
   IO.println s!"flat: {done} connections, {atOnce} at once, checksums {if checksums then "on" else "off"}, request {requestBytes} bytes, answer {answerBytes} bytes, table of 2^{slotBits}"
   IO.println s!"  {seconds} s in the stack: {(done.toFloat / seconds).round} connections a second on one core, {(spent.toFloat / framesIn.toFloat).round} ns a frame in ({framesIn} in, {framesOut} out)"
   if let some path := capturePath then IO.FS.writeBinFile path capture
-  IO.println s!"  counters: live {ld64 t 0}, accepted {ld64 t 8}, closed {ld64 t 16}, SYNs {ld64 t 24}, dropped {ld64 t 32}, out of order {ld64 t 40}, resets taken {ld64 t 48}, no room {ld64 t 56}, sent again {ld64 t 72}, timed out {ld64 t 80}, resets sent {ld64 t 88}"
+  IO.println s!"  counters: live {ld64 t 0}, accepted {ld64 t 8}, closed {ld64 t 16}, SYNs {ld64 t 24}, dropped {ld64 t 32}, out of order {ld64 t 40}, resets taken {ld64 t 48}, no room {ld64 t 56}, sent again {ld64 t 72}, timed out {ld64 t 80}, resets sent {ld64 t 88}, sent again on repeats {ld64 t 96}"
 
 /-- The system's TCP through the same exchange, one connection at a time, in TCP segments. -/
 def system (connections requestBytes answerBytes : Nat) : IO Unit := do

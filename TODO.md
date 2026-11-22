@@ -83,7 +83,7 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   | 2,000 | 128 bytes | 5% | Linux sent 676 segments again, this end 112 |
   | 500 | 128 bytes | 15% | 544 and 113; three connections given up by this end after their answers had arrived |
   | 300 | 200,000 bytes | none | 88 ms a connection |
-  | 200 | 200,000 bytes | 3% | this end sent 887 segments again |
+  | 200 | 200,000 bytes | 3% | this end sent 849 segments again, 525 of them on the third repeat of an acknowledgement and not on the timer; 0.5 s a connection where the timer alone took 1.3 s |
   | 100 | 2,000,000 bytes | none | 1.7 s a connection |
 
 - Judged also by code that shares nothing with it: `scripts/flat-capture-check`
@@ -94,9 +94,7 @@ sweep over the table; what can be tuned is one record, `Tuning`.
 - What it does not do: there is no network card under it, and getting frames
   from one fast in a trust domain is the hard part; segments out of order are
   asked for again, not kept; the round trip is not measured (the wait before
-  sending again is a setting); nothing is sent again on repeated
-  acknowledgements, only on the timer, so a lost segment costs 200 ms and more;
-  a window shut to nothing is not probed; no options but the largest segment
+  sending again is a setting); a window shut to nothing is not probed; no options but the largest segment
   (no window scaling, so no window past 64 KB; no timestamps; no selective
   acknowledgement); IPv4 with no options only; one core; and the application
   is one fixed answer. It is slow at moving much data (2 MB took 1.7 s on one

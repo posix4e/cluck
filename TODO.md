@@ -393,7 +393,8 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   published); the order privacy a builder in a trust domain is for: transactions still reach the guest in
   the clear, through the host.
 
-**Order privacy** (begun and, as far as one block goes, done on 2026-11-21: mainnet block 26465583
+**Order privacy** (begun and, as far as one block goes, done on 2026-11-21: mainnet block 26465583;
+and on 2026-11-22 block 26470277, whose sealed transaction brought its own proofs
 holds a transaction that was sealed to the guest, in a block the guest built and sent to four relays
 itself, which the host carried and was never shown). The aim: a
 transaction sealed to a key only the attested guest holds, built into a block the guest sends to the
@@ -711,8 +712,60 @@ times, and the block from the relay. Six stages:
     guest cannot tell the real chain from a made-up one whose blocks are valid. A transaction that
     empties a slot can need a node its proofs do not hold (a neighbour's, when a branch of the trie
     folds up), and is then left out. Proofs are kept for the newest block only, so a block built on
-    an older one does not get the transaction. Nothing with proofs has been sent to a real relay; the
-    one live block's sealed transaction came without them, and the host proved its account.
+    an older one does not get the transaction. (When this was written nothing with proofs had been
+    sent to a real relay. One block has been since: next.)
+
+- [x] **Live with proofs, from a second account**, asked for and run on 2026-11-22, once.
+  `builder/shadow --live --proofs --top-up 0.02 --top-up-priority 0 --wallet KEY.pem --sender
+  SECOND.pem --relays` and the four relays, the image `6530fed8…3be510ff` in TDX, the tree clean at
+  `65ef8fc`.
+  - Why a second account. With one wallet the payment that wins the slot, which everyone sees, comes
+    from the same account as the sealed transaction, and the host proves that account for the
+    payment's sake: looking for its address in what the host saw would find it. So a second key was
+    made on the host, and 0.001 ETH moved to its address from the test wallet in block 26470261,
+    before the guest was started. `--sender` signs the sealed transaction with it.
+  - Tried first against the stand-in, ten slots, with the payment in each request and sent nowhere
+    else: eight blocks with both transactions in, valid by the node and signed; two with no time
+    left, empty. The second account's address in none of 108 MB of frames.
+  - **Mainnet block 26470277** (slot 15710160, 11:12:23 UTC, hash `0x346e9070…e6f5281e`, extra data
+    `cluck`, 5 transactions, 174,508 gas) was built in the guest and posted by the guest to Flashbots,
+    Ultra Sound, Aestus and Titan, 5.5 s before the slot. All four answered 200. The proposer took
+    it; Ultra Sound and Titan list it as delivered under the guest's builder key, at 0.020042 ETH,
+    and Flashbots and Aestus list nothing for the slot. It was finalized within twenty minutes.
+  - Its fourth transaction is the one that was sealed: a deposit of nothing into the wrapped-ether
+    contract from the second account, which runs that contract's code and reads and writes one slot
+    of its storage. It was handed in a slot earlier as 16,432 bytes: the transaction and 23 nodes
+    proving all it reads at block 26470275, made up to 16 KB. The guest was shown block 26470276
+    with the node's witness, checked it, brought the proofs on to it by itself, and built on it.
+    The host was asked nothing about the account, the contract's slot or the code.
+  - What the host had: the sealed bytes, and for the block an answer that says only that there were
+    sealed transactions to try, and what the four relays said. Looked for in every request and
+    answer, in every frame of the guest's network up to then (20 MB) and on its console: the
+    transaction, the two numbers of its signature, the second account's address, the slot's number,
+    and where each lies in its trie. None was found. The contract's address, which is public, was
+    found 608 times. That the transaction was in the block was learned from the chain, when everyone
+    could.
+  - The last transaction is the payment, 0.02 ETH to the proposer, from the test wallet. The run was
+    told to send a block only when the guest had taken the newest block, held a sealed transaction it
+    had accepted and had time for it, so that the payment could not win a slot for a block without
+    it. The slot before was such a one (the guest had just started; nothing was sent).
+  - Spent, all of it once: 0.02 ETH to the proposer and 0.0000096 ETH of gas for the payment;
+    0.0000047 ETH of gas to move 0.001 ETH to the second account; 0.000004 ETH of that for the
+    sealed transaction's gas. The wallet holds 0.2271432116 ETH and the second account 0.000996028.
+  - What ties the block to the machine: the relays name the builder's key, and that key and the
+    sealing key were each asked for with a report two blocks earlier (the challenge is block
+    26470275's hash). Both quotes pass every step of `demo/verify.js`, are for those keys and those
+    requests, and have the measurements recorded for this image. Kept under
+    `/data/eth/shadow/live3/`, not published.
+  - What it was the first of: a transaction with proofs in a real block; the guest's following of
+    the chain used for a block that counted; a submission made up to 16 KB read by real relays (four
+    took it).
+  - What one block does not show. It is one block, the second slot of the run. The transaction was
+    this project's own and reads one slot. The sender and the host were one program on one machine
+    playing two parts: what was searched is what the host's part handled, and the person at this
+    machine had the second key all along. The transfer that funded the second account is public and
+    ties it to the test wallet for anyone who looks. Nothing here tried a host that shows the guest a
+    made-up chain. And the block is public now.
 
 What is next, in order:
 

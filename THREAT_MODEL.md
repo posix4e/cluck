@@ -188,9 +188,12 @@ to read. What that rests on, and where it gives:
   the host, which could serve a different script: a sender who means it checks the script, or seals
   with a tool of their own, which the standard format allows. The page checks the quote for the key as
   the first page checks one, with the same limits (no revocation, no TCB status).
-- *Live once.* Mainnet block 26465583 was built and sent this way, with one sealed transaction in it
-  that the host carried and was not shown (`TODO.md`). One block shows that the parts meet, and nothing
-  about how they stand up to someone trying.
+- *Live twice.* Mainnet block 26465583 was built and sent this way, with one sealed transaction in it
+  that the host carried and was not shown; for that one the host proved the sender's account, and so
+  knew it. Block 26470277 had one that brought its own proofs, from an account named in nothing the
+  host handled before the block was public (`TODO.md`). Two blocks show that the parts meet, and
+  nothing about how they stand up to someone trying: in both, sender and host were one program on one
+  machine.
 
 **Connections out.** The machine now speaks first: it opens TCP connections of its own, to the relays
 its image names (`Evm/Relays.lean`), and until now it only ever answered. What that adds:

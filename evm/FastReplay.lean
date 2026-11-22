@@ -49,13 +49,16 @@ def judge (path : String) : IO Bool := do
     if bloom != header.logsBloom then wrong := "logs bloom" :: wrong
     if header.requestsHash.isSome && header.requestsHash != some requests then wrong := "requests hash" :: wrong
     if out.world.missing then wrong := s!"the witness lacks what was asked of {(Bridge.u256 out.world.lacking).toHex}" :: wrong
-    let stateRoot ← IO.lazyPure fun _ => Bridge.rootAfter witness out.world
+    let both ← IO.lazyPure fun _ => Bridge.rootAndNodes witness out.world true
     let t4 ← IO.monoMsNow
+    let stateRoot := both.map (·.1)
+    let written := match both with | .ok (_, nodes) => nodes | .error _ => #[]
+    let writtenBytes := written.foldl (fun n node => n + node.size) 0
     match stateRoot with
     | .ok stateRoot => if stateRoot != header.stateRoot then wrong := "state root" :: wrong
     | .error (.lacking _ what) => wrong := s!"the witness lacks {what}" :: wrong
     | .error _ => wrong := "the state root could not be worked out" :: wrong
-    let times := s!"witness {t1 - t0} ms ({indexed} codes), senders {t2 - t1} ms, block {t3 - t2} ms, state root {t4 - t3} ms"
+    let times := s!"witness {t1 - t0} ms ({indexed} codes), senders {t2 - t1} ms, block {t3 - t2} ms, state root {t4 - t3} ms; wrote {written.size} nodes, {writtenBytes} bytes, of {r.nodes.size} nodes and {r.nodes.foldl (fun n node => n + node.size) 0} bytes in the witness"
     if wrong.isEmpty then
       IO.println s!"{name}: block {header.number}, {out.receipts.size} transactions, {header.gasUsed} gas: as the header has it ({times})"
       return true

@@ -25,33 +25,36 @@ namespace Evm.Engine
 
 def magic : ByteArray := "JWIF1".toUTF8
 
-def validate (r : Stateless.Request) (fork : Fork) (parent : Header) (ancestors : List Header) (block : Block)
-    (blockHash : U256) : Stateless.M Stateless.Verdict := do
+/-- The block judged. With `keep`, a block found valid comes with the nodes it wrote to the state's tries
+(`Bridge.rootAndNodes`), for whoever follows the chain (`Evm/Follow.lean`). -/
+def validateWith (keep : Bool) (r : Stateless.Request) (fork : Fork) (parent : Header) (ancestors : List Header) (block : Block)
+    (blockHash : U256) : Stateless.M (Stateless.Verdict × Array ByteArray) := do
   let rules := fork.ruleSet
-  if !Bridge.supported fork then return ⟨4, 0, "the engine has no rules for this fork"⟩
+  let said (verdict : Stateless.Verdict) : Stateless.M (Stateless.Verdict × Array ByteArray) := pure (verdict, #[])
+  if !Bridge.supported fork then return ← said ⟨4, 0, "the engine has no rules for this fork"⟩
   if let .error e := checkBlockRlpSize rules.block r.block.size then
-    return ⟨3, 0, (TransitionError.block e).render⟩
+    return ← said ⟨3, 0, (TransitionError.block e).render⟩
   -- Jaune's checks of a header want a chain with a state, and read none of it.
   let chain : BlockChain :=
     { blocks := ancestors.map fun h => ⟨h, [], [], []⟩, state := State.ofPresentList [], chainId := r.chainId }
-  if let .error e := validateHeader rules chain block.header then return ⟨Stateless.refused e, 0, e.render⟩
+  if let .error e := validateHeader rules chain block.header then return ← said ⟨Stateless.refused e, 0, e.render⟩
   if let .error e := checkBlockOmmers rules chain block.header block.ommers then
-    return ⟨Stateless.refused e, 0, e.render⟩
+    return ← said ⟨Stateless.refused e, 0, e.render⟩
   let decoded ← match block.transactions.mapM (decodeTransaction rules) with
     | .ok decoded => pure decoded
-    | .error e => return ⟨Stateless.refused e, 0, e.render⟩
+    | .error e => return ← said ⟨Stateless.refused e, 0, e.render⟩
   let some body := Bridge.body fork r.chainId block decoded
-    | return ⟨3, 0, "a transaction with no sender, for another chain, or with a number too big to be one"⟩
+    | return ← said ⟨3, 0, "a transaction with no sender, for another chain, or with a number too big to be one"⟩
   let blk := Bridge.environment fork r.chainId block.header ancestors
   let witness := Bridge.Witness.of r parent.stateRoot
   match Fast.runBlock blk (Bridge.host fork) body ByteArray.empty (Fast.World.new witness.backing) with
   | .error (why, world) =>
     -- The refusal stands only if it was reached on answers that were proven.
     if world.missing then .error (witness.shortfall world)
-    return ⟨3, 0, why⟩
+    return ← said ⟨3, 0, why⟩
   | .ok out =>
     if out.world.missing then .error (witness.shortfall out.world)
-    let stateRoot ← Bridge.rootAfter witness out.world
+    let (stateRoot, written) ← Bridge.rootAndNodes witness out.world keep
     let (receiptsRoot, bloom) := Bridge.receiptsRootAndBloom out.receipts
     -- The roots that depend on the block's body alone, by Jaune's functions on what it would have kept.
     let kept : BlockOutput :=
@@ -65,8 +68,12 @@ def validate (r : Stateless.Request) (fork : Fork) (parent : Header) (ancestors 
       if rules.header.requestsHash then some (computeRequestsHash (out.requests.toList.map (·.toList))) else none
     match stateTransitionChecks kept block.header (getTransactionsRoot kept) stateRoot receiptsRoot bloom
         (getWithdrawalsRoot kept) requestsHash with
-    | .error e => return ⟨3, 0, (TransitionError.block e).render⟩
-    | .ok () => return ⟨0, blockHash, ""⟩
+    | .error e => return ← said ⟨3, 0, (TransitionError.block e).render⟩
+    | .ok () => return (⟨0, blockHash, ""⟩, written)
+
+def validate (r : Stateless.Request) (fork : Fork) (parent : Header) (ancestors : List Header) (block : Block)
+    (blockHash : U256) : Stateless.M Stateless.Verdict := do
+  return (← validateWith false r fork parent ancestors block blockHash).1
 
 def runWithReason (r : Stateless.Request) : Service.Response × String := Stateless.runWithReasonBy validate r
 

@@ -215,14 +215,20 @@ def receiptsRootAndBloom (receipts : Array Fast.Receipt) : U256 × Bytes :=
 /-- The state root after the engine has run a block on a witness: the parent's trie with every account
 that changed written back. Everything the engine fetched was proven when it was fetched, so there is
 nothing left to check about what it read; a world marked as having asked for what the witness lacks must
-not be brought here. -/
-def rootAfter (w : Witness) (world : Fast.World) : Stateless.M U256 := do
+not be brought here.
+
+With `keep`, the nodes the block wrote are given too: the encoding of every node of the state's trie and of
+the accounts' storage tries that is not as it was before the block. They are what somebody holding a proof
+of an account or a slot before the block needs, and all they need, to have a proof of it after
+(`Evm/Follow.lean`). -/
+def rootAndNodes (w : Witness) (world : Fast.World) (keep : Bool) : Stateless.M (U256 × Array ByteArray) := do
   -- The slots that hold something other than they did before the block, by whose they are.
   let changed : Std.HashMap Fast.Word (Array (Fast.Word × Fast.Word)) :=
     world.slots.fold (fun changed name slot =>
       if slot.value == slot.before then changed
       else changed.insert name.address ((changed.getD name.address #[]).push (name.key, slot.value))) {}
   let mut trie : Trie.Node := .sealed w.root
+  let mut written : Array ByteArray := #[]
   for (a, account) in world.accounts.toList do
     let slots := changed.getD a #[]
     if !account.dirty && slots.isEmpty then continue
@@ -238,8 +244,12 @@ def rootAfter (w : Witness) (world : Fast.World) : Stateless.M U256 := do
       storage ← Stateless.ofTrie <|
         if value.isZero then Trie.remove w.store storage path
         else Trie.put w.store storage path (Stateless.slotValue (u256 value))
-    let written : Stateless.Leaf := ⟨account.nonce, u256 account.balance, Trie.rootHash storage, u256 account.codeHash⟩
-    trie ← Stateless.ofTrie (Trie.put w.store trie key written.write)
-  pure (Trie.rootHash trie)
+    if keep then written := Trie.encodings storage written
+    let leaf : Stateless.Leaf := ⟨account.nonce, u256 account.balance, Trie.rootHash storage, u256 account.codeHash⟩
+    trie ← Stateless.ofTrie (Trie.put w.store trie key leaf.write)
+  pure (Trie.rootHash trie, if keep then Trie.encodings trie written else written)
+
+def rootAfter (w : Witness) (world : Fast.World) : Stateless.M U256 := do
+  return (← rootAndNodes w world false).1
 
 end Evm.Bridge

@@ -321,9 +321,9 @@ def validate (r : Request) (fork : Fork) (parent : Header) (ancestors : List Hea
 (`validate`), or the fast engine (`Evm.Engine.validate`). What is the same whoever judges is here: the block
 and the headers decode, the headers are a chain that ends at the block's parent, and the fork is one this
 service knows. -/
-def runWithReasonBy (judge : Request → Fork → Header → List Header → Block → U256 → M Verdict) (r : Request) :
-    Response × String :=
-  let nothing : Response × String := (⟨5, 0, 0, 0⟩, "")
+def runWithBy {α : Type} (judge : Request → Fork → Header → List Header → Block → U256 → M (Verdict × α)) (r : Request) :
+    Response × String × Option (Block × U256 × α) :=
+  let nothing : Response × String × Option (Block × U256 × α) := (⟨5, 0, 0, 0⟩, "", none)
   match rlpToBlockE r.block.toList with
   | .error _ => nothing
   | .ok (block, blockHash) =>
@@ -340,19 +340,26 @@ def runWithReasonBy (judge : Request → Fork → Header → List Header → Blo
       -- Each header is the parent of the next, so the hashes BLOCKHASH gives are the chain's.
       let linked := (ancestors.zip (ancestors.drop 1)).all fun (a, b) => a.hash == b.parentHash
       match ancestors.getLast? with
-      | none => (⟨6, 0, 0, 0⟩, "no headers")
+      | none => (⟨6, 0, 0, 0⟩, "no headers", none)
       | some parent =>
-        let answer (status : UInt8) (root : U256) (reason : String := "") : Response × String :=
-          (⟨status, 0, parent.hash, root⟩, reason)
+        let answer (status : UInt8) (root : U256) (reason : String := "") : Response × String × Option (Block × U256 × α) :=
+          (⟨status, 0, parent.hash, root⟩, reason, none)
         if !linked || parent.hash != block.header.parentHash then nothing
         else if ancestors.length != min 255 block.header.number then answer 6 0
         else
           match judge r fork parent ancestors block blockHash with
-          | .ok ⟨0, hash, _⟩ => (⟨0, 1, hash, block.header.stateRoot⟩, "")
-          | .ok ⟨status, _, reason⟩ => answer status parent.stateRoot reason
+          | .ok (⟨0, hash, _⟩, kept) => (⟨0, 1, hash, block.header.stateRoot⟩, "", some (block, hash, kept))
+          | .ok (⟨status, _, reason⟩, _) => answer status parent.stateRoot reason
           | .error (.lacking hash what) => answer 6 hash what
           | .error .malformed => answer 7 parent.stateRoot
           | .error .failure => answer 4 parent.stateRoot
+
+/-- The same when the judge has nothing to hand back but its verdict. -/
+def runWithReasonBy (judge : Request → Fork → Header → List Header → Block → U256 → M Verdict) (r : Request) :
+    Response × String :=
+  let (response, reason, _) := runWithBy (fun r fork parent ancestors block hash => do
+    return (← judge r fork parent ancestors block hash, ())) r
+  (response, reason)
 
 /-- The response, and Jaune's reason when there is one. -/
 def runWithReason (r : Request) : Response × String := runWithReasonBy validate r

@@ -256,6 +256,30 @@ partial def get (store : Store) (node : Node) (key : Path) (i : Nat := 0) :
     if i < key.size then get store children[key[i]!.toNat]! key (i + 1) else .error .shape
   | .sealed _ => .error .shape
 
+/-- The encodings of the nodes on the way to `key`, those a parent names by hash, from the root down as
+far as the way goes; and what is at its end: the value, or nothing where the trie proves there is none.
+These nodes are a proof of that, for anyone who has the root. -/
+partial def trail (store : Store) (node : Node) (key : Path) (i : Nat := 0) (out : Array ByteArray := #[]) :
+    Except Fault (Array ByteArray × Option ByteArray) := do
+  let (node, out) ← match node with
+    | .sealed hash =>
+      if hash == emptyRoot then pure (Node.empty, out) else
+      match store.get? hash with
+      | none => throw (.missing hash)
+      | some bytes =>
+        match decode bytes with
+        | some node => pure (node, out.push bytes)
+        | none => throw (.malformed hash)
+    | node => pure (node, out)
+  match node with
+  | .empty => pure (out, none)
+  | .leaf path value => pure (out, if path == key.extract i key.size then some value else none)
+  | .ext path child =>
+    if sharedFrom path key i == path.size then trail store child key (i + path.size) out else pure (out, none)
+  | .branch children =>
+    if i < key.size then trail store children[key[i]!.toNat]! key (i + 1) out else throw .shape
+  | .sealed _ => throw .shape
+
 /-- The trie with `value` at `key`. -/
 partial def set (store : Store) (node : Node) (key : Path) (value : ByteArray) (i : Nat := 0) :
     Except Fault Node := do

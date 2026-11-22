@@ -17,7 +17,7 @@ def ack : UInt8 := 16
 
 def rxWindow : UInt16 := 8192
 def maxQueued : Nat := 131072
-def maxConnections : Nat := 8
+def maxConnections : Nat := 32
 
 private def read16 (b : ByteArray) (i : Nat) : UInt16 :=
   (b[i]!.toUInt16 <<< 8) ||| b[i+1]!.toUInt16

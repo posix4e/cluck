@@ -852,9 +852,27 @@ times, and the block from the relay. Six stages:
   - What it cost: a round is 1.0 s where it was 0.7 (0.4 s gathering, 0.7 s in the guest with half
     as many transactions again), so 6 rounds a slot and not 7, and the last block is ready 2.1 s
     before the slot and not 1.7.
+  - **The last block of a slot is timed, not left to fall where it falls.** The host's program
+    begins the last round that fits as late as it can, going by what the round before took, so
+    that its block is at the relay half a second before the slot; and of an account already proven
+    it asks the node only for the slots that are new. Run in TDX against the stand-in with a
+    watcher on the node's pool beside it, 32 slots (`--ready 0.5 --finishing 0.25`): 188 blocks, all
+    valid and signed; the last of a slot was ready 0.76 s before it at the median, 0.38 s at the
+    least and never after, though one slot in ten still had its last block more than 2 s early.
+    Of what the block the chain then took held that had been pending here at least 3 s before the
+    slot, ours held 98% by fees at the median; at least 1 s before, 91% (85% summed); at any time
+    before, 83%.
+  - **Once in those 188 the guest found no room for a connection out** and the block went nowhere
+    (the slot's later blocks did). The table held eight, in and out together, and at most two
+    should have been in use; 650 sends one after another to the stand-in, small blocks and whole
+    ones, did not bring it back, so what filled the table is not known. The table now holds 32
+    (`Kernel/Net/Tcp.lean`), which four relays a round would have wanted anyway, and the refusal
+    says what the table held, for the next time. The image with that is `269831de…308c1358d` (the
+    shadow image `3022eafc…353fb4d39`); `net-tcp-test`, `check-secret-code tdx` and `run-fixtures tdx
+    --limits --key` pass on it.
   - Not done: nothing of this has been sent to a real relay, where four relays' answers are waited
-    for each round; the last block is 1.7 s before the slot and the builders that win go on to the
-    slot's start or past it; transactions with blobs are still left out; Ethereum's suites were not run again for this image (the engine did not change).
+    for each round; the builders that win go on to the slot's start or past it, and ours stops
+    half a second short on purpose; transactions with blobs are still left out; Ethereum's suites were not run again for this image (the engine did not change).
 
 What is next, in order:
 

@@ -264,7 +264,7 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   answer. It can send a relay nothing but that line: the path is refused unless it is plain printing
   characters with no space, so it cannot carry a second request. The sender learns nothing it could not
   fetch itself, except, with a report, that this image got that answer from the server its roots vouch
-  for. A sender can keep the guest's eight connections busy this way, as it can by other means.
+  for. A sender can keep the guest's thirty-two connections busy this way, as it can by other means.
 - *A request that makes the guest send a block.* `JSND1` is a request to build and bid with the sending
   added: the block is put into the builder API's SSZ in the guest (`Evm/Submit.lean`) and posted to the
   relays of the image's list that the sender names. It signs nothing a request to build and bid would

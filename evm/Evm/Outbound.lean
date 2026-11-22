@@ -141,7 +141,14 @@ def reach (c : Call) (now : Nat) (w : Wire) (ip : ByteArray) : Call × Wire × A
     let port := (49152 + (r[68]!.toNat * 256 + r[69]!.toNat) % 16384).toUInt16
     let iss := (r.extract 64 68).foldl (fun n b => n * 256 + b.toUInt32) (0 : UInt32)
     let (tcp, events) := w.tcp.connect now iss peer port c.port
-    if events.isEmpty then fail c w "no room for another connection"
+    if events.isEmpty then
+      -- Said with what the table holds, since this has happened once with nothing to say why: one block
+      -- in 188 found no room when at most two connections should have been open.
+      let (opened, ending, opening) := w.tcp.conns.foldl (fun (held : Nat × Nat × Nat) k =>
+        if k.phase == .established then (held.1 + 1, held.2.1, held.2.2)
+        else if k.phase == .timeWait then (held.1, held.2.1 + 1, held.2.2)
+        else (held.1, held.2.1, held.2.2 + 1)) (0, 0, 0)
+      fail c w s!"no room for another connection: {w.tcp.conns.size} held ({opened} open, {ending} ended and waited out, {opening} opening), port {port}"
     else ({ c with phase := .connecting ⟨peer.ip, c.port, port⟩ }, { w with tcp }, frames w events)
 
 /-- A call begun: nothing has been sent yet, and the first `step` sends it. With an `address` the name is

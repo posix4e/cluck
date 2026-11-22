@@ -672,10 +672,10 @@ times, and the block from the relay. Six stages:
     every block built and valid without it, nothing said of what it lacked, nothing found.
   - Unchanged in what was there before: Ethereum's suites, all eight, 4,723 files of 4,723;
     `run-fixtures tdx --limits --key`, `run-ask` in the emulator and in TDX (which now also tries
-    what must be refused of a transaction with proofs), `check-secret-code tdx`. The image built from
-    `d842dc6` with a clean tree is `df4ddd83…1dec63d8` (the shadow image `b0cb431f…bafe9405`), RTMR1
-    `dd8e332b…bc60ff19`; the demo runs it. It is not the image that built block 26465583, which was
-    `a6fbc0d4…`.
+    what must be refused of a transaction with proofs), `check-secret-code tdx`. All of that again
+    after the changes below. The image built from `8881e3a` with a clean tree is `6530fed8…3be510ff`
+    (the shadow image `88e25fd0…abef3991`), RTMR1 `fe0727bc…33d3fc62`; the demo runs it. It is not
+    the image that built block 26465583, which was `a6fbc0d4…`.
   - **Memory, found the hard way.** A longer run ended three times with the guest out of memory while
     checking a block. The runtime's allocator hands its one region out from the front and keeps a
     freed block for its own size only, large ones in powers of two; following the chain puts a request

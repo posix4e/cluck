@@ -670,6 +670,12 @@ times, and the block from the relay. Six stages:
     which is public, was found 9,825 times.
   - With proofs that leave the slot out on purpose, five slots: handed in and kept, never built in,
     every block built and valid without it, nothing said of what it lacked, nothing found.
+  - Unchanged in what was there before: Ethereum's suites, all eight, 4,723 files of 4,723;
+    `run-fixtures tdx --limits --key`, `run-ask` in the emulator and in TDX (which now also tries
+    what must be refused of a transaction with proofs), `check-secret-code tdx`. The image built from
+    `d842dc6` with a clean tree is `df4ddd83…1dec63d8` (the shadow image `b0cb431f…bafe9405`), RTMR1
+    `dd8e332b…bc60ff19`; the demo runs it. It is not the image that built block 26465583, which was
+    `a6fbc0d4…`.
   - What this costs: the host must show the guest every block (0.4 to 0.75 s to get the witness from
     the node, 2 to 11 MB to send, 0.2 to 2 s for the guest to check, 9 s seen once): 2.5 s a slot at
     the median and 6.3 at most in that run, taken from the time there is to build in, and in 7 slots

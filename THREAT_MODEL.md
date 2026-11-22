@@ -175,6 +175,10 @@ to read. What that rests on, and where it gives:
   - What the host is no longer told: whether a sealed transaction went into a block (the answer says
     only that there were some to try), and how long what the guest sent to the relay was, except to
     the nearest 16 KB (padding inside TLS). It still sees how long the block took to build.
+  - One thing more is told since blocks are built all through a slot: a block that pays no more than
+    one a relay has already taken for the slot is not sent, and the answer says nothing was sent. For
+    a block with sealed transactions tried, that is a comparison of two payments the host is not
+    otherwise given by this machine. A relay's list gives both payments outright.
   - **What a relay publishes, which undoes part of that.** Found on 2026-11-22, after two blocks had
     been sent this way. Each of the four relays lists every bid it receives, for anyone to read
     (`/relay/v1/data/bidtraces/builder_blocks_received`): the block's hash and parent, the gas it

@@ -131,6 +131,8 @@ structure Sending where
   wanted : Array Fast.Lack := #[]
   left : Nat
   told : Array (Nat × Outbound.Outcome) := #[]
+  /-- The slot the block is for, the block it is built on, and what it pays. -/
+  worth : Nat × ByteArray × Nat := (0, .empty, 0)
 
 /-- An answer ready to go to the client that waits for it, and a line about it for the console. -/
 structure Finished where
@@ -158,6 +160,10 @@ structure State where
   nextSending : Nat := 0
   finished : Array Finished := #[]
   lastTick : Nat := 0
+  /-- The best block a relay has taken from this machine for the slot it last sent for: the slot, the
+  block built on, and what the block pays. A block for the same slot on the same parent that pays no
+  more is not sent (`send`): a relay keeps a builder's newest, and the newest must not be the worse. -/
+  best : Option (Nat × ByteArray × Nat) := none
 
 namespace State
 
@@ -192,7 +198,16 @@ def heard (s : State) (job : Job) (outcome : Outbound.Outcome) : State :=
         let done : Finished :=
           { client := sending.client, asked := sending.asked, started := sending.started,
             reply := Send.answer sending.bid told sending.wanted, said := s!"a block sent: {said}" }
-        { s with sendings := s.sendings.eraseIdxIfInBounds i, finished := s.finished.push done }
+        -- A block some relay took is the one to beat from now on. One no relay took is not: the same
+        -- block, or one that pays as much, may be sent again.
+        let taken := told.any fun (_, outcome) => match outcome with
+          | .answered status _ => status == 200
+          | .failed _ => false
+        let better := match s.best with
+          | some (slot, parent, value) => !(slot == sending.worth.1 && parent == sending.worth.2.1) || sending.worth.2.2 > value
+          | none => true
+        { s with sendings := s.sendings.eraseIdxIfInBounds i, finished := s.finished.push done,
+                 best := if taken && better then some sending.worth else s.best }
     | _, _ => s
 
 /-- One of the calls out is told something, and what it wants sent is collected. A call that has its
@@ -338,13 +353,14 @@ def begin (s : State) (now : Nat) (key : Tcp.Key) (asked : Option ByteArray) (ca
 /-- A block begun on its way to relays for a client, which waits for all of them. Each call is paired
 with its relay's place in the list. -/
 def beginSending (s : State) (now : Nat) (key : Tcp.Key) (asked : Option ByteArray) (bid : ByteArray)
-    (wanted : Array Fast.Lack) (calls : Array (Nat × Outbound.Call)) : Array ByteArray × State :=
+    (wanted : Array Fast.Lack) (calls : Array (Nat × Outbound.Call)) (worth : Nat × ByteArray × Nat := (0, .empty, 0)) :
+    Array ByteArray × State :=
   let id := s.nextSending
   let first := s.jobs.size
   let s := { s with
     nextSending := id + 1
     clients := s.clients.map fun (c : Client) => if c.key == key then { c with waiting := true } else c
-    sendings := s.sendings.push { id, client := key, asked, started := now, bid, wanted, left := calls.size }
+    sendings := s.sendings.push { id, client := key, asked, started := now, bid, wanted, left := calls.size, worth }
     jobs := calls.foldl (fun jobs (place, call) => jobs.push { call, client := key, asked, started := now, place, sending := some id }) s.jobs }
   -- From the last to the first, as in `stepJobs`: one that fails at once is forgotten at once.
   let (s, out) := (List.range calls.size).reverse.foldl (fun (s, out) i => s.stepJob now (first + i) .tick out) (s, #[])
@@ -446,6 +462,13 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Un
   Platform.write s!"evm: status {built.reply[0]!}, {now - started} ms{sealed}\n".toUTF8
   let bid := if built.tried then Send.hidden else built.reply
   let some submission := built.submission | finish bid built.wanted "no block was built"
+  -- A block for the same slot on the same parent as one a relay has already taken, paying no more, stays
+  -- here: a relay keeps a builder's newest, and a block cut short by the clock, or built from a pool
+  -- that has lost something, would otherwise take the better one's place.
+  let beaten := match (← get).best with
+    | some (slot, parent, value) => slot == built.slot && parent == built.parent && built.value ≤ value
+    | none => false
+  if beaten then return ← finish bid built.wanted "it pays no more than one already sent for this slot"
   let relays := (← get).relays
   let anchors := (← get).anchors
   let mut calls : Array (Nat × Outbound.Call) := #[]
@@ -460,7 +483,7 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Un
   -- How long it is, is said only when the request's sender has the block anyway.
   let size := if built.tried then "a block" else s!"{submission.size} bytes"
   Platform.write s!"evm: sending {size} to {calls.size} relays\n".toUTF8
-  transmit (← modifyGet (·.beginSending now key asked bid built.wanted calls))
+  transmit (← modifyGet (·.beginSending now key asked bid built.wanted calls (built.slot, built.parent, built.value)))
 
 /-- A question for a relay: a call out begun, or the reason there can be none. -/
 def ask (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Unit := do

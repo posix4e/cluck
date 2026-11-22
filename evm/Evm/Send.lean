@@ -43,6 +43,12 @@ and how much gas it allows by filling blocks to different levels and being told 
 sent the block and say what they say; the sender is told that. (The four zeros were once the number that
 went in.)
 
+A block is not sent when a relay has already taken one from this machine for the same slot, built on
+the same block, that pays as much or more: a relay keeps a builder's newest, and a block cut short by
+the clock would otherwise take the place of a fuller one. The answer then names no relay, as when no
+block was built. With sealed transactions tried this tells the request's sender that the block paid no
+more than the last, which a relay's public list of bids would have told it too.
+
 What goes to a relay is made up, inside TLS, to a whole number of 16384 bytes, so that the length of
 what the machine sends, which whoever carries it can see, does not say whether a transaction of a few
 hundred bytes is in it.

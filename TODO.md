@@ -784,7 +784,7 @@ times, and the block from the relay. Six stages:
   got one block, built when the parent arrived: the moment the pool has just been emptied, nine
   seconds before the slot. `builder/shadow --rebid` goes on asking for blocks for the same slot, each
   from what is pending then, until one begun now could not be ended in time; a relay keeps a
-  builder's newest. Nothing in the image changed (`6530fed8…`).
+  builder's newest. For the first runs below nothing in the image changed (`6530fed8…`).
   - What made a round short enough to be worth repeating, all in the host's program: what a head
     fixes is asked for once a head (the slot's inputs, what the block's own calls read, proofs already
     fetched, transactions' bytes); the two traces run at once; and the node is asked only for what
@@ -823,11 +823,20 @@ times, and the block from the relay. Six stages:
     node has no call for (`debug_storageRangeAt` answers nothing, and there is no witness for a
     block not yet made). 2% carry blobs and are not proposed either. Of those proposed, about one
     in ten is then left out by the guest.
-  - Not done: a block worth less than one already sent is still sent (the guest sends when it has
-    built, and only the host's guess at the time keeps a block from being cut short); nothing of
-    this has been sent to a real relay, where four relays' answers are waited for each round; the
-    last block is 2.6 s before the slot and the builders that win go on to the slot's start or past
-    it.
+  - **The guest keeps a block that pays no more than one it has sent** for the same slot on the same
+    parent, once a relay has taken that one (`Evm/Machine.lean`, `send`): before this only the host's
+    guess at the time kept a block cut short by the clock from taking a fuller one's place at the
+    relay. Tried in TDX with one request put four ways: sent; the same again, kept; cut to nothing
+    by the clock, kept; for the next slot, sent. The image with it is `86b4ec37…dc232908` (the shadow
+    image `7e25571b…30ed84f9e`); `run-fixtures tdx --limits --key` and `check-secret-code tdx` pass
+    on it. Then 25 slots with `--ready 0.5 --finishing 0.6`: 178 blocks, all valid, signed and the
+    same at the stand-in; none paid less than one before it in its slot, so the rule never had to
+    act; the last block of a slot was ready 1.7 s before it at the median, 1.3 s at the least, and
+    was worth 0.0016 ETH at the median against 0.00011 for the first.
+  - Not done: nothing of this has been sent to a real relay, where four relays' answers are waited
+    for each round; the last block is 1.7 s before the slot and the builders that win go on to the
+    slot's start or past it; transactions that empty a slot, and those with blobs, are still left
+    out; Ethereum's suites were not run again for this image (the engine did not change).
 
 What is next, in order:
 

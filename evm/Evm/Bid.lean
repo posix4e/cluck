@@ -156,6 +156,12 @@ structure Outcome where
   wanted : Array Fast.Lack := #[]
   /-- Whether transactions were added to those the request proposed, whether or not any went in. -/
   tried : Bool := false
+  /-- When a block was built: the slot it is for, the hash of the block it is built on, and what it pays
+  the proposer. Two blocks alike in the first two are rivals for one place, and the third says which is
+  the better. -/
+  slot : Nat := 0
+  parent : ByteArray := .empty
+  value : Nat := 0
 
 /-- Transactions the machine adds to those a request proposes, which the request's sender has not seen. -/
 structure Extra where
@@ -227,7 +233,7 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
             places := built.included, requests := built.requests.map (·.toByteArray), signature := signature.toByteArray }
         return { reply := response.encode ++ key.publicKey ++ signature.toByteArray, submission,
                  added := (built.included.filter (· ≥ own)).toArray.map (· - own), wanted := response.wanted,
-                 tried := !extra.wires.isEmpty }
+                 tried := !extra.wires.isEmpty, slot, parent := bid.parentHash, value := built.value }
       | .error _ => return { reply := ({ status := 4 } : Build.Response).encode }
 
 /-- The response alone. -/

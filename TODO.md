@@ -118,6 +118,35 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   machine). It has been tried against Linux only, and only as the side that is
   connected to.
 
+- **What lies between it and a network card**, read out of the code and the
+  firmware on 2026-11-22, nothing of it built or measured yet:
+  - Today the guest reaches its card through the firmware's Simple Network
+    Protocol (`boot/efi/platform.c`): one frame a call coming in, and going out
+    one frame at a time with a wait for the driver to hand the buffer back. The
+    card is QEMU's virtio-net, and behind it QEMU's own user-mode network, which
+    is a small TCP/IP stack in one thread of QEMU. Neither end is made for speed.
+  - The firmware also offers the card itself (`EFI_PCI_IO_PROTOCOL`), and in a
+    trust domain its memory calls hand out pages the host can see
+    (`IoMmuDxe`). A virtio-net driver of this project's own could sit on that:
+    the rings are then plain memory, read and written in batches with no leave
+    of the guest, and the host is only told when it asks to be. The driver's
+    logic can be Lean. It needs a handful of things only C can do here (read
+    and write a device register, get a page the host can see, copy to and from
+    it), and `CONTRIBUTING.md` says no new C: that is a rule to ask about, not
+    to step round.
+  - On the host, a tap device with the kernel's vhost-net behind it in place of
+    QEMU's user-mode network. This user may open `/dev/kvm` and
+    `/dev/vhost-net`, and can make a tap in a network namespace of its own, as
+    `scripts/flat-linux-test` does, so no root is needed to try it.
+  - One core. The guest runs on the one processor the firmware starts it on.
+    The firmware can start a procedure on the others; the runtime's allocator
+    is not made for that, and the stack would have to run there without it,
+    which for a frame it already does.
+  - To measure first, in this order: how many frames a second the present path
+    carries in a trust domain; the same with a tap and vhost-net under the
+    firmware's own driver, which says how much is the host's side and how much
+    the one-frame-a-call driver.
+
 ## Ethereum block import, as a service (`evm/`)
 
 An experiment: whether someone else's Lean, written for proofs and for Lean's own runtime, can be the service

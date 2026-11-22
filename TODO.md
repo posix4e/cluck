@@ -808,6 +808,21 @@ times, and the block from the relay. Six stages:
     request, the witness, the state root), about 120 ms to sign, about 3 ms a transaction; and in TDX
     another 150 ms or so to take the request in over TCP that waits for each segment's
     acknowledgement. None of that has been worked on.
+  - **How much speed can buy at all**, measured the same day by watching this node's pool for 51
+    blocks and then looking at each block the chain got. A block held 242 transactions at the
+    median, and 109 of them had ever been pending here before its slot: 41%. By what they paid over
+    the base fee the ones seen were 37% of the block at the median, and 9% summed over the 51 blocks,
+    because the transactions that pay most never appear in public. Seen at least 3 s before the slot
+    (about where the last block is built now): 0.00201 ETH a block at the median; at least 1 s
+    before: 0.00249; at any time before: 0.00273. So a builder with only what is public, however
+    fast, gets about a third of a block's fees at the median and a tenth of the total, and building
+    up to the slot's start instead of 2.6 s before it is worth a third more than now.
+  - What is left out of what is public, measured over six slots (833 pending transactions):
+    12% of them, paying 16% of the fees, empty a slot of storage and are never proposed, because
+    the trie then needs a node beside the one emptied that `eth_getProof` does not give and this
+    node has no call for (`debug_storageRangeAt` answers nothing, and there is no witness for a
+    block not yet made). 2% carry blobs and are not proposed either. Of those proposed, about one
+    in ten is then left out by the guest.
   - Not done: a block worth less than one already sent is still sent (the guest sends when it has
     built, and only the host's guess at the time keeps a block from being cut short); nothing of
     this has been sent to a real relay, where four relays' answers are waited for each round; the

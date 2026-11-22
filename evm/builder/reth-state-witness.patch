@@ -1,0 +1,76 @@
+Adds debug_stateWitness to reth 2.11.0 (commit b9abbcc): the trie nodes needed to apply a set of
+account and storage changes on top of a block, with the node beside a slot that is emptied where
+the trie folds up there. builder/shadow asks it so that transactions which empty a slot can be
+proposed. Not upstream. Build without the jit and gmp features (they want LLVM 23 and m4):
+
+  cargo build --profile release --bin reth --no-default-features \
+    --features "jemalloc otlp otlp-logs keccak-cache-global asm-keccak min-trace-logs"
+
+diff --git a/crates/rpc/rpc-api/src/debug.rs b/crates/rpc/rpc-api/src/debug.rs
+index 306b5fe..fe97d08 100644
+--- a/crates/rpc/rpc-api/src/debug.rs
++++ b/crates/rpc/rpc-api/src/debug.rs
+@@ -358,6 +358,16 @@ pub trait DebugApi<TxReq: RpcObject> {
+         block_id: Option<BlockId>,
+     ) -> RpcResult<(B256, TrieUpdates)>;
+ 
++    /// Returns the trie nodes needed to apply the `HashedPostState` on top of the state for the given
++    /// block: the nodes on the way to every account and slot it names and, where a slot it sets to zero
++    /// leaves a branch with one child, that child. (Not upstream: added for a stateless builder.)
++    #[method(name = "stateWitness")]
++    async fn debug_state_witness(
++        &self,
++        hashed_state: HashedPostState,
++        block_id: Option<BlockId>,
++    ) -> RpcResult<Vec<Bytes>>;
++
+     /// Returns the storage at the given block height and transaction index. The result can be
+     /// paged by providing a `maxResult` to cap the number of storage slots returned as well as
+     /// specifying the offset via `keyStart` (hash of storage key).
+diff --git a/crates/rpc/rpc/src/debug.rs b/crates/rpc/rpc/src/debug.rs
+index b845321..d60efbf 100644
+--- a/crates/rpc/rpc/src/debug.rs
++++ b/crates/rpc/rpc/src/debug.rs
+@@ -823,6 +823,27 @@ where
+             .await
+     }
+ 
++    /// Returns the trie nodes needed to apply the `HashedPostState` on top of the state for the given
++    /// block.
++    async fn debug_state_witness(
++        &self,
++        hashed_state: HashedPostState,
++        block_id: Option<BlockId>,
++    ) -> Result<Vec<Bytes>, Eth::Error> {
++        self.inner
++            .eth_api
++            .spawn_blocking_io(move |this| {
++                let state = this
++                    .provider()
++                    .state_by_block_id(block_id.unwrap_or_default())
++                    .map_err(Eth::Error::from_eth_err)?;
++                state
++                    .witness(Default::default(), hashed_state, ExecutionWitnessMode::Legacy)
++                    .map_err(Eth::Error::from_eth_err)
++            })
++            .await
++    }
++
+     /// Executes a block and returns the state root after each transaction.
+     ///
+     /// The block is either canonical or a bad block the engine rejected. Execution stops at the
+@@ -1431,6 +1452,14 @@ where
+         Self::debug_state_root_with_updates(self, hashed_state, block_id).await.map_err(Into::into)
+     }
+ 
++    async fn debug_state_witness(
++        &self,
++        hashed_state: HashedPostState,
++        block_id: Option<BlockId>,
++    ) -> RpcResult<Vec<Bytes>> {
++        Self::debug_state_witness(self, hashed_state, block_id).await.map_err(Into::into)
++    }
++
+     async fn debug_storage_range_at(
+         &self,
+         _block_hash: B256,

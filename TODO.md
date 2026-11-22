@@ -818,10 +818,10 @@ times, and the block from the relay. Six stages:
     fast, gets about a third of a block's fees at the median and a tenth of the total, and building
     up to the slot's start instead of 2.6 s before it is worth a third more than now.
   - What is left out of what is public, measured over six slots (833 pending transactions):
-    12% of them, paying 16% of the fees, empty a slot of storage and are never proposed, because
-    the trie then needs a node beside the one emptied that `eth_getProof` does not give and this
-    node has no call for (`debug_storageRangeAt` answers nothing, and there is no witness for a
-    block not yet made). 2% carry blobs and are not proposed either. Of those proposed, about one
+    12% of them, paying 16% of the fees, empty a slot of storage and were never proposed, because
+    the trie then needs a node beside the one emptied that `eth_getProof` does not give and reth
+    as published has no call for (`debug_storageRangeAt` answers nothing, and there is no witness
+    for a block not yet made). Mended below. 2% carry blobs and are not proposed either. Of those proposed, about one
     in ten is then left out by the guest.
   - **The guest keeps a block that pays no more than one it has sent** for the same slot on the same
     parent, once a relay has taken that one (`Evm/Machine.lean`, `send`): before this only the host's
@@ -833,10 +833,28 @@ times, and the block from the relay. Six stages:
     same at the stand-in; none paid less than one before it in its slot, so the rule never had to
     act; the last block of a slot was ready 1.7 s before it at the median, 1.3 s at the least, and
     was worth 0.0016 ETH at the median against 0.00011 for the first.
+  - **Transactions that empty a slot go in**, since the node was given a call for what they need.
+    reth 2.11.0 with 39 lines added (`evm/builder/reth-state-witness.patch`): `debug_stateWitness`
+    takes changes to accounts and storage and a block, and answers with the trie nodes needed to
+    apply them there, which is the node's own witness code with a door on it; where a slot set to
+    zero leaves a branch with one child, that child is among them. Built here without the two
+    features that want LLVM and m4, as the published binary is; the published binary is kept beside
+    it. The node's limit on the gas one tracing request may hold was raised from 50M to 600M
+    (`--rpc.gascap`), which a fuller list of pending transactions had begun to pass.
+    `builder/shadow` asks for each emptied slot alone and for all those of an account together,
+    once a head, and gives up emptying for a head on which the guest finds the witness short.
+  - Run in TDX against the stand-in, 50 slots (26471540 on): 266 blocks, every one valid by the
+    node, signed, and the same at the stand-in; no round without a block, and emptying never given
+    up. Every pending transaction the node traced was proposed, 93 a block at the median where
+    there had been 60, about 20 of them emptying a slot. The last block of a slot was worth
+    0.00185 ETH at the median. Against the blocks proposers took in 43 of those slots: 25% at the
+    median, 62% at best, 18% summed (21% and 8% over other slots before).
+  - What it cost: a round is 1.0 s where it was 0.7 (0.4 s gathering, 0.7 s in the guest with half
+    as many transactions again), so 6 rounds a slot and not 7, and the last block is ready 2.1 s
+    before the slot and not 1.7.
   - Not done: nothing of this has been sent to a real relay, where four relays' answers are waited
     for each round; the last block is 1.7 s before the slot and the builders that win go on to the
-    slot's start or past it; transactions that empty a slot, and those with blobs, are still left
-    out; Ethereum's suites were not run again for this image (the engine did not change).
+    slot's start or past it; transactions with blobs are still left out; Ethereum's suites were not run again for this image (the engine did not change).
 
 What is next, in order:
 

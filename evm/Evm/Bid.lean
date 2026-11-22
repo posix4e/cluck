@@ -23,8 +23,8 @@ is answered with the response to that request to build, and after it, if a block
     48   this builder's public key
     96   its signature over the bid
 
-The time allowed is for a builder that has a slot to meet: counted from when the whole request has
-arrived, and once it is up everything still proposed is left out and the block is ended with what is in
+The time allowed is for a builder that has a slot to meet: counted from when the request's first bytes
+arrived (so that a request slow on the way in makes a smaller block and not a late one), and once it is up everything still proposed is left out and the block is ended with what is in
 it, so the answer is a smaller block and not a late one. It is looked at between transactions, not within
 one. Only a machine with a clock can count it (`EfiMain.lean`); run as a process there is none, and the
 answer is the block with no limit.

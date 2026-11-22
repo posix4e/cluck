@@ -870,6 +870,27 @@ times, and the block from the relay. Six stages:
     says what the table held, for the next time. The image with that is `269831de…308c1358d` (the
     shadow image `3022eafc…353fb4d39`); `net-tcp-test`, `check-secret-code tdx` and `run-fixtures tdx
     --limits --key` pass on it.
+  - **A first try at 1,000 slots was stopped at 159**, with every block valid and two things wrong.
+    Three slots had their last block at the stand-in after the slot began (by 0.2 to 2.5 s): one
+    because the parent itself came 11 s into its slot, two because the request took half a second
+    longer to reach the guest than the round before. And in one slot seven rounds in a row built
+    nothing (status 6), and once more in another: a transaction had taken an account out of the
+    state altogether (it held a balance and nothing else, and a contract made at its address swept
+    it and destroyed itself), the trie of accounts folded up there, and nobody had the node beside
+    it. `/data/eth/shadow/tools/lacking.py` finds where a node the guest lacked hangs.
+  - Mended, in the host's program: an account the trace shows removed is asked about as an emptied
+    slot is; and when the guest finds the witness short all the same, the node it names is found in
+    the witness as some node's child and asked of the node by a made-up hashed key that lies under
+    it, to go into every later request on that head (`mend`). A block that would be late is not
+    sent, live or not. Hashes are made in this process and not by starting `openssl` for each.
+  - Mended, in the guest: the time allowed for transactions is counted from when the request's
+    first bytes came and not its last (`Evm/Machine.lean`), so a request that is slow on the way in
+    makes a smaller block, which the rule above then keeps back if it pays no more, and not a late
+    one. The image with that is `c7fe6fb4…c36c19fa` (the shadow image `bf9c0d04…b13b7a1a`);
+    `check-secret-code tdx` and `run-fixtures tdx --limits --key` pass on it. 40 slots on it: 252
+    blocks sent, all valid, signed and the same at the stand-in; none after its slot began; the
+    last of a slot 0.58 s before it at the median and 0.48 s at the least; 92% of what was public a
+    second before the slot, by fees, at the median.
   - Not done: nothing of this has been sent to a real relay, where four relays' answers are waited
     for each round; the builders that win go on to the slot's start or past it, and ours stops
     half a second short on purpose; transactions with blobs are still left out; Ethereum's suites were not run again for this image (the engine did not change).

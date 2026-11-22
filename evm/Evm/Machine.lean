@@ -56,12 +56,17 @@ shorter than the four bytes of the length while there are four to be had. -/
 structure Pending where
   pieces : Array ByteArray := #[]
   size : Nat := 0
+  /-- When the first of the pieces came, by this machine's clock; 0 when that is not known (what came
+  after an earlier request on the same connection). -/
+  since : Nat := 0
   deriving Inhabited
 
-def Pending.add (p : Pending) (bytes : ByteArray) : Pending :=
+def Pending.add (p : Pending) (bytes : ByteArray) (now : Nat := 0) : Pending :=
   if bytes.isEmpty then p
-  else if p.pieces.size == 1 && p.size < 4 then { pieces := #[p.pieces[0]! ++ bytes], size := p.size + bytes.size }
-  else { pieces := p.pieces.push bytes, size := p.size + bytes.size }
+  else
+    let since := if p.size == 0 then now else p.since
+    if p.pieces.size == 1 && p.size < 4 then { pieces := #[p.pieces[0]! ++ bytes], size := p.size + bytes.size, since }
+    else { pieces := p.pieces.push bytes, size := p.size + bytes.size, since }
 
 def length (b : ByteArray) : Nat :=
   (b[0]!.toNat <<< 24) ||| (b[1]!.toNat <<< 16) ||| (b[2]!.toNat <<< 8) ||| b[3]!.toNat
@@ -71,8 +76,8 @@ inductive Front
   | wait
   /-- Its length is not one that is accepted. -/
   | refuse
-  /-- It is here, and this is what came after it. -/
-  | whole (request : ByteArray) (rest : Pending)
+  /-- It is here, with when its first bytes came (0 when not known), and this is what came after it. -/
+  | whole (request : ByteArray) (since : Nat) (rest : Pending)
 
 /-- The request at the front of what a client has sent, joined into one array of exactly its length. -/
 def Pending.front (p : Pending) : Front :=
@@ -90,7 +95,7 @@ def Pending.front (p : Pending) : Front :=
       let stop := min piece.size (start + (n - request.size))
       request := piece.copySlice start request request.size (stop - start)
       rest := rest.add (piece.extract stop piece.size)
-    return .whole request rest
+    return .whole request p.since rest
 
 def frame (payload : ByteArray) : ByteArray :=
   Evm.Service.be 4 payload.size ++ payload
@@ -232,7 +237,7 @@ def stepJobs (s : State) (now : Nat) (input : Outbound.Input) (out : Array ByteA
 /-- Bytes from a client, added to what it has sent. False when that would be more than is held, and the
 client is to be closed. The client's pieces are taken out of the table while they are added to: held in
 two places, every segment would copy the list of them. -/
-def addData (s : State) (key : Tcp.Key) (bytes : ByteArray) : State × Bool :=
+def addData (s : State) (key : Tcp.Key) (bytes : ByteArray) (now : Nat := 0) : State × Bool :=
   let clients := s.clients
   let s := { s with clients := #[] }
   match clients.findIdx? (·.key == key) with
@@ -244,7 +249,7 @@ def addData (s : State) (key : Tcp.Key) (bytes : ByteArray) : State × Bool :=
     let client := { client with pending := {} }
     let others := clients.foldl (fun held other => held + other.pending.size) 0
     if others + pending.size + bytes.size > maxHeld then ({ s with clients := clients.set! i client }, false)
-    else ({ s with clients := clients.set! i { client with pending := pending.add bytes } }, true)
+    else ({ s with clients := clients.set! i { client with pending := pending.add bytes now } }, true)
 
 /-- What TCP reported, acted on: frames collected for sending, a call out told of its own connection, a
 client's bytes kept. No request is run here. -/
@@ -268,7 +273,7 @@ partial def settle (s : State) (now : Nat) (events : List Tcp.Event) (out : Arra
       | .finished key =>
         settle { s with clients := s.clients.map fun (c : Client) => if c.key == key then { c with leaving := true } else c } now rest out
       | .data key bytes =>
-        let (s, kept) := s.addData key bytes
+        let (s, kept) := s.addData key bytes now
         if kept then settle s now rest out
         else
           let (tcp, more) := s.wire.tcp.close now key
@@ -308,8 +313,8 @@ def tick (s : State) (now : Nat) : Array ByteArray × State :=
 /-- What there is to do next for the clients. -/
 inductive Next
   | nothing
-  /-- This client's request is here whole and its turn has come. -/
-  | run (key : Tcp.Key) (request : ByteArray)
+  /-- This client's request is here whole and its turn has come; `since` is when its first bytes came. -/
+  | run (key : Tcp.Key) (request : ByteArray) (since : Nat)
   /-- This client sent a length that is not accepted, or is done and has been answered. -/
   | drop (key : Tcp.Key)
 
@@ -325,7 +330,7 @@ where
         if client.waiting then go s (i + 1) fuel
         else match client.pending.front with
           | .refuse => (.drop client.key, s)
-          | .whole request rest => (.run client.key request, { s with clients := s.clients.set! i { client with pending := rest } })
+          | .whole request since rest => (.run client.key request since, { s with clients := s.clients.set! i { client with pending := rest } })
           | .wait => if client.leaving then (.drop client.key, s) else go s (i + 1) fuel
 
 /-- A client let go: its connection closed in the orderly way. -/
@@ -421,24 +426,27 @@ def pump : M Bool := do
 
 /-- Any request but one for a relay: one for a bid or for the builder's key, which need the key, or one
 of the others. A request for a bid may name the milliseconds it allows for transactions, counted from
-here, where the whole request has arrived; this machine's clock is what says they have run out. Between
+when its first bytes arrived (`since`); this machine's clock is what says they have run out. Between
 transactions it also looks at the network. -/
-def buildWith (request : ByteArray) (added : ByteArray → Evm.Bid.Extra := fun _ => {}) : M Evm.Bid.Outcome := do
+def buildWith (request : ByteArray) (added : ByteArray → Evm.Bid.Extra := fun _ => {}) (since : Nat := 0) : M Evm.Bid.Outcome := do
   if !Evm.Bid.mine request then return { reply := ← IO.lazyPure fun _ => Evm.serve request }
   let key := (← get).key
   let allowed := Evm.Bid.allowed request
-  let stopAt := (← Efi.millis).toNat + allowed
+  -- Counted from the request's first bytes when that is known: whoever set the allowance set it when
+  -- they began to send, and a request that was slow to arrive must not make the block late.
+  let now := (← Efi.millis).toNat
+  let stopAt := (if since == 0 then now else since) + allowed
   let over : M Bool := do
     let _ ← pump
     if allowed == 0 then pure false else return (← Efi.millis).toNat ≥ stopAt
   Evm.Bid.buildWith over key request added
 
-def serveWith (request : ByteArray) : M ByteArray := do return (← buildWith request).reply
+def serveWith (request : ByteArray) (since : Nat := 0) : M ByteArray := do return (← buildWith request (since := since)).reply
 
 /-- A block built, bid for, and sent to relays: a call out to each relay asked for, or the answer at once
 when there is nothing to send. The transactions sealed to this machine that are good for the slot are
 tried with those the request proposes; if any goes in, the request's sender is not shown the block. -/
-def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Unit := do
+def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) (since : Nat := 0) : M Unit := do
   let started := (← Efi.millis).toNat
   let finish (bid : ByteArray) (wanted : Array Fast.Lack) (why : String) : M Unit := do
     Platform.write s!"evm: a block not sent: {why}\n".toUTF8
@@ -454,7 +462,7 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Un
   let (pool, chain) ← modifyGet fun s =>
     let pool : Seal.Pool := { kept := s.pool.kept.filter (·.last ≥ slot) }
     ((pool, s.chain), { s with pool })
-  let built ← buildWith r.bid (Follow.extra pool chain slot)
+  let built ← buildWith r.bid (Follow.extra pool chain slot) since
   let now := (← Efi.millis).toNat
   -- The console is the host's to read: it is told that sealed transactions were tried, as it knows
   -- already, and not whether any went in.
@@ -511,14 +519,14 @@ partial def work : M Unit := do
   | .drop key =>
     transmit (← modifyGet (·.drop (← Efi.millis).toNat key))
     work
-  | .run key request =>
+  | .run key request since =>
     Platform.write s!"evm: request of {request.size} bytes\n".toUTF8
     let started ← Efi.millis
     let (asked, inner) := match Evm.Attest.asked? request with
       | some asked => (some asked, Evm.Attest.request asked)
       | none => (none, request)
     if Ask.mine inner then ask key asked inner
-    else if Send.mine inner then send key asked inner
+    else if Send.mine inner then send key asked inner since
     else if Follow.mine inner then
       -- A block of the chain shown to the machine: checked, and if it is valid, what it wrote is kept
       -- and the proofs that sealed transactions brought are made good at it.
@@ -546,7 +554,7 @@ partial def work : M Unit := do
       Platform.write s!"evm: status {answer[0]!}, 0 ms\n".toUTF8
       transmit (← modifyGet (·.reply (← Efi.millis).toNat key (frame reply)))
     else
-      let reply ← attested asked (← serveWith inner)
+      let reply ← attested asked (← serveWith inner since)
       let ended ← Efi.millis
       let report := if asked.isSome && reply.size > 1024 then ", with a report" else ""
       Platform.write s!"evm: status {reply[0]!}, {(ended - started).toNat} ms{report}\n".toUTF8

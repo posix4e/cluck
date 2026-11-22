@@ -5,6 +5,10 @@ and net-flat-serve, losing some on purpose when asked to. Then ordinary sockets 
 and must get the whole answer and the end of the stream.
 
     scripts/flat-linux-test [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES] [--request BYTES]
+    scripts/flat-linux-test --http [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES-OF-/big]
+
+With --http the stack is run as its small web server and asked for pages by Python's own HTTP client, and
+by curl if there is one: /, /big and a page that is not there, in turn.
 """
 import fcntl, os, random, socket, struct, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
@@ -17,6 +21,9 @@ def option(name, default):
 connections, at_once = option("--connections", 2000), option("--at-once", 32)
 loss, answer_bytes, request_bytes = option("--loss", 0.0) / 100, option("--answer", 128), option("--request", 100)
 here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+web = "--http" in sys.argv
+if web and "--answer" not in sys.argv:
+    answer_bytes = 1000000
 
 tap = os.open("/dev/net/tun", os.O_RDWR)
 fcntl.ioctl(tap, 0x400454ca, struct.pack("16sH22s", b"tap0", 0x0002 | 0x1000, b""))     # TUNSETIFF: a tap, frames bare
@@ -24,7 +31,7 @@ for command in ("ip addr add 10.0.0.1/24 dev tap0", "ip link set tap0 up", "ip l
                 "ip neigh replace 10.0.0.2 lladdr 02:00:00:00:00:02 dev tap0 nud permanent"):
     subprocess.run(command.split(), check=True)
 
-server = subprocess.Popen([os.path.join(here, ".lake/build/bin/net-flat-serve"), str(request_bytes), str(answer_bytes)],
+server = subprocess.Popen([os.path.join(here, ".lake/build/bin/net-flat-serve")] + (["http", str(answer_bytes)] if web else [str(request_bytes), str(answer_bytes)]),
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
 to_server = threading.Lock()
 counts = {"to_stack": 0, "from_stack": 0, "lost_to": 0, "lost_from": 0}
@@ -83,8 +90,21 @@ for work in (inward, outward, clock):
 expected = bytes(i % 251 for i in range(answer_bytes))
 request = b"a" * request_bytes
 
-def one(_):
+def one(i):
     began = time.time()
+    if web:
+        import http.client
+        path, status, body = (("/", 200, b"a TCP written in Lean\n"), ("/big", 200, expected), ("/nothing", 404, b"nothing here\n"))[i % 3]
+        try:
+            c = http.client.HTTPConnection("10.0.0.2", 80, timeout=120)
+            c.request("GET", path)
+            r = c.getresponse()
+            got = r.read()
+            c.close()
+            ok = r.status == status and got == body
+            return ("whole" if ok else f"wrong: {path} gave {r.status} and {len(got)} bytes"), time.time() - began
+        except (OSError, http.client.HTTPException) as error:
+            return f"{type(error).__name__}: {error}", time.time() - began
     try:
         with socket.create_connection(("10.0.0.2", 80), timeout=120) as s:
             s.settimeout(120)
@@ -99,6 +119,11 @@ def one(_):
     except OSError as error:
         return f"{type(error).__name__}: {error}", time.time() - began
 
+if web and subprocess.run(["which", "curl"], capture_output=True).returncode == 0:
+    shown = subprocess.run(["curl", "-sS", "-i", "--max-time", "20", "http://10.0.0.2/"], capture_output=True, text=True)
+    print("curl -i http://10.0.0.2/ :", repr(shown.stdout), shown.stderr.strip())
+    sized = subprocess.run(["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code} %{size_download} bytes in %{time_total} s", "--max-time", "60", "http://10.0.0.2/big"], capture_output=True, text=True)
+    print("curl http://10.0.0.2/big :", sized.stdout, sized.stderr.strip())
 began = time.time()
 with ThreadPoolExecutor(at_once) as pool:
     results = list(pool.map(one, range(connections)))
@@ -113,7 +138,8 @@ for kind, _ in results:
 times = sorted(t for _, t in results)
 linux = dict(line.split()[:2] for line in subprocess.run(["nstat", "-az"], capture_output=True, text=True).stdout.splitlines()[1:]
              if line.split()[0] in ("TcpInCsumErrors", "TcpRetransSegs", "TcpInErrs", "TcpExtTCPTimeouts", "TcpAttemptFails", "TcpEstabResets", "IpInHdrErrors"))
-print(f"{connections} connections from Linux, {at_once} at once, request {request_bytes} bytes, answer {answer_bytes} bytes, {loss * 100:g}% of frames lost each way")
+print((f"{connections} requests by HTTP from Linux, {at_once} at once, /big of {answer_bytes} bytes" if web else
+       f"{connections} connections from Linux, {at_once} at once, request {request_bytes} bytes, answer {answer_bytes} bytes") + f", {loss * 100:g}% of frames lost each way")
 print(f"  {kinds}")
 print(f"  {took:.1f} s; a connection took {times[len(times) // 2] * 1000:.1f} ms at the median, {times[-1] * 1000:.0f} ms at the most")
 print(f"  frames: {counts}")

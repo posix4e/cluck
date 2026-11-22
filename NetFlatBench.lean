@@ -64,9 +64,14 @@ partial def captured (capture : ByteArray) (frames : ByteArray) (o stop : USize)
 
 def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes : Nat) (capturePath : Option String := none) : IO Unit := do
   let slotBits := (Nat.log2 (4 * atOnce) + 1).max 10
-  let cfg : Tuning := { slotBits := slotBits.toUSize, checksums, request := requestBytes.toUInt32 }
+  let cfg : Tuning := { slotBits := slotBits.toUSize, checksums }
+  -- The application: when so many bytes have come, the one answer.
+  let wanted := requestBytes.toUInt32
+  let respond (_ : ByteArray) (_ length : USize) (had : UInt32) : UInt64 :=
+    let got := had + length.toUInt32
+    if got ≥ wanted then Flat.send 0 got else Flat.more got
   let request := ByteArray.mk (Array.replicate requestBytes 0x61)
-  let answer := ByteArray.mk (Array.replicate answerBytes 0x62)
+  let answers := #[ByteArray.mk (Array.replicate answerBytes 0x62)]
   -- For each client: its state (1 has sent a SYN, 2 the request, 3 its FIN), its port, its first number.
   let mut clients := zeros (16 * atOnce)
   let mut rx := zeros (atOnce * 2 * (60 + requestBytes))
@@ -89,8 +94,8 @@ def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes
   while done < connections do
     if capturePath.isSome then capture := captured capture rx 0 rxLength now
     let began ← IO.monoNanosNow
-    (t, tx) := Flat.process cfg answer now rx rxLength t tx
-    (t, tx) := Flat.tick cfg answer now 1 t tx
+    (t, tx) := Flat.process cfg answers respond now rx rxLength t tx
+    (t, tx) := Flat.tick cfg answers now 1 t tx
     let ended ← IO.monoNanosNow
     if capturePath.isSome then capture := captured capture tx 8 (written tx) now
     spent := spent + (ended - began)

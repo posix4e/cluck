@@ -117,6 +117,18 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   is one fixed answer. It is slow at moving much data (2 MB took 1.7 s on one
   machine). It has been tried against Linux only, and only as the side that is
   connected to.
+- **The application is a function and a list of answers** (since the tables
+  above, which were taken with one fixed answer). A connection sends one whole
+  answer out of the list, bytes that do not change, and then the end of the
+  stream, so it holds a number and not a copy, and what must be sent again is
+  read from where it always was. `respond` is shown each run of bytes that
+  arrives and names the answer or asks for more. `net-flat-serve http` is a
+  small web server made that way; `scripts/flat-linux-test --http` fetches `/`,
+  a megabyte and a page that is not there with Python's HTTP client, 300 times
+  with 2% of frames lost, every one whole, and `curl` gets the megabyte in
+  14 ms. With it one core does 1.13 million connections a second with
+  checksums and a thousand open (1.62 without), measured while the builder's
+  run had the machine.
 
 - **What lies between it and a network card**, read out of the code and the
   firmware on 2026-11-22, nothing of it built or measured yet:
@@ -132,16 +144,20 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     of the guest, and the host is only told when it asks to be. The driver's
     logic can be Lean. It needs a handful of things only C can do here (read
     and write a device register, get a page the host can see, copy to and from
-    it), and `CONTRIBUTING.md` says no new C: that is a rule to ask about, not
-    to step round.
+    it). `CONTRIBUTING.md` allows that: C underneath the Lean, in `boot/` and
+    `rt/`, that interprets no byte from the host and is written into
+    `THREAT_MODEL.md`. (This entry first said the rules forbade new C. They do
+    not, and `Kernel/Hw.lean` is already that interface, for the other target.)
   - On the host, a tap device with the kernel's vhost-net behind it in place of
     QEMU's user-mode network. This user may open `/dev/kvm` and
     `/dev/vhost-net`, and can make a tap in a network namespace of its own, as
     `scripts/flat-linux-test` does, so no root is needed to try it.
   - One core. The guest runs on the one processor the firmware starts it on.
-    The firmware can start a procedure on the others; the runtime's allocator
-    is not made for that, and the stack would have to run there without it,
-    which for a frame it already does.
+    In a trust domain the firmware cannot start the others at all: it is built
+    there with a library for one processor, and the rest wait in a mailbox for
+    an operating system (`TdxDxe.c`, `MpInitLibUp`). The runtime's allocator is
+    not made for more than one either. So more cores means more guests, each
+    with one.
   - To measure first, in this order: how many frames a second the present path
     carries in a trust domain; the same with a tap and vhost-net under the
     firmware's own driver, which says how much is the host's side and how much

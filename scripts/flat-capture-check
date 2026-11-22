@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Reads a capture written by net-flat-bench and judges it with code that shares nothing with the stack:
+every frame's IP and TCP checksums, and every connection's exchange as a TCP stream (the handshake's
+numbers, each side acknowledging exactly what the other sent, the request and the answer whole, both ends
+closed and both closes acknowledged).
+
+    scripts/flat-capture-check FILE.pcap [SERVER-IP default 10.0.0.2]
+"""
+import struct, sys
+path = sys.argv[1]
+server = bytes(int(x) for x in (sys.argv[2] if len(sys.argv) > 2 else "10.0.0.2").split("."))
+data = open(path, "rb").read()
+magic, = struct.unpack("<I", data[:4])
+assert magic == 0xa1b2c3d4, hex(magic)
+def csum(b):
+    if len(b) % 2: b += b"\0"
+    s = sum(struct.unpack(">%dH" % (len(b) // 2), b))
+    while s >> 16: s = (s & 0xffff) + (s >> 16)
+    return s
+at, frames, bad = 24, 0, []
+streams = {}
+while at < len(data):
+    sec, usec, n, orig = struct.unpack("<IIII", data[at:at + 16]); frame = data[at + 16:at + 16 + n]; at += 16 + n
+    frames += 1
+    assert frame[12:14] == b"\x08\x00" and frame[14] == 0x45 and frame[23] == 6, "not TCP over IPv4"
+    ip = frame[14:34]; total = struct.unpack(">H", ip[2:4])[0]; seg = frame[34:14 + total]
+    if csum(ip) != 0xffff: bad.append((frames, "IP checksum"))
+    if csum(ip[12:20] + struct.pack(">HH", 6, len(seg)) + seg) != 0xffff: bad.append((frames, "TCP checksum"))
+    sport, dport, seq, ack, off, flags, win = struct.unpack(">HHIIBBH", seg[:16])
+    payload = seg[(off >> 4) * 4:]
+    to_server = ip[16:20] == server
+    key = (ip[12:16], sport) if to_server else (ip[16:20], dport)
+    streams.setdefault(key, []).append((to_server, seq, ack, flags, payload))
+whole = 0
+for key, packets in streams.items():
+    # A client's address and port may be used again by a later connection: cut at each SYN from the client.
+    cuts = [i for i, p in enumerate(packets) if p[0] and p[3] == 0x02] + [len(packets)]
+    for a, b in zip(cuts, cuts[1:]):
+        one = packets[a:b]
+        try:
+            syn = one[0]; synack = next(p for p in one if not p[0] and p[3] == 0x12)
+            assert synack[2] == (syn[1] + 1) & 0xffffffff, "the SYN is not acknowledged"
+            cnext, snext = (syn[1] + 1) & 0xffffffff, (synack[1] + 1) & 0xffffffff
+            cfin = sfin = False; sent = b""; got = b""
+            for to_server, seq, ack, flags, payload in one[1:]:
+                if flags == 0x12: continue
+                fin = flags & 1
+                if to_server:
+                    assert seq == cnext, "a gap in what the client sent"
+                    assert ack == snext, f"the client acknowledges {ack}, the server has sent to {snext}"
+                    sent += payload; cnext = (cnext + len(payload) + fin) & 0xffffffff; cfin |= bool(fin)
+                else:
+                    assert seq == snext, "a gap in what the server sent"
+                    assert ack == cnext, f"the server acknowledges {ack}, the client has sent to {cnext}"
+                    got += payload; snext = (snext + len(payload) + fin) & 0xffffffff; sfin |= bool(fin)
+            last = one[-1]
+            if cfin and sfin and not last[0] and last[2] == cnext:
+                whole += 1
+                lengths = (len(sent), len(got))
+        except (AssertionError, StopIteration) as why:
+            bad.append((key[1], str(why) or "no SYN-ACK"))
+print(f"{frames} frames; {whole} connections opened, exchanged and closed from both ends with every byte acknowledged" +
+      (f" (request {lengths[0]} bytes, answer {lengths[1]} bytes)" if whole else ""))
+print("wrong:", len(bad), bad[:8])
+sys.exit(1 if bad else 0)

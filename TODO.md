@@ -35,6 +35,49 @@ same SHA-256 on the build machine. The network uses static addresses. DHCP, SLAA
 TLS and a POSIX sockets interface are outside this implementation. Build and run
 instructions are in [TDX.md](TDX.md).
 
+**A fault in closing, found on 2026-11-22** in a capture of the builder's guest
+(`evm/`): a segment that lay wholly behind what had been received was answered
+and dropped, its acknowledgement with it. QEMU's TCP, like BSD's, acknowledges
+bytes that reach it after its FIN by sending the FIN again, so the last bytes of
+every connection the guest opened waited a second for their retransmission, and
+the connection stayed in the table that long. `Kernel/Net/Tcp.lean` now takes the
+acknowledgement of such a segment; `net-tcp-test` has the case, which fails
+without the change. No image has been built with it yet.
+
+**A trial of a fast TCP** (`Kernel/Net/Flat.lean`, 2026-11-22), to find out how
+many short connections a second a TCP written in Lean can take. Used by nothing.
+Frames come and go in batches; nothing is allocated for a frame; a connection is
+64 bytes in one flat table found by a keyed hash (SipHash-2-4); a SYN is answered
+from a cookie and nothing kept until the handshake's third packet; what can be
+tuned is one record, `Tuning`.
+
+- `net-flat-bench` makes clients in memory that open a connection, send 100
+  bytes, take 128 back and close: four frames in and three out. Only time inside
+  the stack is counted. On one core of this machine (Xeon, 64 cores, others busy
+  with the builder's run):
+
+  | open at once | checksums made and checked | left to the card |
+  |---|---|---|
+  | 1,000 | 1.03 million connections a second | 2.32 million |
+  | 100,000 | 0.97 million | 1.59 million |
+  | 1,000,000 | 1.02 million | 1.57 million |
+
+  That is 245 ns a frame with checksums and 108 to 159 ns without. The system's
+  own TCP, through the same exchange one connection at a time and at the level
+  of TCP segments only, does 0.35 million.
+- Judged by code that shares nothing with it: `scripts/flat-capture-check` reads
+  a capture of a run (5,000 connections, 35,000 frames) and finds every IP and
+  TCP checksum right and every connection opened, exchanged and closed from both
+  ends with every byte acknowledged; `tcpdump` finds all 35,000 checksums
+  correct.
+- What the figure leaves out, and it is most of a TCP: there is no network card
+  in it, and getting frames from one in a trust domain is the hard part; no
+  timers, so nothing is retransmitted and nothing ever times out; segments out
+  of order are asked for again and not kept; the peer's window and MSS are not
+  minded; no options but its own MSS; a connection it closes first is forgotten
+  at once; IPv4 with no options only; one core; and the application is one
+  fixed answer. No real TCP has talked to it.
+
 ## Ethereum block import, as a service (`evm/`)
 
 An experiment: whether someone else's Lean, written for proofs and for Lean's own runtime, can be the service

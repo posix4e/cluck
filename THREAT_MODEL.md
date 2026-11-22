@@ -186,9 +186,32 @@ to read. What that rests on, and where it gives:
     stand-in on the host does not), or for a block no relay takes. What a real relay's list does not
     give is what the transaction is: who sent it, to what, with what data. That is hidden until the
     block is in the chain, and for good if it never is.
-  - It also means the host can ask questions. It chooses the transactions that run before a sealed
-    one in the block, and may put its own there; the gas the sealed one then uses, read off the
-    relay's list, says how it fared in the state the host arranged. Nothing here stops that yet.
+  - **So a host that sets out to can learn what a sealed transaction does, without ever reading
+    it.** The host chooses the other transactions of the block and may write them itself; a block
+    that is not chosen costs it nothing; and the relay publishes each block's gas and count. A
+    transaction of the host's put *before* the sealed one arranges the state it runs in, and the
+    gas says how it fared: whether it still succeeds when a price has been moved, for one. A
+    transaction put *after* reads what the sealed one changed: one made to fail unless a given
+    contract's state is as the last block left it shows, by failing, that the sealed one touched
+    that contract, and a few of them over a few slots can find how much it moved a price and which
+    way. That is most of what anyone would want to hide a trade for.
+  - No rule about order mends this, and several were thought through on 2026-11-22. Sealed
+    transactions first, so that nothing of the host's runs before them: the ones after still read
+    what they changed. Leave out a host's transaction that behaves differently because of a sealed
+    one: its being left out is in the count, and says the same. One sealed transaction to a block,
+    or one block with sealed transactions to a slot: fewer answers, each as full. Hide how long the
+    block took: the relay's list says more than the time did. What would mend it is a block with a
+    sealed transaction and nothing of the host's choosing in it, which is a block nobody picks; or
+    relays that publish nothing about bids, which is not this project's to change.
+  - What sealing does give, then, said exactly. Against a host that only carries and watches: the
+    transaction, who sent it and what it touches are not seen until its block is in the chain, and
+    with proofs brought along not even the account is. Against a host that works at it: the bytes,
+    the sender and the signature are still not seen, and nothing lets it change the transaction or
+    get it built after its last slot; what the transaction does to the state can be found by asking.
+    Against everybody else, who cannot put transactions to this machine or tell which bids are its
+    answers to what: nothing but the relay's figures for the whole block.
+    None of the asking has been tried here; this is reasoning from what the relays were seen to
+    publish.
 - *What the host can do anyway.* Not hand a sealed transaction in; not prove what it needs, so that it
   is never built; choose, among the slots up to the last the sender named, which blocks it is tried in.
   It cannot have it built after that slot, cannot read it, and cannot change it. It can hand the same

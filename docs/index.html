@@ -301,7 +301,12 @@
       sent, its hash, the gas it used, what it pays and how many transactions it holds. So whether a
       hidden transaction went into a block, and how much gas it used, can be read off a relay by
       anyone who knows what else was in the block, as the host does. What stays hidden is what the
-      transaction is: who sent it, to what, and with what data. The TLS, the sealing and the certificate checks behind
+      transaction is: who sent it, to what, and with what data. A host that works at it can go
+      further: it chooses the block's other transactions, so it can put its own after a hidden one,
+      built to fail if a given contract was touched, and read from the relay's figures whether they
+      failed. Sealing keeps a transaction from a host that carries and watches, and from everyone
+      else; it does not keep what the transaction does from a host that sets out to find it, and no
+      rule inside the guest would. The TLS, the sealing and the certificate checks behind
       it are tested against OpenSSL, not proved and not reviewed by anyone else. Certificates are
       judged at a date the host supplies, since the guest has no clock that knows one. Its signing is written to take the same time
       whatever the key and was checked in the places looked at, not proved. As a checker, one block in a

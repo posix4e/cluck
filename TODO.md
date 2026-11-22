@@ -774,7 +774,11 @@ times, and the block from the relay. Six stages:
     block was chosen. What the search showed still stands: the transaction's bytes, its signature,
     its sender and the slot it reads were in nothing the host handled. What does not stand, for any
     real relay, is that whether it went in, its gas and what it paid are kept from the host.
-    `THREAT_MODEL.md` says what follows from that.
+    `THREAT_MODEL.md` says what follows from that: a host that chooses the block's other
+    transactions and reads the relays' lists can work out what a sealed transaction does to the
+    state, by transactions of its own before and after it, and no rule of order in the guest stops
+    it. Closing the last thing on the list above, how long a block takes to build, was begun on this
+    and dropped: the relays' lists say more than the time does. Not tried, reasoned.
 
 What is next, in order:
 

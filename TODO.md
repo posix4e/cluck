@@ -891,9 +891,35 @@ times, and the block from the relay. Six stages:
     blocks sent, all valid, signed and the same at the stand-in; none after its slot began; the
     last of a slot 0.58 s before it at the median and 0.48 s at the least; 92% of what was public a
     second before the slot, by fees, at the median.
-  - Not done: nothing of this has been sent to a real relay, where four relays' answers are waited
-    for each round; the builders that win go on to the slot's start or past it, and ours stops
-    half a second short on purpose; transactions with blobs are still left out; Ethereum's suites were not run again for this image (the engine did not change).
+  - **An hour of bids to the four real relays, with no payment**, asked for and run on 2026-11-22
+    (17:07 to 18:08 UTC, slots 15711932 on): `builder/shadow --live --guest-sends --rebid --ready
+    0.7 --finishing 0.25 --relay-wait 1500 --relays` and the four, the image `c7fe6fb4…c36c19fa` in
+    TDX, the tree clean at `d372852`. Nothing was paid and nothing could be: no wallet was given.
+    - 300 slots. In 8 no relay of the four held the proposer's registration and nothing was sent.
+      In the other 292 the guest built 1,438 blocks and sent 1,432 of them itself (it kept 6 that
+      paid no more than one already sent), five a slot at the median.
+    - Every block sent was judged valid afterwards by this node's validator, the code the relays
+      run, and every signature checked.
+    - The relays answered 4,592 times: 200 to 3,127; 202, "accepted bid below floor, skipped
+      validation", to 1,462 (Flashbots and Ultra Sound say that of a bid under the best they hold
+      and do not go on to check it); and to 3 nothing within the 1.5 s allowed. No relay refused a
+      block. Flashbots, Ultra Sound and Aestus list the bids under the guest's builder key.
+    - The last bid of a slot was answered 0.82 s before the slot at the median. One of the 1,432
+      was answered 0.63 s after its slot had begun: its parent came 9.9 s into its own slot and the
+      one round there was time for took 2.7 s.
+    - No block of ours was chosen, and none was expected to be. Against the blocks proposers took
+      in 253 of the slots: ours paid 0.0020 ETH at the median and theirs 0.0059; ours was 34% of
+      theirs at the median, 75% at best, never more; summed, 0.55 ETH against 2.26.
+    - Of what the taken block held that had been pending here at least a second before the slot,
+      ours held 89% by fees at the median (84% summed); at least 3 s before, 98%.
+    - What it does not show: a relay's own check of the blocks it answered 202 to; anything about
+      a sealed transaction (none was handed in); more than an hour; a relay that answers slowly
+      for long. Kept under `/data/eth/shadow/live4/`, not published.
+  - Not done: the 1,000 slots in a row have not been run to the end on this image; a bid can still
+    be answered after its slot has begun when the parent comes very late; the builders that win go
+    on to the slot's start or past it, and ours stops short of it on purpose; transactions with
+    blobs are still left out; Ethereum's suites were not run again for these images (the engine did
+    not change).
 
 What is next, in order:
 

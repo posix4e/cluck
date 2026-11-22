@@ -213,6 +213,15 @@ def main : IO UInt32 := do
   | none =>
     failures := failures + 1
     say "a message could not be sealed to a key"
+  -- A record sealed with padding opens to what was sealed, and is longer by the padding and no more.
+  let direction := Keys.of (Sha256.hash "a traffic secret".toUTF8)
+  for (size, padding) in [(0, 0), (0, 300), (1, 0), (5, 16379), (100, 7), (16384, 0)] do
+    let content := (Sha256.hash "content".toUTF8 ++ ByteArray.mk (Array.replicate 16384 7)).extract 0 size
+    let (_, sealed) := direction.protect 23 content padding
+    let opened := direction.unprotect (sealed.extract 0 5) (sealed.extract 5 sealed.size)
+    if sealed.size != 5 + size + 1 + padding + 16 || (opened.map fun (_, kind, got) => (kind, got)) != some (23, content) then
+      failures := failures + 1
+      say s!"a record of {size} bytes with {padding} of padding: not as it should be"
   -- The roots written into the images are certificates this reads, every one.
   for table in [Evm.Relays.live, Evm.Relays.standIn] do
     if table.anchors.size != table.roots.size || table.roots.isEmpty then

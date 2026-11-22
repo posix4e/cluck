@@ -17,8 +17,11 @@ node always learns: that somebody asked about this transaction. It is the sender
 it is not the builder's host. The sealing is done by the page's own script (demo/seal.js), under node.
 
 What comes out, in hexadecimal or to FILE as bytes, is the request that hands the transaction in:
-"JSEA2", then the sealed bytes. The builder must have checked the block the proofs are at, or one of
-the three before it; if the chain has moved further by the time it arrives, seal again.
+"JSEA2", then the sealed bytes. The builder must have checked the block the proofs are at, and be at it
+or one block further; if the chain has moved on by the time it arrives (the answer is 4), seal again.
+
+What is sealed is made up to a whole number of 16384 bytes with nodes that are nothing, so that its
+length says less about how much state the transaction reads.
 
 A transaction whose path depends on state that changes before it is built may read something these
 proofs do not cover. It is then left out, and nothing is said to anyone."""
@@ -82,8 +85,23 @@ def proofs(rpc, accounts, at):
     unhex = lambda text: bytes.fromhex(text[2:])
     return sorted(unhex(n) for n in nodes), sorted(unhex(c) for c in codes)
 
+def padded(wire, accounts, nodes, codes, bucket=16384):
+    """The nodes with others added that are nothing, so that what is sealed comes to a whole number of
+    `bucket` bytes and its length says less about how much state the transaction reads. A node that is
+    on no way is never looked at, and the builder drops it when it first walks the proofs."""
+    size = 8 + 4 + len(wire) + 32 + 2 + sum(22 + 32 * len(slots) for slots in accounts.values()) + 4 + \
+        sum(2 + len(n) for n in nodes) + 2 + sum(4 + len(c) for c in codes)
+    short = (bucket - size % bucket) % bucket
+    extra = []
+    while short >= 3:
+        take = min(short - 2, 500)
+        extra.append(os.urandom(take))
+        short -= 2 + take
+    return nodes + extra
+
 def seal(key, last_slot, wire, anchor, accounts, nodes, codes):
     """The sealing, by demo/seal.js under node: the bytes that follow "JSEA2"."""
+    nodes = padded(wire, accounts, nodes, codes)
     script = ("""require(process.argv[1]); let text = ""; process.stdin.on("data", (d) => text += d); process.stdin.on("end", () => {
       const a = JSON.parse(text), un = (h) => Buffer.from(h, "hex");
       cluckSeal.sealWithProofs(un(a.key), BigInt(a.last), un(a.wire), un(a.anchor),

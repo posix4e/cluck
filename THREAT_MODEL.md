@@ -140,10 +140,9 @@ to read. What that rests on, and where it gives:
   transaction. The host sees how long a block took.
 - *What the host is told on purpose.* For a transaction sealed without proofs: which accounts and
   which slots of storage it touched and the witness did not prove, since the guest has no state and
-  must ask. That a block has sealed
-  transactions in it, and how many. Not the block: when a sealed transaction is in it the answer
-  carries no header, no hash and no value, because the host has the chain's state and could check a
-  guess against any of them.
+  must ask. That there were sealed transactions to try in a block. Not the block, and not whether
+  they went in: the answer then carries no header, no hash and no value, because the host has the
+  chain's state and could check a guess against any of them.
 - *A sender can bring the proofs*, and then the host is told nothing of what the transaction touches
   (`Evm/Seal.lean`, "With proofs"; `Evm/Follow.lean`). The guest keeps such proofs good by following
   the chain: it is shown every block with the block's own witness, checks it, and keeps what it wrote.
@@ -154,10 +153,11 @@ to read. What that rests on, and where it gives:
     relay will take. The host cannot make up state freely that way, since state only changes by
     transactions somebody signed and by the block's own rules, but it can choose among real pending
     transactions and order them, and see afterwards whether the sealed transaction went in.
-  - That one bit, whether it went in, is still told, with how long the block took. Whoever asks for
-    blocks also chooses what else is proposed. Over several blocks that is enough to learn roughly what
-    a sealed transaction pays and how much gas it allows, by filling blocks to different levels and
-    watching. It is not enough to learn whom it is from or what it calls.
+  - Whoever asks for blocks also chooses what else is proposed, and was at first told whether the
+    sealed transaction went in. Over several blocks that is enough to learn roughly what it pays and
+    how much gas it allows, by filling blocks to different levels and watching; so it is no longer
+    told (below). How long the block took is still seen, and one transaction more or less is within
+    what that varies by anyway, though nothing here measures how well that hides it.
   - The sealed bytes are longer the more state the transaction reads: 13 KB for a call that reads one
     contract and one slot. Their length says something, and nothing pads it.
   - Proofs are bytes the sender chose, read by the trie code (`Evm/Trie.lean`), which already reads
@@ -167,14 +167,22 @@ to read. What that rests on, and where it gives:
     host or to the sender. The sender finds out by its not being built.
   - A block the guest must follow can take seconds to check (9 s was seen for one). While it does, no
     block is built, and a host that wants to keep proofs from being used can simply not show blocks.
+  - Checking every block of the chain is the heaviest thing the guest does, and it ran out of memory
+    doing it on a 256 MiB heap; the heap is 512 MiB now, and 100 blocks in a row take 246 MiB of it.
+    A block with a larger witness than has been seen could still end the guest, which loses its keys
+    and everything sealed to it. The host chooses what the guest is shown, so the host can do that
+    at will; it could always stop the guest at will.
+  - What the host is no longer told: whether a sealed transaction went into a block (the answer says
+    only that there were some to try), and how long what the guest sent to the relay was, except to
+    the nearest 16 KB (padding inside TLS). It still sees how long the block took to build.
 - *What the host can do anyway.* Not hand a sealed transaction in; not prove what it needs, so that it
   is never built; choose, among the slots up to the last the sender named, which blocks it is tried in.
   It cannot have it built after that slot, cannot read it, and cannot change it. It can hand the same
   sealed bytes in again, which gains it nothing: the second copy fails where the first has gone in.
   It can fill the pool (64 transactions, half a megabyte) with rubbish, since nothing is checked at the
   door, and keep honest ones out until the rubbish's slots pass.
-- *What the relay sees*: the whole block, as from any builder. *What the console says*: how many sealed
-  transactions went into a block, never anything of one. `builder/shadow --sealed` searches the
+- *What the relay sees*: the whole block, as from any builder. *What the console says*: that there were
+  sealed transactions to try in a block, never whether one went in or anything of one. `builder/shadow --sealed` searches the
   console and every frame for the transaction's bytes and its signature's numbers.
 - *The page that seals* (`demo/seal.html`, `demo/seal.js`) runs in the sender's browser and is served by
   the host, which could serve a different script: a sender who means it checks the script, or seals

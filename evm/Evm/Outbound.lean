@@ -71,6 +71,8 @@ structure Call where
   ended : Bool := false
   /-- The most the answer's body may be. -/
   limit : Nat := 1024 * 1024
+  /-- What is sent is made up to a whole number of this many bytes inside TLS; 0 for as it is. -/
+  bucket : Nat := 0
 
 /-- How many random bytes a call needs. -/
 def randomSize : Nat := 70
@@ -167,7 +169,7 @@ def talk (c : Call) (now : Nat) (w : Wire) (key : Tcp.Key) (client : Tls.Client)
   | _ =>
     let (client, c) :=
       if client.stage == .ready && !c.asked then
-        let (client, sealed) := client.write c.question
+        let (client, sealed) := client.writePadded c.question c.bucket
         (client, { c with asked := true, outbox := c.outbox ++ sealed })
       else (client, c)
     let ended := c.ended || client.stage == .closed

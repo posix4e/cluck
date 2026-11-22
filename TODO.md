@@ -639,7 +639,7 @@ times, and the block from the relay. Six stages:
     (`Trie.trail`, `Follow.forward`) and holds only the nodes on its own ways.
   - `Evm/Seal.lean`, a request `JSEA2`: a transaction sealed together with the accounts and slots it
     reads, the nodes that prove them at a block the sender names, and the contracts' codes. The block
-    must be one of the last four the guest checked; the proofs are walked from there to the newest,
+    must be the newest the guest has checked or the one before it; the proofs are walked from there to the newest,
     which is also what shows they reach what they name.
   - A block built to be sent tries such a transaction only on the newest block the guest has checked.
     What it lacks is never said; if the block cannot be built with it, it is built again without it
@@ -676,12 +676,38 @@ times, and the block from the relay. Six stages:
     `d842dc6` with a clean tree is `df4ddd83…1dec63d8` (the shadow image `b0cb431f…bafe9405`), RTMR1
     `dd8e332b…bc60ff19`; the demo runs it. It is not the image that built block 26465583, which was
     `a6fbc0d4…`.
+  - **Memory, found the hard way.** A longer run ended three times with the guest out of memory while
+    checking a block. The runtime's allocator hands its one region out from the front and keeps a
+    freed block for its own size only, large ones in powers of two; following the chain puts a request
+    of 2 to 11 MB to the guest every slot where building had put 1 or 2, and the code that read a
+    request under another name copied it twice. `scripts/follow-memory` puts saved blocks to the
+    same code in one process on the guest's runtime and reports the most memory held: 381 MiB over
+    40 blocks as it was; 257 with the copies gone (`Stateless.body`); 246 over 100 blocks with two
+    blocks' nodes kept and not four. A single block with a 21.7 MB witness takes 198 MiB alone, so
+    what is kept between blocks is the lesser part. The image's heap is now 512 MiB, not 256
+    (`BOOT_HEAP_BYTES` in `scripts/build-efi`); the allocator is as it was. With that, 80 slots in a
+    row in TDX (26467490 to 26467569) and the guest never stopped: 78 blocks built, all valid and
+    signed; in 61 the sealed transaction was in the block at the stand-in; 15 had no time left; and
+    once the node's own witness for a block fell short of what the guest's check wanted (status 6),
+    the chain the guest follows broke there, and the transactions with proofs were dropped until the
+    next was handed in two slots later. Twenty were sealed and handed in, ten with proofs at the
+    block before the newest; nothing of them in 732 MB of frames. Then with this program gathering
+    what the next block needs while the guest checks the last one, 50 slots (26467574 to 26467623):
+    50 blocks valid and signed, the sealed transaction in 44, no time left in 6, the guest never
+    stopped, nothing in 471 MB of frames.
   - What this costs: the host must show the guest every block (0.4 to 0.75 s to get the witness from
-    the node, 2 to 11 MB to send, 0.2 to 2 s for the guest to check, 9 s seen once): 2.5 s a slot at
-    the median and 6.3 at most in that run, taken from the time there is to build in, and in 7 slots
-    of 36 that left none. The sealed bytes are 13 KB where they were 161.
-  - What is still told, and what is not done: whether a sealed transaction went in, and how long the
-    block took (`THREAT_MODEL.md` says what can be made of that); the length of the sealed bytes. The
+    the node, 2 to 11 MB to send, 0.2 to 2 s for the guest to check, 9 s seen once): about 3 s a slot
+    at the median. Done one after the other that left no time to build in 15 slots of 78; with the
+    host's own gathering done meanwhile, in 6 of 50. The sealed bytes are 16 KB where they were 161.
+    And a heap of 512 MiB where 256 had done.
+  - Two things the host was still told, and is not now. Whether a sealed transaction went in: the
+    answer to a block that had any to try says only that, never how many went in, and nor does the
+    console (`Send.hidden`). And how long the block the guest sent was: what goes to a relay is made
+    up to a whole number of 16 KB inside TLS (`Client.writePadded`; a far end takes the padding off).
+    The sealed bytes a sender hands in are made up to a whole number of 16 KB as well, with nodes
+    that are nothing (`scripts/seal-with-proofs`).
+  - What is still told, and what is not done: how long a block took to build
+    (`THREAT_MODEL.md` says what can be made of that); the length of the sealed bytes to 16 KB. The
     guest cannot tell the real chain from a made-up one whose blocks are valid. A transaction that
     empties a slot can need a node its proofs do not hold (a neighbour's, when a branch of the trie
     folds up), and is then left out. Proofs are kept for the newest block only, so a block built on

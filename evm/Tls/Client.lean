@@ -51,10 +51,12 @@ def nonce (k : Keys) : ByteArray :=
 def next (k : Keys) : Keys := of (Hkdf.expandLabel k.secret "traffic upd" .empty 32)
 
 /-- `content` of the given kind as a sealed record. The kind goes inside; outside every record says it is
-application data. At most 16384 bytes. -/
-def protect (k : Keys) (kind : UInt8) (content : ByteArray) : Keys × ByteArray :=
-  let header := ByteArray.mk #[0x17, 0x03, 0x03] ++ u16 (content.size + 17)
-  ({ k with count := k.count + 1 }, header ++ Aead.encrypt k.key k.nonce header (content.push kind))
+application data. At most 16384 bytes. `padding` is how many zeros go in after the kind, which the far
+end takes off: they make the record longer and say nothing (RFC 8446, 5.4). -/
+def protect (k : Keys) (kind : UInt8) (content : ByteArray) (padding : Nat := 0) : Keys × ByteArray :=
+  let header := ByteArray.mk #[0x17, 0x03, 0x03] ++ u16 (content.size + 17 + padding)
+  ({ k with count := k.count + 1 },
+   header ++ Aead.encrypt k.key k.nonce header (content.push kind ++ ByteArray.mk (Array.replicate padding 0)))
 
 /-- Where `b` ends once the zeros a sender may pad a record with are taken off. -/
 def unpadded (b : @& ByteArray) : Nat → Nat
@@ -391,6 +393,30 @@ where
         let stop := min data.size (pos + 16384)
         let (writing, sealed) := c.writing.protect 23 (data.extract pos stop)
         go { c with writing } data stop (out ++ sealed) fuel
+
+/-- Data sealed for sending and made up with padding to a whole number of `bucket` bytes, so that whoever
+carries the records learns the length only to the nearest bucket. The padding goes in the last record of
+data as far as it has room, and then in records with no data in them, never more than three: a far end
+may tire of many records that carry nothing. With a bucket of 0, or one over 32768, nothing is added. -/
+def Client.writePadded (c : Client) (data : ByteArray) (bucket : Nat) : Client × ByteArray :=
+  if c.stage != .ready || bucket == 0 || bucket > 32768 then c.write data else
+  let padding := (bucket - data.size % bucket) % bucket
+  -- All but the last piece as they are; the last with what padding it has room for.
+  let whole := if data.isEmpty then 0 else (data.size - 1) / 16384 * 16384
+  let (c, out) := c.write (data.extract 0 whole)
+  let last := data.extract whole data.size
+  let here := min padding (16384 - last.size)
+  let (writing, sealed) := c.writing.protect 23 last here
+  go { c with writing } (padding - here) (out ++ sealed) 3
+where
+  go (c : Client) (left : Nat) (out : ByteArray) : Nat → Client × ByteArray
+    | 0 => (c, out)
+    | fuel + 1 =>
+      if left == 0 then (c, out)
+      else
+        let here := min left 16384
+        let (writing, sealed) := c.writing.protect 23 .empty here
+        go { c with writing } (left - here) (out ++ sealed) fuel
 
 /-- This side says it is done: the record that says so, and a connection that holds no keys. -/
 def Client.close (c : Client) : Client × ByteArray :=

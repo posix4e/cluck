@@ -440,9 +440,11 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Un
     ((pool, s.chain), { s with pool })
   let built ← buildWith r.bid (Follow.extra pool chain slot)
   let now := (← Efi.millis).toNat
-  let sealed := if built.added.isEmpty then "" else s!", {built.added.size} sealed transactions in it"
+  -- The console is the host's to read: it is told that sealed transactions were tried, as it knows
+  -- already, and not whether any went in.
+  let sealed := if built.tried then ", with sealed transactions to try" else ""
   Platform.write s!"evm: status {built.reply[0]!}, {now - started} ms{sealed}\n".toUTF8
-  let bid := if built.added.isEmpty then built.reply else Send.hidden built.added.size
+  let bid := if built.tried then Send.hidden else built.reply
   let some submission := built.submission | finish bid built.wanted "no block was built"
   let relays := (← get).relays
   let anchors := (← get).anchors
@@ -452,9 +454,12 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Un
       let some relay := relays.relays[place]? | continue
       let random ← try Platform.random Outbound.randomSize.toUSize catch _ => pure .empty
       calls := calls.push (place, { Outbound.Call.start now relay.name relay.port relay.address anchors r.seconds
-                                      (Send.question relay.name submission) random r.allowed with limit := 65536 })
+                                      (Send.question relay.name submission) random r.allowed with
+                             limit := 65536, bucket := Send.bucket })
   if calls.isEmpty then return ← finish bid built.wanted "no relay of this image was named"
-  Platform.write s!"evm: sending {submission.size} bytes to {calls.size} relays\n".toUTF8
+  -- How long it is, is said only when the request's sender has the block anyway.
+  let size := if built.tried then "a block" else s!"{submission.size} bytes"
+  Platform.write s!"evm: sending {size} to {calls.size} relays\n".toUTF8
   transmit (← modifyGet (·.beginSending now key asked bid built.wanted calls))
 
 /-- A question for a relay: a call out begun, or the reason there can be none. -/

@@ -154,6 +154,8 @@ structure Outcome where
   added : Array Nat := #[]
   /-- What the witness lacked for transactions left out because of it (the fast engine's builder only). -/
   wanted : Array Fast.Lack := #[]
+  /-- Whether transactions were added to those the request proposed, whether or not any went in. -/
+  tried : Bool := false
 
 /-- Transactions the machine adds to those a request proposes, which the request's sender has not seen. -/
 structure Extra where
@@ -210,7 +212,7 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
         pure (again, plain)
       else pure (response, request)
     match response.built with
-    | none => return { reply := response.encode, wanted := response.wanted }
+    | none => return { reply := response.encode, wanted := response.wanted, tried := !extra.wires.isEmpty }
     | some built =>
       let bid : Bid :=
         { slot, parentHash := Trie.wordBytes built.header.parentHash, blockHash := Trie.wordBytes built.hash,
@@ -224,7 +226,8 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
             header := (Header.toRlpItem built.header).toBytes.toByteArray, block := request.witness.block,
             places := built.included, requests := built.requests.map (·.toByteArray), signature := signature.toByteArray }
         return { reply := response.encode ++ key.publicKey ++ signature.toByteArray, submission,
-                 added := (built.included.filter (· ≥ own)).toArray.map (· - own), wanted := response.wanted }
+                 added := (built.included.filter (· ≥ own)).toArray.map (· - own), wanted := response.wanted,
+                 tried := !extra.wires.isEmpty }
       | .error _ => return { reply := ({ status := 4 } : Build.Response).encode }
 
 /-- The response alone. -/

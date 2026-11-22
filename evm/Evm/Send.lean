@@ -33,12 +33,19 @@ A block built for this request also tries the transactions that were sealed to t
 still good for the slot (`Evm/Seal.lean`), when the request asks for the fast engine's builder. The
 request's sender proposed its own and supplied the witness, and has never seen these.
 
-If none of them goes in, the answer is as above, and the sender has the whole block as with any request
-to build. If one does, the answer to the request to build and bid is, in place of the usual one, five
-bytes: 8, and how many sealed transactions went in. The header, the block's hash, what it pays and which
+If there are none to try, the answer is as above, and the sender has the whole block as with any request
+to build. If there is one, whether or not it goes in, the answer to the request to build and bid is, in
+place of the usual one, five bytes: 8 and four zeros. The header, the block's hash, what it pays and which
 transactions went in are not said: with the state of the chain in hand, as the sender has, any of them
-would let a guess at a hidden transaction be checked. The relays are sent the block and say what they
-say; the sender is told that.
+would let a guess at a hidden transaction be checked. Nor is it said whether the sealed transaction went
+in: whoever asks for blocks chooses what else is proposed, and could learn what a sealed transaction pays
+and how much gas it allows by filling blocks to different levels and being told each time. The relays are
+sent the block and say what they say; the sender is told that. (The four zeros were once the number that
+went in.)
+
+What goes to a relay is made up, inside TLS, to a whole number of 16384 bytes, so that the length of
+what the machine sends, which whoever carries it can see, does not say whether a transaction of a few
+hundred bytes is in it.
 
 A sealed transaction reads state the sender's witness may not prove, since the sender did not know to
 prove it. One that came without proofs of its own is then left out, like any transaction the witness
@@ -87,8 +94,11 @@ def two (n : Nat) : ByteArray := ByteArray.mk #[(n >>> 8).toUInt8, n.toUInt8]
 
 def four (n : Nat) : ByteArray := ByteArray.mk #[(n >>> 24).toUInt8, (n >>> 16).toUInt8, (n >>> 8).toUInt8, n.toUInt8]
 
-/-- What stands in place of the bid's answer when sealed transactions went into the block. -/
-def hidden (count : Nat) : ByteArray := ByteArray.mk #[8] ++ four count
+/-- What stands in place of the bid's answer when sealed transactions were tried in the block. -/
+def hidden : ByteArray := ByteArray.mk #[8] ++ four 0
+
+/-- What is sent to a relay is made up to a whole number of this many bytes inside TLS. -/
+def bucket : Nat := 16384
 
 /-- The answer: the bid's, then what each relay said, then what the witness lacked. -/
 def answer (bid : ByteArray) (told : Array (Nat × Outbound.Outcome)) (wanted : Array Fast.Lack := #[]) : ByteArray :=

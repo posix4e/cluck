@@ -193,6 +193,9 @@ lean_exe «net-tcp-test» where
 lean_exe «net-flat-bench» where
   root := `NetFlatBench
 
+lean_exe «net-flat-serve» where
+  root := `NetFlatServe
+
 @[default_target]
 lean_exe «net-route-test» where
   root := `NetRouteTest

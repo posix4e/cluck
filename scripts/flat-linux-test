@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Tries the trial TCP against Linux's own. No root is needed: it makes itself a network of its own (a user
+and network namespace), puts a tap device in it for Linux's side, and carries frames between that device
+and net-flat-serve, losing some on purpose when asked to. Then ordinary sockets connect, send a request,
+and must get the whole answer and the end of the stream.
+
+    scripts/flat-linux-test [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES] [--request BYTES]
+"""
+import fcntl, os, random, socket, struct, subprocess, sys, threading, time
+from concurrent.futures import ThreadPoolExecutor
+
+if os.environ.get("FLAT_INSIDE") != "1":
+    os.execvpe("unshare", ["unshare", "-Urn", sys.executable, os.path.abspath(__file__)] + sys.argv[1:], dict(os.environ, FLAT_INSIDE="1"))
+
+def option(name, default):
+    return type(default)(sys.argv[sys.argv.index(name) + 1]) if name in sys.argv else default
+connections, at_once = option("--connections", 2000), option("--at-once", 32)
+loss, answer_bytes, request_bytes = option("--loss", 0.0) / 100, option("--answer", 128), option("--request", 100)
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+tap = os.open("/dev/net/tun", os.O_RDWR)
+fcntl.ioctl(tap, 0x400454ca, struct.pack("16sH22s", b"tap0", 0x0002 | 0x1000, b""))     # TUNSETIFF: a tap, frames bare
+for command in ("ip addr add 10.0.0.1/24 dev tap0", "ip link set tap0 up", "ip link set lo up",
+                "ip neigh replace 10.0.0.2 lladdr 02:00:00:00:00:02 dev tap0 nud permanent"):
+    subprocess.run(command.split(), check=True)
+
+server = subprocess.Popen([os.path.join(here, ".lake/build/bin/net-flat-serve"), str(request_bytes), str(answer_bytes)],
+                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+to_server = threading.Lock()
+counts = {"to_stack": 0, "from_stack": 0, "lost_to": 0, "lost_from": 0}
+running = True
+rng = random.Random(1)
+
+def inward():
+    while running:
+        try:
+            frame = os.read(tap, 4096)
+        except OSError:
+            return
+        if len(frame) < 34 or frame[12:14] != b"\x08\x00":
+            continue                                     # not IPv4: neighbour discovery and the like
+        if rng.random() < loss:
+            counts["lost_to"] += 1
+            continue
+        counts["to_stack"] += 1
+        with to_server:
+            server.stdin.write(struct.pack(">H", len(frame)) + frame)
+
+def outward():
+    def exactly(n):
+        got = b""
+        while len(got) < n:
+            piece = server.stdout.read(n - len(got))
+            if not piece:
+                return None
+            got += piece
+        return got
+    while True:
+        head = exactly(2)
+        if head is None:
+            return
+        frame = exactly(struct.unpack(">H", head)[0])
+        if frame is None:
+            return
+        if rng.random() < loss:
+            counts["lost_from"] += 1
+            continue
+        counts["from_stack"] += 1
+        os.write(tap, frame)
+
+def clock():
+    while running:
+        time.sleep(0.01)
+        with to_server:
+            try:
+                server.stdin.write(b"\0\0")
+            except OSError:
+                return
+
+for work in (inward, outward, clock):
+    threading.Thread(target=work, daemon=True).start()
+
+expected = bytes(i % 251 for i in range(answer_bytes))
+request = b"a" * request_bytes
+
+def one(_):
+    began = time.time()
+    try:
+        with socket.create_connection(("10.0.0.2", 80), timeout=120) as s:
+            s.settimeout(120)
+            s.sendall(request)
+            got = b""
+            while True:
+                piece = s.recv(65536)
+                if not piece:
+                    break
+                got += piece
+        return ("whole" if got == expected else f"wrong: {len(got)} bytes of {len(expected)}"), time.time() - began
+    except OSError as error:
+        return f"{type(error).__name__}: {error}", time.time() - began
+
+began = time.time()
+with ThreadPoolExecutor(at_once) as pool:
+    results = list(pool.map(one, range(connections)))
+took = time.time() - began
+running = False
+time.sleep(0.3)
+server.stdin.close()
+said = server.stderr.read().decode().strip()
+kinds = {}
+for kind, _ in results:
+    kinds[kind] = kinds.get(kind, 0) + 1
+times = sorted(t for _, t in results)
+linux = dict(line.split()[:2] for line in subprocess.run(["nstat", "-az"], capture_output=True, text=True).stdout.splitlines()[1:]
+             if line.split()[0] in ("TcpInCsumErrors", "TcpRetransSegs", "TcpInErrs", "TcpExtTCPTimeouts", "TcpAttemptFails", "TcpEstabResets", "IpInHdrErrors"))
+print(f"{connections} connections from Linux, {at_once} at once, request {request_bytes} bytes, answer {answer_bytes} bytes, {loss * 100:g}% of frames lost each way")
+print(f"  {kinds}")
+print(f"  {took:.1f} s; a connection took {times[len(times) // 2] * 1000:.1f} ms at the median, {times[-1] * 1000:.0f} ms at the most")
+print(f"  frames: {counts}")
+print(f"  Linux says: {linux}")
+print(f"  {said}")
+sys.exit(0 if kinds == {"whole": connections} else 1)

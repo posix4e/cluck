@@ -45,38 +45,63 @@ acknowledgement of such a segment; `net-tcp-test` has the case, which fails
 without the change. No image has been built with it yet.
 
 **A trial of a fast TCP** (`Kernel/Net/Flat.lean`, 2026-11-22), to find out how
-many short connections a second a TCP written in Lean can take. Used by nothing.
+many short connections a second a TCP written in Lean can take. In no image.
 Frames come and go in batches; nothing is allocated for a frame; a connection is
 64 bytes in one flat table found by a keyed hash (SipHash-2-4); a SYN is answered
-from a cookie and nothing kept until the handshake's third packet; what can be
-tuned is one record, `Tuning`.
+from a cookie and nothing kept until the handshake's third packet; time is a
+sweep over the table; what can be tuned is one record, `Tuning`.
 
-- `net-flat-bench` makes clients in memory that open a connection, send 100
-  bytes, take 128 back and close: four frames in and three out. Only time inside
-  the stack is counted. On one core of this machine (Xeon, 64 cores, others busy
-  with the builder's run):
+- What it does: the handshake by cookie, with the peer's largest segment kept in
+  the cookie; data in, in order; an answer of any length out, cut to the peer's
+  largest segment and kept inside the peer's window and one of its own that opens
+  with acknowledgements and shuts to a segment when a timer fires; sending again
+  on a timer, the wait doubled each time, and a reset after so many; both orders
+  of closing; a reset for a segment that belongs to nothing.
+- **Speed**, by `net-flat-bench`: clients made up in memory open a connection,
+  send 100 bytes, take 128 back and close, four frames in and three out, and only
+  time inside the stack (timers included) is counted. On one core of this machine
+  (a Xeon with 64, the others busy with the builder's run):
 
   | open at once | checksums made and checked | left to the card |
   |---|---|---|
-  | 1,000 | 1.03 million connections a second | 2.32 million |
-  | 100,000 | 0.97 million | 1.59 million |
-  | 1,000,000 | 1.02 million | 1.57 million |
+  | 1,000 | 1.28 million connections a second | 2.01 million |
+  | 1,000,000 | 0.85 million | 1.03 million |
 
-  That is 245 ns a frame with checksums and 108 to 159 ns without. The system's
-  own TCP, through the same exchange one connection at a time and at the level
-  of TCP segments only, does 0.35 million.
-- Judged by code that shares nothing with it: `scripts/flat-capture-check` reads
-  a capture of a run (5,000 connections, 35,000 frames) and finds every IP and
-  TCP checksum right and every connection opened, exchanged and closed from both
-  ends with every byte acknowledged; `tcpdump` finds all 35,000 checksums
-  correct.
-- What the figure leaves out, and it is most of a TCP: there is no network card
-  in it, and getting frames from one in a trust domain is the hard part; no
-  timers, so nothing is retransmitted and nothing ever times out; segments out
-  of order are asked for again and not kept; the peer's window and MSS are not
-  minded; no options but its own MSS; a connection it closes first is forgotten
-  at once; IPv4 with no options only; one core; and the application is one
-  fixed answer. No real TCP has talked to it.
+  (Before timers and windows were in it, 1.0 and 1.6 million with a million
+  open; the difference has not been looked into.) The system's own TCP, through
+  the same exchange one connection at a time and at the level of TCP segments
+  only, does 0.35 million.
+- **Against Linux's TCP**, by `scripts/flat-linux-test`, which needs no root: it
+  makes a network namespace of its own with a tap device in it, carries frames
+  between that and `net-flat-serve`, loses some on purpose when told to, and
+  connects with ordinary sockets. Every one of these got every byte of every
+  answer, and Linux counted no bad checksum in any:
+
+  | connections | answer | frames lost each way | what happened |
+  |---|---|---|---|
+  | 2,000 | 128 bytes | none | 0.6 s, nothing sent twice by either end |
+  | 2,000 | 128 bytes | 5% | Linux sent 676 segments again, this end 112 |
+  | 500 | 128 bytes | 15% | 544 and 113; three connections given up by this end after their answers had arrived |
+  | 300 | 200,000 bytes | none | 88 ms a connection |
+  | 200 | 200,000 bytes | 3% | this end sent 887 segments again |
+  | 100 | 2,000,000 bytes | none | 1.7 s a connection |
+
+- Judged also by code that shares nothing with it: `scripts/flat-capture-check`
+  reads a capture of a run of the benchmark and finds every IP and TCP checksum
+  right and every connection opened, exchanged and closed from both ends with
+  every byte acknowledged, for answers of one segment and of four; `tcpdump`
+  agrees on the checksums.
+- What it does not do: there is no network card under it, and getting frames
+  from one fast in a trust domain is the hard part; segments out of order are
+  asked for again, not kept; the round trip is not measured (the wait before
+  sending again is a setting); nothing is sent again on repeated
+  acknowledgements, only on the timer, so a lost segment costs 200 ms and more;
+  a window shut to nothing is not probed; no options but the largest segment
+  (no window scaling, so no window past 64 KB; no timestamps; no selective
+  acknowledgement); IPv4 with no options only; one core; and the application
+  is one fixed answer. It is slow at moving much data (2 MB took 1.7 s on one
+  machine). It has been tried against Linux only, and only as the side that is
+  connected to.
 
 ## Ethereum block import, as a service (`evm/`)
 

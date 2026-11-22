@@ -90,6 +90,7 @@ def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes
     if capturePath.isSome then capture := captured capture rx 0 rxLength now
     let began ← IO.monoNanosNow
     (t, tx) := Flat.process cfg answer now rx rxLength t tx
+    (t, tx) := Flat.tick cfg answer now 1 t tx
     let ended ← IO.monoNanosNow
     if capturePath.isSome then capture := captured capture tx 8 (written tx) now
     spent := spent + (ended - began)
@@ -119,7 +120,9 @@ def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes
         (rx, rxLength) := clientFrame cfg rx rxLength cip port 0x18 (first + 1) (theirs + 1) request
         clients := st32 clients c 2
         pendingIn := pendingIn + 2
-      else if flags &&& 0x01 != 0 && state == 2 then
+      else if flags &&& 0x01 != 0 && state == 2 && payload != 0 then
+        -- The last of the answer, with the end of the stream on it: everything before it is acknowledged
+        -- with it, and this end closes.
         (rx, rxLength) := clientFrame cfg rx rxLength cip port 0x11 (first + 1 + request.size.toUInt32) (theirs + payload + 1) .empty
         clients := st32 clients c 3
         pendingIn := pendingIn + 1
@@ -138,7 +141,7 @@ def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes
   IO.println s!"flat: {done} connections, {atOnce} at once, checksums {if checksums then "on" else "off"}, request {requestBytes} bytes, answer {answerBytes} bytes, table of 2^{slotBits}"
   IO.println s!"  {seconds} s in the stack: {(done.toFloat / seconds).round} connections a second on one core, {(spent.toFloat / framesIn.toFloat).round} ns a frame in ({framesIn} in, {framesOut} out)"
   if let some path := capturePath then IO.FS.writeBinFile path capture
-  IO.println s!"  counters: live {ld64 t 0}, accepted {ld64 t 8}, closed {ld64 t 16}, SYNs {ld64 t 24}, dropped {ld64 t 32}, out of order {ld64 t 40}, reset {ld64 t 48}, no room {ld64 t 56}"
+  IO.println s!"  counters: live {ld64 t 0}, accepted {ld64 t 8}, closed {ld64 t 16}, SYNs {ld64 t 24}, dropped {ld64 t 32}, out of order {ld64 t 40}, resets taken {ld64 t 48}, no room {ld64 t 56}, sent again {ld64 t 72}, timed out {ld64 t 80}, resets sent {ld64 t 88}"
 
 /-- The system's TCP through the same exchange, one connection at a time, in TCP segments. -/
 def system (connections requestBytes answerBytes : Nat) : IO Unit := do

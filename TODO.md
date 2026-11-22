@@ -70,7 +70,22 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   | 1,000,000 | 0.85 million | 1.03 million |
 
   (Before timers and windows were in it, 1.0 and 1.6 million with a million
-  open; the difference has not been looked into.) The system's own TCP, through
+  open; the difference has not been looked into.)
+
+  On more than one core, as so many copies that share nothing, each with 100,000
+  connections open, the way a card that splits traffic by connection would feed
+  them (two Xeon Gold 6526Y, 32 cores in all, the machine otherwise idle):
+
+  | cores | checksums made and checked | left to the card |
+  |---|---|---|
+  | 1 | 0.94 million connections a second | 1.51 million |
+  | 4 | 3.48 million | 5.41 million |
+  | 8 | 7.37 million | 10.55 million |
+  | 16 | 15.36 million | 19.48 million |
+  | 32 | 28.41 million | 35.04 million |
+
+  So ten million a second is eleven cores of this, or eight with a card that
+  does the checksums: of the stack alone, with frames already in memory. The system's own TCP, through
   the same exchange one connection at a time and at the level of TCP segments
   only, does 0.35 million.
 - **Against Linux's TCP**, by `scripts/flat-linux-test`, which needs no root: it

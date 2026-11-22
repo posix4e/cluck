@@ -780,6 +780,40 @@ times, and the block from the relay. Six stages:
     it. Closing the last thing on the list above, how long a block takes to build, was begun on this
     and dropped: the relays' lists say more than the time does. Not tried, reasoned.
 
+- [x] **Building all through the slot**, 2026-11-22, in shadow against the stand-in. Until now a slot
+  got one block, built when the parent arrived: the moment the pool has just been emptied, nine
+  seconds before the slot. `builder/shadow --rebid` goes on asking for blocks for the same slot, each
+  from what is pending then, until one begun now could not be ended in time; a relay keeps a
+  builder's newest. Nothing in the image changed (`6530fed8…`).
+  - What made a round short enough to be worth repeating, all in the host's program: what a head
+    fixes is asked for once a head (the slot's inputs, what the block's own calls read, proofs already
+    fetched, transactions' bytes); the two traces run at once; and the node is asked only for what
+    became pending since the last round. Its whole pool is 20 MB of JSON, nearly all of it
+    transactions that cannot run yet, and took 0.25 s a time. (reth's filter for pending
+    transactions stopped answering after a poll or two, which cost a run of 50 slots that rebuilt
+    the same block ten times; a new filter for every poll misses nothing.)
+  - Run in TDX, 50 slots (26471154 to 26471203), `--ready 1 --finishing 0.8`: 336 blocks, 7 a slot at
+    the median, a round 0.69 s (0.3 s the host's gathering, 0.4 to 0.6 s the guest). 334 judged valid
+    by the node, signed, and the same at the stand-in as here; 2 rounds stopped at a witness that fell
+    short (status 6) and sent nothing. The last block of a slot was ready 2.6 s before it and held 60
+    transactions where the first held 11. It was worth 0.00149 ETH at the median where the first was
+    worth 0.00011; over the 50 slots 0.084 ETH against 0.0092. Once in 286 a block was worth less
+    than the one before it.
+  - Against what proposers took, for the 44 of those slots a relay lists
+    (`proposer_payload_delivered`, six relays asked): the taken block paid 0.00608 ETH at the median
+    and held 170 to 375 transactions. Ours was 21% of it at the median, 63% at best, never more;
+    summed, 8%. The first block of the slot, which is all that was built before, would have been 2%.
+  - Where a round's time goes in the guest, measured as a process on the guest's runtime for a
+    request of 1.3 MB: about 100 ms before the first transaction and after the last (reading the
+    request, the witness, the state root), about 120 ms to sign, about 3 ms a transaction; and in TDX
+    another 150 ms or so to take the request in over TCP that waits for each segment's
+    acknowledgement. None of that has been worked on.
+  - Not done: a block worth less than one already sent is still sent (the guest sends when it has
+    built, and only the host's guess at the time keeps a block from being cut short); nothing of
+    this has been sent to a real relay, where four relays' answers are waited for each round; the
+    last block is 2.6 s before the slot and the builders that win go on to the slot's start or past
+    it.
+
 What is next, in order:
 
 1. **Building in shadow.** A program on the host follows the chain and each slot puts pending transactions

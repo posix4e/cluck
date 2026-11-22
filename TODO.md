@@ -42,7 +42,9 @@ bytes that reach it after its FIN by sending the FIN again, so the last bytes of
 every connection the guest opened waited a second for their retransmission, and
 the connection stayed in the table that long. `Kernel/Net/Tcp.lean` now takes the
 acknowledgement of such a segment; `net-tcp-test` has the case, which fails
-without the change. No image has been built with it yet.
+without the change. The image with it is `9dbd42e7…d731193c`: in 142
+connections of a run on it the guest's FIN came 1.9 ms after the peer's at the
+median, where in 214 before it had been 1,017 ms.
 
 **A trial of a fast TCP** (`Kernel/Net/Flat.lean`, 2026-11-22), to find out how
 many short connections a second a TCP written in Lean can take. In no image.
@@ -990,11 +992,47 @@ times, and the block from the relay. Six stages:
     `91aa389b…38485b475` (the shadow image `e688e930…7c0f3268`); `check-secret-code tdx` and
     `run-fixtures tdx --limits --key` pass on it, and 22 slots against the stand-in: 157 blocks,
     all valid, none late.
-  - Not done: the 1,000 slots in a row have not been run to the end on this image; a bid can still
-    be answered after its slot has begun when the parent comes very late; the builders that win go
-    on to the slot's start or past it, and ours stops short of it on purpose; transactions with
-    blobs are still left out; Ethereum's suites were not run again for these images (the engine did
-    not change).
+  - **1,000 slots in a row**, 2026-11-22, 19:56 to 23:16 UTC, blocks 26472890 to 26473889, in TDX
+    against the stand-in, on the image `91aa389b…38485b475` with the tree clean at `eb75166`:
+    `builder/shadow --guest-sends --rebid --frames --ready 0.5 --finishing 0.25 --slots 1000`, a
+    watcher of the node's pool beside it, and every frame of the guest's network written down
+    (41 GB).
+    - The guest was never restarted. It built 6,666 blocks and sent 6,532 of them; it kept 126
+      that paid no more than one already sent, 7 that it ended too long after their time, and 1
+      for a slot with no time left at all.
+    - Every block sent was judged valid by the node's validator and its signature checked. 6,531
+      were at the stand-in as this program makes them from the guest's answer. One never arrived
+      (next point).
+    - No block reached the stand-in after its slot had begun. The last block of a slot was there
+      0.65 s before the slot at the median; one slot in ten had its last more than 2.4 s before.
+    - 998 slots had a block sent. The two without: the first of the run, whose parent came 0.3 s
+      before the slot it was the parent for; and one whose parent came 6.2 s into its slot with
+      a request of 19 MB behind it, which took 3 s to gather and 3 s to reach the guest.
+    - **The one that never arrived**, explained by the frames: the guest asked to open the
+      connection, asked again after one second and after three, as it should, and the host
+      answered only then, as the guest's three seconds for the relay ran out. The host is QEMU's
+      network, this machine's kernel and the stand-in, a small Python server; which of them sat
+      on it is not known. Not the guest.
+    - No transaction emptied a slot or removed an account without the witness holding what that
+      needs (the mending after the fact never had to act), and nothing was given up.
+    - Against the blocks proposers took in 864 of the slots: ours paid 0.00155 ETH at the median
+      and theirs 0.00556; ours was 29% of theirs at the median, 81% at best, never more; summed,
+      1.46 ETH against 7.63 (19%). Of what the taken block held that had been pending here at
+      least a second before the slot, ours held 92% by fees at the median (85% summed); at least
+      3 s before, 99%.
+  - **The image now, which is not that one.** The frames also showed the guest closing every
+    connection out a second late (above, "A fault in closing"). With that mended the image is
+    `9dbd42e7…d731193c` (the shadow image `e69be3b1…c1284e23`); `net-tcp-test`,
+    `check-secret-code tdx` and `run-fixtures tdx --limits --key` pass on it, and 60 slots against
+    the stand-in: 349 blocks sent, all valid, signed and the same there, none late, and the
+    guest's FIN 1.9 ms after the relay's at the median where it had been 1,017 ms. The 1,000 slots
+    and the hour at real relays were run on the images before it.
+  - Not done: 1,000 slots on the image as it now is; a bid can still be answered after its slot
+    has begun when the parent comes very late (one in 1,432 at the real relays); the builders
+    that win go on to the slot's start or past it, and ours stops half a second short on purpose;
+    transactions with blobs are left out; Ethereum's suites were not run again for these images
+    (the engine did not change); what delayed the host's answer to the guest for three seconds,
+    once in 6,532, is not known.
 
 What is next, in order:
 

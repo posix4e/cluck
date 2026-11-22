@@ -273,6 +273,14 @@
       of that public part ours held nine tenths of what
       had appeared a second or more before the slot. The rest of a winning block is transactions sent
       to builders in private, which this builder has none of.</p>
+    <p class="wide"><strong>A thousand slots in a row</strong> (22 November 2026, blocks 26472890 to
+      26473889), with the guest building all through each slot and sending to a stand-in for the
+      relay on the same machine. It was never restarted. It sent 6,532 blocks; the validator judged
+      every one valid, every signature checked, and none arrived after its slot had begun. Two slots
+      had no block, both because the block before them came too late to build on in time; and one
+      block of the 6,532 never reached the stand-in, because the host took three seconds to answer
+      the guest's connection, as the recorded frames show. This is the line the earlier runs below
+      did not reach, moved from two seconds before the slot to its start.</p>
     <p class="wide">Over 1,300 consecutive mainnet slots in the TDX guest, 1,045 blocks were built. The
       validator judged all 1,045 valid and every signature checked from outside. The other 255 slots were
       lost in one stretch to a fault in the host program after the chain replaced a block, and one block

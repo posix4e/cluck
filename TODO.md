@@ -1487,6 +1487,32 @@ times, and the block from the relay. Six stages:
       beside it on up to eight cores (above, "Connections a second").
     - Rebuilt after the changes under `boot/efi` for the card driver, the image is the same,
       byte for byte.
+  - **Where a round's time went, and a third of it taken back** (2026-11-23). In the 1,000 slots
+    above the host waited 0.75 s at the median for the guest's answer to a request of 2.3 MB, of
+    which the guest's own account of its work is 0.31 s: the rest was mostly the request arriving,
+    at about six megabytes a second. Three things were tried, 25 slots each against the stand-in in
+    TDX (`/data/eth/shadow/tools/intake.py` reads them):
+
+    | | asking the guest, median | a whole round | rounds a slot |
+    |---|---|---|---|
+    | as it was (1,000 slots) | 0.75 s | 1.07 s | 7 |
+    | the runtime's copy made fast (`rt/bare/libc.c`) | 0.72 s | 1.04 s | 7 |
+    | and frames from this project's own card driver | 0.54 s | 0.90 s | 8 |
+    | and no sleeping between a request's frames | 0.45 s | 0.78 s | 8 |
+
+    The copy was not it. The firmware's driver hands over one frame a call and tells the host of
+    each; `Kernel/Net/Wire.lean` now gives the service its frames from `Kernel/Net/VirtioNet.lean`
+    (the driver written for the trial TCP), the system's TCP unchanged above it. And the service
+    slept a millisecond of the firmware's whenever no frame was there, which between the frames of
+    a request was often. In the last 25 slots 205 blocks were sent, all valid, signed and the same
+    at the stand-in, none late. The images are `39d10d82…b4d032f8` and, for shadow runs,
+    `637da15f…10ce7d48`; `check-secret-code tdx`, `run-fixtures tdx --limits --key`,
+    `run-fixtures dev --limits`, the hosted tests and `scripts/test-efi` in both profiles pass.
+    - The 1,000 slots above are on the image before this. A run on this one was started after
+      this was written; its result goes below.
+    - Still 0.17 s a round outside the guest's work at the median. Not looked into: QEMU's own
+      network, which the builder's guest is still behind (the trial TCP was measured on the
+      kernel's and on a poller); how often the guest tells the host of a frame it sends.
   - Not done: a bid can still be answered after its slot
     has begun when the parent comes very late (one in 1,432 at the real relays); the builders
     that win go on to the slot's start or past it, and ours stops half a second short on purpose;

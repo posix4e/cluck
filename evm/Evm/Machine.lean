@@ -6,6 +6,7 @@ import Evm.Seal
 import Evm.Follow
 import Evm.Outbound
 import Kernel.Efi
+import Kernel.Net.Wire
 import Kernel.Net.Tcp
 import Kernel.Net.Fragment
 
@@ -157,6 +158,10 @@ structure State where
   relays : Relays.Table
   anchors : Array Tls.X509.Anchor
   wire : Outbound.Wire
+  /-- The network card, when this program drives it itself (`Kernel/Net/Wire.lean`); with none, frames
+  are the firmware's. It is taken out of here while it is used and put back, so that its arrays have one
+  owner. -/
+  card : Option Kernel.Net.Wire.Own := none
   fragments : Fragment.Cache := {}
   nextIpId : UInt32 := 0
   clients : Array Client := #[]
@@ -375,7 +380,22 @@ end State
 
 abbrev M := StateT State IO
 
-def transmit (frames : Array ByteArray) : IO Unit := frames.forM Efi.send
+def transmit (frames : Array ByteArray) : M Unit := do
+  if frames.isEmpty then return
+  match ← modifyGet fun s => (s.card, { s with card := none }) with
+  | none => for frame in frames do Efi.send frame
+  | some card =>
+    let card ← Kernel.Net.Wire.sendAll card frames
+    modify fun s => { s with card := some card }
+
+/-- The next frame from the network, or nothing. -/
+def receive : M ByteArray := do
+  match ← modifyGet fun s => (s.card, { s with card := none }) with
+  | none => Efi.receive
+  | some card =>
+    let (card, frame) ← Kernel.Net.Wire.receive card
+    modify fun s => { s with card := some card }
+    return frame
 
 def freshWord : IO UInt32 := do
   let b ← Platform.random 4
@@ -411,7 +431,7 @@ def deliver : M Unit := do
 relays' answers passed on. No request is run. Whether a frame was there. -/
 def pump : M Bool := do
   let now := (← Efi.millis).toNat
-  let frame ← Efi.receive
+  let frame ← receive
   if !frame.isEmpty then
     if let some event ← modifyGet (·.reassemble now frame) then
       -- A connection asking to be opened gets a first sequence number nobody could guess.
@@ -566,22 +586,39 @@ partial def work : M Unit := do
       transmit (← modifyGet (·.reply ended.toNat key (frame reply)))
     work
 
-partial def serve (s : State) : IO UInt32 := do
+partial def serve (s : State) (quiet : Nat := 0) : IO UInt32 := do
   let (got, s) ← pump.run s
   let ((), s) ← work.run s
-  if !got then Efi.idle
-  serve s
+  -- With nothing from the network the firmware is asked for a millisecond of sleep; but not, when this
+  -- program drives the card itself, until nothing has come some twenty thousand times running. A
+  -- request is megabytes in a thousand frames, and a millisecond slept wherever two of them were a
+  -- moment apart was a third of the time a request took to arrive.
+  if got then serve s 0
+  else if s.card.isSome && quiet < 20000 then
+    Kernel.Hw.pause
+    serve s (quiet + 1)
+  else
+    Efi.idle
+    serve s quiet
 
 /-- The machine, talking to the relays of `relays` and to nobody else. -/
 def run (relays : Relays.Table) : IO UInt32 := do
-  let mac ← Efi.mac
+  -- The card is this program's own to drive if it is one it knows; the firmware's driver otherwise.
+  let card ← Kernel.Net.Wire.start
+  if card.isSome then Platform.write "evm: the network card is driven from here\n".toUTF8
+  let mac ← match card with
+    | some own => pure (Kernel.Net.Wire.mac own)
+    | none => Efi.mac
   if mac.size != 6 then return 2
   let cfg : Internet.Config := { mac }
   let anchors := relays.anchors
   if anchors.size != relays.roots.size then
     Platform.write "evm: a root in this image cannot be read\n".toUTF8
     return 2
-  if let some announcement := Internet.solicit cfg cfg.ipv4 then Efi.send announcement
+  let card ← match card, Internet.solicit cfg cfg.ipv4 with
+    | some own, some announcement => do pure (some (← Kernel.Net.Wire.sendAll own #[announcement]))
+    | none, some announcement => do Efi.send announcement; pure none
+    | card, none => pure card
   let key ← drawKey
   -- The key transactions are sealed to: 32 bytes from the same source, which X25519 takes as they are.
   let drawn ← Platform.random 32
@@ -591,6 +628,6 @@ def run (relays : Relays.Table) : IO UInt32 := do
   let sealing := Seal.Key.of drawn
   Platform.write s!"evm: connects out only to {relays.what}\n".toUTF8
   Platform.write "evm: Ethernet ready, serving TCP 5005\n".toUTF8
-  serve { key, sealing, relays, anchors, wire := { cfg, tcp := { listenPort := servicePort } } }
+  serve { key, sealing, relays, anchors, card, wire := { cfg, tcp := { listenPort := servicePort } } }
 
 end Evm.Machine

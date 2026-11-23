@@ -21,8 +21,11 @@ exercise this path.
 A program on this target can also take a PCI device from the firmware's drivers and drive it itself
 (`Kernel/Hw.lean`, whose C half here is `boot/efi/hw.c`). A probe does (`pci-probe`), and so does a test
 image, `flat-os`, which serves three fixed pages over a trial TCP on a driver of this project's own for the
-virtio network card (`Kernel/Net/VirtioNet.lean`); the builder's images and the demo do not. What that C
-exposes, and what stands in the way:
+virtio network card (`Kernel/Net/VirtioNet.lean`). Since 2026-11-23 the builder's images do too: the
+service takes its frames from that driver (`Kernel/Net/Wire.lean`) and its TCP is the system's as before;
+the firmware's network driver is then not in its path, and the firmware's PCI and page-sharing code are.
+The OS's own image and the demo still use the firmware's driver. What that C exposes, and what stands in
+the way:
 - It reads any device's configuration space and, for the one device claimed, its registers and an arena
   of memory shared with it. All of it goes through the firmware's PCI protocol, so the firmware's PCI
   bus driver, its register access and, in a trust domain, its code that makes pages visible to the host
@@ -54,6 +57,17 @@ exposes, and what stands in the way:
   which the host can bring about anyway by carrying nothing. So that an honest card and the driver
   cannot each miss the other, `silo_hw_store16` ends with a full barrier (`__sync_synchronize`): the
   position written is seen by the card before the driver reads the card's word.
+- For the builder this moves a line. Before, the firmware's driver stood between the host's queues and
+  the service, and a frame reached Lean as bytes the firmware had copied. Now the words of the host's
+  queues are read by this project's driver, which is younger and less tried than the firmware's; what
+  it does with them is in Lean, each number cut to what it can be, and it has been run for a few
+  hundred slots, not a thousand, at the time of writing. A wrong word still cannot reach beyond the
+  shared arena. The service also no longer sleeps a millisecond whenever no frame is there: it looks
+  again at once some twenty thousand times first, so a host that trickles frames keeps it busy, as a
+  host can by other means.
+- The runtime's `memcpy` and `memset` (`rt/bare/libc.c`) are `rep movsb` and `rep stosb` on x86-64 where
+  they were loops; they read and write what they were asked to and decide nothing. Every image changes
+  by it.
 - `silo_hw_store32` writes four bytes of the memory shared with a device in one go, checked as the
   other stores are; the driver's copies to and from that memory are made by `rep movsb` in
   `boot/efi/hw.c` and not by the runtime's `memcpy`. Neither reads anything.

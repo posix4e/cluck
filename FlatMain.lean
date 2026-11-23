@@ -51,8 +51,15 @@ partial def neighbours (cfg : @& Tuning) (rx : @& ByteArray) (o stop : USize) (t
   else neighbours cfg rx (f + n) stop tx
 
 def main : IO UInt32 := do
-  let some (card, rings) ← VirtioNet.start | do say "flat-os: no network card that will do"; return 1
-  let cfg : Tuning := { slotBits := 16, localIp := 0x0a00020f, macHigh := card.macHigh, macLow := card.macLow, busy := 1024 }
+  let some (card, rings) ← VirtioNet.start 1024 | do say "flat-os: no network card that will do"; return 1
+  let cfg : Tuning := { slotBits := 16, localIp := 0x0a00020f, macHigh := card.macHigh, macLow := card.macLow, busy := 8192 }
+  -- The settings for when this end is behind because of new connections: the batch before found the
+  -- card's ring full, so more is being lost before it is seen than can be known, and an eighth or more
+  -- of that batch was SYNs. What can be done about it is not to begin anything new. (A full ring alone
+  -- is not it: thirty connections each being sent a megabyte fill it with acknowledgements, and those
+  -- pace themselves.)
+  let behind : Tuning := { cfg with busy := 1 }
+  let mut shed := false
   let pattern := ByteArray.mk ((Array.range 1000000).map fun i => (i % 251).toUInt8)
   let answers : Array ByteArray :=
     #[page "200 OK" "a TCP written in Lean\n".toUTF8, page "200 OK" pattern, page "404 Not Found" "nothing here\n".toUTF8]
@@ -71,13 +78,17 @@ def main : IO UInt32 := do
   say s!"flat-os: a card of {card.size} buffers each way; serving HTTP at 10.0.2.15, port 80"
   repeat
     let mut length : USize := 0
+    let before := rings.frames
     (rings, scratch, batch, length) ← VirtioNet.receive card rings scratch batch
+    let came := rings.frames - before
+    let syns := ld64 t 24 + ld64 t 112
     let clock ← Efi.millis
     let now : UInt32 := clock.toUInt32 + ((1 : UInt32) <<< 20)
     tx := st64 tx 0 8
     if length != 0 then
       tx := neighbours cfg batch 0 length tx
-      (t, tx) := loop cfg answers respond now batch 0 length t tx
+      (t, tx) := loop (if shed then behind else cfg) answers respond now batch 0 length t tx
+    shed := came ≥ card.size.toNat && (ld64 t 24 + ld64 t 112 - syns).toNat * 8 ≥ came
     if clock != last then
       (t, tx) := tick cfg answers now (clock - last).toUInt32 t tx
       last := clock

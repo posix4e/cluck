@@ -99,7 +99,7 @@ partial def open_ (cfg : @& Tuning) (macHigh : UInt16) (macLow : UInt32) (now : 
   open_ cfg macHigh macLow now (serial + 1) (count - 1) (emit from_ tx macHigh macLow target 80 0x02 first 0 true ByteArray.empty 0 0)
 
 def main : IO UInt32 := do
-  let some (card, rings) ← VirtioNet.start | do say "flat-gen: no network card that will do"; return 1
+  let some (card, rings) ← VirtioNet.start 1024 | do say "flat-gen: no network card that will do"; return 1
   let cfg : Tuning := { localIp := own, macHigh := card.macHigh, macLow := card.macLow }
   let request := "GET / HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n".toUTF8
   let mut rings := rings

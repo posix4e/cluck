@@ -283,6 +283,53 @@ sweep over the table; what can be tuned is one record, `Tuning`.
       own address, its own table and its own attestation, and something
       outside must share connections out between them; here each generator
       simply has its own server.
+  - **With a program that polls in place of the kernel's thread, twice as
+    much** (2026-11-23). `scripts/flat-load tdx --backend dpdk` joins each
+    pair's two cards through DPDK's `testpmd` (25.11, Ubuntu's packages
+    unpacked in a directory of the user's and named by `SILO_DPDK`; nothing
+    installed, no root, no huge pages), which QEMU gives the guests' memory
+    as vhost-user has it. It works with a trust domain. The guest never has
+    to tell the host anything (0 calls in 82 million frames). The third
+    second at each rate, one processor a guest:
+
+    | pairs | opened a second | answered | under 1 ms |
+    |---|---|---|---|
+    | 1 | 400,000 | 399,266 | 391,632 |
+    | 1 | 500,000 | 499,356 | 483,192 |
+    | 1 | 600,000 | 591,437 | 43,973 |
+    | 1 | 800,000 | 370,992 | 175,099 |
+    | 8 | 2,400,000 | 2,394,346 | 2,367,864 |
+    | 8 | 3,200,000 | 3,179,414 | 2,819,168 |
+    | 8 | 4,000,000 | 3,892,052 | 486,626 |
+    | 8 | 6,400,000 | 1,412,424 | 328,776 |
+
+    So one trust domain on one processor answers half a million connections a
+    second with nearly all inside a millisecond, and eight answer 3.2 million;
+    3.9 million is the most. A pair takes three busy host cores this way (the
+    two guests and the poller, which carries both directions for both) where
+    the kernel's way takes four.
+    - Two things had to change in the guest for it. A poller keeps no queue
+      before the card, so what the card's ring cannot hold is lost: the ring
+      is 1,024 buffers there (QEMU's most) where it was 256. And asked for
+      more than it can do the server lost frames of connections it had begun,
+      each then holding a place for a timer, and with 1,024 places it soon
+      answered a twentieth of what it could: `flat-os` now allows 8,192 open,
+      and when a batch found the ring full and an eighth of it was SYNs it
+      answers no SYN in the next batch. On the kernel's path the same change
+      makes the fall-off past the most gentler (215,000 answered of 600,000
+      opened, was 36,000 after the fuller TCP).
+    - Past one and a half times what it can do it still falls far (86,000 of
+      a million opened, one pair): the generator never sends anything again
+      and never slows, which no real crowd of clients does, and this has not
+      been tried with clients that do.
+    - Not known: which is the limit now, the server, the generator or the
+      poller; what a second queue or a second poller core would give; whether
+      the memory QEMU hands the poller in a trust domain is only what the
+      guest has made host-visible (it should be, and the guest gives the host
+      nothing else, but this was not looked at from the host's side). 29 of
+      DPDK's 230 small packages did not come down (the mirror was slow); none
+      of them is one `testpmd` loads here. Those fetched outside `apt` were
+      checked against the index's SHA-512.
   - **Asked for more than that, it now falls off slowly and not at once.**
     `Tuning.busy` stops SYNs being answered while more than so many connections
     are open (1,024 in `flat-os`), so that what has begun is finished first.

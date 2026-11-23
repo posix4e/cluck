@@ -69,6 +69,18 @@ if [[ -n "${SILO_NET_TAP:-}" ]]; then
   # (scripts/net-ceiling makes one), and `SILO_NET_QUEUES` queue pairs of it, one by default.
   net="tap,id=net0,ifname=$SILO_NET_TAP,script=no,downscript=no,vhost=on"
 fi
+if [[ -n "${SILO_NET_VHOST_USER:-}" ]]; then
+  # A program on the host that carries the card's frames itself (vhost-user), listening at this socket
+  # path: for measuring against one that polls and never sleeps. It reads the guest's queues in the
+  # guest's memory, so that memory has to be something another program can be given: a memfd, shared.
+  # In a trust domain that is only what the guest has made host-visible.
+  args+=(-object memory-backend-memfd,id=ram0,size=1G,share=on -machine memory-backend=ram0
+         -chardev "socket,id=vu0,path=$SILO_NET_VHOST_USER")
+  net="vhost-user,id=net0,chardev=vu0"
+  # Such a program has no queue of its own before the card: what the card's ring cannot hold is lost.
+  # So the ring is as long as QEMU allows.
+  card=",rx_queue_size=1024,tx_queue_size=1024"
+fi
 if [[ -n "${SILO_NET_DUMP:-}" ]]; then
   # Every Ethernet frame the guest sends or is sent, written to a file as a packet capture.
   args+=(-object "filter-dump,id=dump0,netdev=net0,file=$SILO_NET_DUMP")
@@ -76,7 +88,7 @@ fi
 "$qemu" "${args[@]}" -nodefaults -m 1G -smp 1 -display none -monitor none -serial stdio -no-reboot \
   -drive "if=none,id=esp,format=raw,readonly=on,file=fat:$esp" \
   -device "virtio-blk-pci,drive=esp,$devices,bootindex=1" \
-  -netdev "$net" -device "virtio-net-pci,netdev=net0,$devices,romfile=${SILO_NET_MAC:+,mac=$SILO_NET_MAC}" </dev/null &
+  -netdev "$net" -device "virtio-net-pci,netdev=net0,$devices,romfile=${card:-}${SILO_NET_MAC:+,mac=$SILO_NET_MAC}" </dev/null &
 child=$!
 wait "$child"
 child=''

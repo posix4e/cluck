@@ -4,7 +4,7 @@
 what was answered and how long it took. The two are joined by a bridge between their tap devices, each with
 the kernel's vhost-net behind it, in a network namespace made for the run. No root is needed.
 
-    scripts/flat-load tdx|dev [--pairs N] [--cores A,B,C,...] [--capture FILE.pcap]
+    scripts/flat-load tdx|dev [--pairs N] [--cores A,B,C,...] [--capture FILE.pcap] [--backend dpdk]
 
 (scripts/build-efi PROFILE flat-os and flat-gen first.) Each guest has one processor. With --pairs there are
 N servers and N generators, each pair on a bridge of its own, and what is printed at the end is the sum.
@@ -14,11 +14,19 @@ Each guest is kept to two host processors: beside the guest's own, the kernel ru
 pair; by default whole cores of the first socket and then of the second, as this machine numbers them.
 
 --capture keeps the first 400,000 frames on the first generator's side of its bridge.
+
+--backend dpdk has no tap devices, no bridge and no kernel thread: each pair's two cards are carried by a
+program that polls them and never sleeps, DPDK's testpmd, to which QEMU gives the guests' host-visible
+memory (vhost-user). SILO_DPDK must name a directory DPDK's packages were unpacked in (the one with
+usr/bin/dpdk-testpmd in it); nothing of it need be installed, and no root or huge pages are used. Of a
+pair's four host processors the guests then have one each, the poller one, and the fourth has the
+poller's idle first thread.
 """
-import os, re, subprocess, sys, threading, time
+import os, re, subprocess, sys, tempfile, threading, time
 
 profile = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("tdx", "dev") else sys.exit(__doc__)
-if os.environ.get("LOAD_INSIDE") != "1":
+polled = "--backend" in sys.argv and sys.argv[sys.argv.index("--backend") + 1] == "dpdk"
+if not polled and os.environ.get("LOAD_INSIDE") != "1":
     os.execvpe("unshare", ["unshare", "-Urn", sys.executable, os.path.abspath(__file__)] + sys.argv[1:], dict(os.environ, LOAD_INSIDE="1"))
 
 def option(name, otherwise):
@@ -30,9 +38,9 @@ if len(pool) < 4 * pairs:
     sys.exit(f"flat-load: {pairs} pairs want {4 * pairs} host processors and --cores names {len(pool)}")
 here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-def guest(name, tap, mac, cores, port, loud):
+def guest(name, link, mac, cores, port, loud):
     said = []
-    env = dict(os.environ, SILO_NET_TAP=tap, SILO_NET_MAC=mac, SILO_HOST_PORT=str(port))
+    env = dict(os.environ, SILO_NET_MAC=mac, SILO_HOST_PORT=str(port), **({"SILO_NET_VHOST_USER": link} if polled else {"SILO_NET_TAP": link}))
     process = subprocess.Popen(["taskset", "-c", cores, os.path.join(here, "scripts/run-efi"), profile, name], env=env,
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     def listen():
@@ -43,31 +51,61 @@ def guest(name, tap, mac, cores, port, loud):
     threading.Thread(target=listen, daemon=True).start()
     return process, said
 
-servers, generators = [], []
+servers, generators, pollers = [], [], []
+if polled:
+    dpdk = os.environ.get("SILO_DPDK") or sys.exit("flat-load: set SILO_DPDK to where DPDK's packages are unpacked")
+    libraries = os.path.join(dpdk, "usr/lib/x86_64-linux-gnu")
+    drivers = os.path.join(libraries, "dpdk/pmds-26.0")
+    sockets = tempfile.mkdtemp(prefix="flat-load.")
+    for k in range(pairs):
+        a, b, c, d = pool[4 * k:4 * k + 4]
+        said = []
+        # Its first thread only waits; the second does the carrying, both ways, and never sleeps.
+        process = subprocess.Popen(
+            [os.path.join(dpdk, "usr/bin/dpdk-testpmd"), "-l", f"{d},{b}", "--no-huge", "-m", "256", "--no-pci", "--in-memory",
+             "--file-prefix", f"flat{os.getpid()}-{k}", "-d", os.path.join(drivers, "librte_mempool_ring.so.26"),
+             "-d", os.path.join(drivers, "librte_net_vhost.so.26"),
+             "--vdev", f"net_vhost0,iface={sockets}/{k}a.sock,iommu-support=1", "--vdev", f"net_vhost1,iface={sockets}/{k}b.sock,iommu-support=1",
+             "--", "--forward-mode=io", "--nb-cores=1", "--total-num-mbufs=32768", "-a"],
+            env=dict(os.environ, LD_LIBRARY_PATH=libraries), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        def listen(process=process, said=said):
+            for line in process.stdout:
+                said.append(line.rstrip())
+        threading.Thread(target=listen, daemon=True).start()
+        pollers.append((process, said))
+    for k in range(pairs):
+        for name in (f"{k}a.sock", f"{k}b.sock"):
+            for _ in range(300):
+                if os.path.exists(os.path.join(sockets, name)):
+                    break
+                time.sleep(0.1)
+            else:
+                print("\n".join(pollers[k][1][-12:]))
+                sys.exit("flat-load: the poller did not make its sockets")
 for k in range(pairs):
     a, b, c, d = pool[4 * k:4 * k + 4]
-    servers.append(guest("flat-os", f"tap{2 * k}", f"52:54:00:00:{k:02x}:01", f"{a},{b}", 5100 + 2 * k, False))
-    generators.append(guest("flat-gen", f"tap{2 * k + 1}", f"52:54:00:00:{k:02x}:02", f"{c},{d}", 5101 + 2 * k, pairs == 1))
-everyone = servers + generators
+    servers.append(guest("flat-os", f"{sockets}/{k}a.sock" if polled else f"tap{2 * k}", f"52:54:00:00:{k:02x}:01", a if polled else f"{a},{b}", 5100 + 2 * k, False))
+    generators.append(guest("flat-gen", f"{sockets}/{k}b.sock" if polled else f"tap{2 * k + 1}", f"52:54:00:00:{k:02x}:02", c if polled else f"{c},{d}", 5101 + 2 * k, pairs == 1))
+everyone = servers + generators + pollers
 
 def run(command):
     subprocess.run(command.split(), check=True)
 
 try:
-    for k in range(2 * pairs):
+    for k in range(0 if polled else 2 * pairs):
         for _ in range(600):
             if subprocess.run(["ip", "link", "show", f"tap{k}"], capture_output=True).returncode == 0:
                 break
             time.sleep(0.1)
         else:
             sys.exit(f"flat-load: tap{k} did not appear")
-    for k in range(pairs):
+    for k in range(0 if polled else pairs):
         run(f"ip link add br{k} type bridge stp_state 0 forward_delay 0")
         for tap in (f"tap{2 * k}", f"tap{2 * k + 1}"):
             run(f"ip link set {tap} master br{k}")
             run(f"ip link set {tap} up")
         run(f"ip link set br{k} up")
-    if "--capture" in sys.argv:
+    if "--capture" in sys.argv and not polled:
         subprocess.Popen(["tcpdump", "-i", "tap1", "-s", "0", "-U", "-Z", "root", "-B", "65536", "-c", "400000", "-w", option("--capture", "")],
                          stderr=subprocess.DEVNULL)
     began = time.time()
@@ -79,6 +117,15 @@ try:
             break
         time.sleep(0.5)
     time.sleep(5.5)
+    for k, (process, said) in enumerate(pollers):
+        # Told to stop, it says what it carried.
+        try:
+            process.stdin.write("\n"); process.stdin.flush()
+            process.wait(timeout=10)
+        except Exception:
+            pass
+        counts = [line.strip() for line in said if "RX-packets" in line or "TX-packets" in line]
+        print(f"  poller {k}: " + (" | ".join(counts[-3:]) if counts else str(said[-3:])))
     if pairs == 1:
         for line in servers[0][1]:
             if "flat-os" in line or "silo" in line:

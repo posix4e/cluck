@@ -88,5 +88,5 @@ def main : IO UInt32 := do
       told := clock
       if ld64 t 8 != seen then
         seen := ld64 t 8
-        say s!"flat-os: accepted {ld64 t 8}, closed {ld64 t 16}, live {ld64 t 0}, dropped {ld64 t 32}, out of order {ld64 t 40}, sent again {ld64 t 72} and {ld64 t 96}, timed out {ld64 t 80}, resets sent {ld64 t 88}, held back {ld64 t 104}, SYNs let go {ld64 t 112}, frames the card would not take {rings.dropped}"
+        say s!"flat-os: accepted {ld64 t 8}, closed {ld64 t 16}, live {ld64 t 0}, dropped {ld64 t 32}, out of order {ld64 t 40}, sent again {ld64 t 72} and {ld64 t 96}, timed out {ld64 t 80}, resets sent {ld64 t 88}, held back {ld64 t 104}, SYNs let go {ld64 t 112}, frames the card would not take {rings.dropped}; {rings.frames} frames, the host told {rings.calls} times"
   return 0

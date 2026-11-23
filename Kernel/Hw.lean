@@ -90,7 +90,7 @@ at a time can come out half old and half new. -/
 @[extern "silo_hw_load16"]
 opaque load16 (address : UInt64) : BaseIO UInt16
 
-/-- The same, written in one go. -/
+/-- The same, written in one go, and seen by the other side before anything this side reads next. -/
 @[extern "silo_hw_store16"]
 opaque store16 (address : UInt64) (value : UInt16) : BaseIO Unit
 

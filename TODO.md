@@ -253,6 +253,14 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     a processor each (`top`), so the limit at 280,000 is at least the host's
     side; the guests never idle, so whether they have room left cannot be seen
     from outside.
+  - **Leaving the guest is not the cost.** The driver tells the host of a queue
+    only when the card does not say it is looking already, and counts both:
+    over a whole run, 52.6 million frames in and out and the host told 204,796
+    times, one call for every 257 frames (one for every 110 at 50,000
+    connections a second, fewer the busier it is). The most it answers did not
+    move with that (261,000 to 269,000 at 300,000 opened), so the limit is the
+    work the host's kernel does a frame, about two million frames a second
+    through each guest's vhost thread, and not the guest's calls.
   - **Asked for more than that, it now falls off slowly and not at once.**
     `Tuning.busy` stops SYNs being answered while more than so many connections
     are open (1,024 in `flat-os`), so that what has begun is finished first.
@@ -264,7 +272,8 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   - Not known: the same outside
     a trust domain, for which there is no profile but the emulator; how often
     the guest has to call the host a frame, which `perf` would say and needs
-    root here. The times are in whole milliseconds, by a clock that is the
+    root here (how often it tells the host is counted now, above; what else
+    makes it leave is not). The times are in whole milliseconds, by a clock that is the
     processor's own counter.
   - **A fault that only two processors showed.** With each QEMU on one host
     core the test was clean to 100,000 a second. Given two each, so that the

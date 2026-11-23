@@ -13,7 +13,8 @@ host about every frame, each way. Here:
 * `receive` takes everything the card has finished with in one go and copies each frame once, into the
   array the stack reads, with its length before it; then gives all those buffers back and tells the host
   once.
-* `transmit` copies every frame the stack wrote into the next buffers in turn and tells the host once.
+* `transmit` copies every frame the stack wrote into the next buffers in turn and tells the host once,
+  and not even once when the card says it is already looking (`tell`).
 * Nothing is allocated in either: what is read from the shared memory is read into arrays that are there
   already.
 
@@ -27,8 +28,7 @@ length is cut to the buffer's. Descriptors are never read back. What the host ca
 or spoil frames, which it can do anyway. No feature is asked for that would have the card hand over a
 frame unfinished (no checksum or segmentation left to this end, no frame across several buffers).
 
-Not done: more than one pair of queues; asking the card to say when it wants to be told (it is told once
-a batch whether it needs it or not); frames longer than one buffer. -/
+Not done: more than one pair of queues; frames longer than one buffer. -/
 
 namespace Kernel.Net.VirtioNet
 
@@ -77,6 +77,10 @@ structure Rings where
   done : UInt16 := 0
   /-- Frames not sent because the card had not finished with any buffer in time. -/
   dropped : Nat := 0
+  /-- Frames taken from the card and given to it, and the times the host was told of either: what leaving
+  the guest costs is the second over the first. -/
+  frames : Nat := 0
+  calls : Nat := 0
   deriving Inhabited
 
 /-- An array to read the shared memory into: room for one queue's ring of finished entries, then for the
@@ -193,6 +197,18 @@ def start (wanted : USize := 256) : BaseIO (Option (Card × Rings)) := do
                  txDescriptors, macHigh := macHigh.toUInt16, macLow },
                { given := size.toUInt16 })
 
+/-- The host told that queue `number` has something for it, unless the card says, in the first two bytes of
+its ring of finished entries, that it is looking already and need not be told. Telling is the one thing
+here that leaves the guest, and in a trust domain it is dear; a card that is kept busy says so nearly
+all the time. It says so and then looks once more before it stops looking, and `Hw.store16`, by which it
+was given what to look at, is seen by it before this reads its word: so nothing is missed. What comes
+back is 1 if the host was told. -/
+@[inline] def tell (register finished : UInt64) (number : UInt32) : BaseIO Nat := do
+  if (← Hw.load16 finished) &&& 1 == 0 then
+    Hw.write register 2 number
+    return 1
+  else return 0
+
 /-- Everything the card has received since the last call, copied into `batch` as the stack takes it (two
 bytes of length, then the frame, one after another), and the buffers given back. `scratch` is from
 `scratchFor`. What comes back: the rings, `scratch`, `batch`, and how many bytes of `batch` are frames. -/
@@ -230,8 +246,9 @@ def receive (card : @& Card) (rings : Rings) (scratch batch : ByteArray) : BaseI
   if run < count then Hw.storeFrom (card.rxOffered + 4) scratch (numbers + run * 2) ((count - run) * 2)
   let given := rings.given + count.toUInt16
   Hw.store16 (card.rxOffered + 2) given
-  Hw.write card.tellRx 2 0
-  return ({ rings with taken := rings.taken + count.toUInt16, given }, scratch, batch, at_)
+  let told ← tell card.tellRx card.rxFinished 0
+  return ({ rings with taken := rings.taken + count.toUInt16, given, frames := rings.frames + count.toNat,
+                       calls := rings.calls + told }, scratch, batch, at_)
 
 /-- Every frame the stack wrote to `tx` (from its ninth byte to where its first eight say) put into the
 card's buffers in turn, and the host told once. When every buffer is still with the card it is waited
@@ -257,7 +274,7 @@ def transmit (card : @& Card) (rings : Rings) (scratch : ByteArray) (tx : @& Byt
       -- times at most.
       if told != rings.sent then
         Hw.store16 (card.txOffered + 2) rings.sent
-        Hw.write card.tellTx 2 1
+        rings := { rings with calls := rings.calls + (← tell card.tellTx card.txFinished 1) }
         told := rings.sent
       let mut tries := 0
       while (rings.sent - rings.done).toUSize ≥ size && tries < patience do
@@ -274,11 +291,11 @@ def transmit (card : @& Card) (rings : Rings) (scratch : ByteArray) (tx : @& Byt
     Hw.storeFrom (card.txBuffers + (buffer * stride + header).toUInt64) tx (o + 2) length
     scratch := st32 scratch 4 (header + length).toUInt32
     Hw.storeFrom (card.txDescriptors + (buffer * 16 + 8).toUInt64) scratch 4 4
-    rings := { rings with sent := rings.sent + 1 }
+    rings := { rings with sent := rings.sent + 1, frames := rings.frames + 1 }
     o := o + 2 + length
   if told != rings.sent then
     Hw.store16 (card.txOffered + 2) rings.sent
-    Hw.write card.tellTx 2 1
+    rings := { rings with calls := rings.calls + (← tell card.tellTx card.txFinished 1) }
   -- How far the card has got, for next time.
   let finished ← Hw.load16 (card.txFinished + 2)
   if (finished - rings.done) ≤ (rings.sent - rings.done) then rings := { rings with done := finished }

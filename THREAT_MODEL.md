@@ -49,6 +49,11 @@ exposes, and what stands in the way:
   away, and a whole queue of old frames was taken again, or sent again by the card. They are now read
   and written in one go (`silo_hw_load16`, `silo_hw_store16`). It was found by two guests under load on
   separate processors and by nothing before that: a test on one processor does not show it.
+- The driver now believes one more word of the card's: that it is looking at a queue already and need
+  not be told. A card that says so and is not looking gets no frames from the guest and gives it none,
+  which the host can bring about anyway by carrying nothing. So that an honest card and the driver
+  cannot each miss the other, `silo_hw_store16` ends with a full barrier (`__sync_synchronize`): the
+  position written is seen by the card before the driver reads the card's word.
 
 The host and anyone on the network can observe, change, replay or drop Ethernet traffic.
 ARP and Neighbor Discovery establish reachability. Neither authenticates a peer. The demo

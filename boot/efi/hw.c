@@ -201,8 +201,13 @@ uint16_t silo_hw_load16(uint64_t address) {
     return *pair_at(address);
 }
 
+// The write is made to have happened before anything read after it: a driver writes how far it has got
+// and then reads whether the other side is still looking, the other side does the same the other way
+// round, and a processor that let the read go ahead of its own write would have each see the other's
+// old word and both stop.
 lean_obj_res silo_hw_store16(uint64_t address, uint16_t value) {
     *pair_at(address) = value;
+    __sync_synchronize();
     return lean_box(0);
 }
 

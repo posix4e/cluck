@@ -198,6 +198,10 @@ lean_exe «flat-os» where
   root := `FlatMain
   moreLinkObjs := #[platformHosted, efiHosted]
 
+lean_exe «flat-gen» where
+  root := `FlatGen
+  moreLinkObjs := #[platformHosted, efiHosted]
+
 lean_exe «net-flat-bench» where
   root := `NetFlatBench
 

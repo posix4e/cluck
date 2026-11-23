@@ -223,6 +223,49 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     that misbehaves on purpose can do; more than one queue; the card is told
     once a batch whether or not it needs telling.
 
+- **Connections a second, end to end, in a trust domain** (2026-11-23).
+  `flat-gen` is a second guest on the same driver that opens connections to
+  `flat-os` at one rate after another and keeps nothing about any of them: each
+  frame that comes back says what to send next, and when a connection began is in
+  its first sequence number, so how long each took is known without a table.
+  `scripts/flat-load tdx` runs the two, one processor each, joined by a bridge
+  between their tap devices with vhost-net behind each, in a network namespace
+  (no root), each QEMU kept to two host cores of one socket. Each connection is
+  a request for a page of 106 bytes: seven frames. Third second of four at each
+  rate:
+
+  | opened a second | answered | under 1 ms | 1 to 8 ms | over 250 ms |
+  |---|---|---|---|---|
+  | 50,000 | 50,000 | 48,805 | 1,195 | 0 |
+  | 100,000 | 100,000 | 98,404 | 1,596 | 0 |
+  | 200,000 | 200,000 | 197,840 | 2,160 | 0 |
+  | 300,000 | 280,648 | 0 | 254,455 | 25,404 |
+  | 400,000 | 256,917 | 0 | 189,807 | 61,649 |
+  | 600,000 | 21,500 | 0 | 9,286 | 10,502 |
+
+  So one processor in a trust domain takes 200,000 connections a second with
+  nearly all of them answered inside a millisecond, and about 280,000 at most.
+  Past that it does worse the more it is asked: it answers every SYN it is
+  sent, and the connections it has cannot finish. Against 403 connections a
+  second on the firmware's driver and QEMU's network, and 1,656 on the
+  firmware's driver and the same tap.
+  - Not known: which of the three is the limit at 280,000 (the guest, the
+    kernel's thread for its card, the bridge between the two); the same outside
+    a trust domain, for which there is no profile but the emulator; how often
+    the guest has to call the host a frame, which `perf` would say and needs
+    root here. The times are in whole milliseconds, by a clock that is the
+    processor's own counter.
+  - **A fault that only two processors showed.** With each QEMU on one host
+    core the test was clean to 100,000 a second. Given two each, so that the
+    guest and the kernel's thread for its card ran at once, the server took
+    thousands of frames twice, and at 100,000 a second stopped answering. A
+    queue's position is two bytes; the driver copied them one at a time while
+    the other side changed them, and now and then got one old and one new, a
+    position 256 away. `Kernel/Hw.lean` has `load16` and `store16` for it now.
+    The runs against Linux before that had it too and mostly did not show it:
+    the odd errors Linux counted in one of them (above, since removed from the
+    account) were this.
+
 ## Ethereum block import, as a service (`evm/`)
 
 An experiment: whether someone else's Lean, written for proofs and for Lean's own runtime, can be the service

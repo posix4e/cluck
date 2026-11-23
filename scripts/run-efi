@@ -76,7 +76,7 @@ fi
 "$qemu" "${args[@]}" -nodefaults -m 1G -smp 1 -display none -monitor none -serial stdio -no-reboot \
   -drive "if=none,id=esp,format=raw,readonly=on,file=fat:$esp" \
   -device "virtio-blk-pci,drive=esp,$devices,bootindex=1" \
-  -netdev "$net" -device "virtio-net-pci,netdev=net0,$devices,romfile=" </dev/null &
+  -netdev "$net" -device "virtio-net-pci,netdev=net0,$devices,romfile=${SILO_NET_MAC:+,mac=$SILO_NET_MAC}" </dev/null &
 child=$!
 wait "$child"
 child=''

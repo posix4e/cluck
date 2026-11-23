@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""How many connections a second the trial TCP takes in a guest, on its own driver: `flat-os` and beside it
+`flat-gen`, a second guest that opens connections to it at one rate after another and says once a second
+what was answered and how long it took. The two are joined by a bridge between their tap devices, each with
+the kernel's vhost-net behind it, in a network namespace made for the run. No root is needed.
+
+    scripts/flat-load tdx|dev [--cores A+B,C+D]
+
+(scripts/build-efi PROFILE flat-os and flat-gen first.) Each guest has one processor. --cores says which
+host processors each QEMU may use, the server's then the generator's (default 20+24,22+26): two each,
+because beside the guest's own processor the kernel runs a thread for its card (vhost), and on one host
+processor the two take turns. What is printed is the generator's own account and, at the end, the
+server's.
+"""
+import os, subprocess, sys, threading, time
+
+profile = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("tdx", "dev") else sys.exit(__doc__)
+if os.environ.get("LOAD_INSIDE") != "1":
+    os.execvpe("unshare", ["unshare", "-Urn", sys.executable, os.path.abspath(__file__)] + sys.argv[1:], dict(os.environ, LOAD_INSIDE="1"))
+cores = [c.replace("+", ",") for c in (sys.argv[sys.argv.index("--cores") + 1] if "--cores" in sys.argv else "20+24,22+26").split(",")]
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def guest(name, tap, mac, core, port):
+    said = []
+    env = dict(os.environ, SILO_NET_TAP=tap, SILO_NET_MAC=mac, SILO_HOST_PORT=port)
+    process = subprocess.Popen(["taskset", "-c", core, os.path.join(here, "scripts/run-efi"), profile, name], env=env,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    def listen():
+        for line in process.stdout:
+            said.append(line.rstrip())
+            if name == "flat-gen" and "flat-gen" in line:
+                print(line.rstrip(), flush=True)
+    threading.Thread(target=listen, daemon=True).start()
+    return process, said
+
+server, server_said = guest("flat-os", "tap0", "52:54:00:00:00:01", cores[0], "5091")
+generator, generator_said = guest("flat-gen", "tap1", "52:54:00:00:00:02", cores[1], "5092")
+try:
+    for tap in ("tap0", "tap1"):
+        for _ in range(300):
+            if subprocess.run(["ip", "link", "show", tap], capture_output=True).returncode == 0:
+                break
+            time.sleep(0.1)
+        else:
+            sys.exit(f"flat-load: {tap} did not appear")
+    for command in ("ip link add br0 type bridge stp_state 0 forward_delay 0", "ip link set tap0 master br0", "ip link set tap1 master br0",
+                    "ip link set tap0 up", "ip link set tap1 up", "ip link set br0 up"):
+        subprocess.run(command.split(), check=True)
+    if "--capture" in sys.argv:
+        # The first so many frames on the generator's side of the bridge, for looking at afterwards.
+        subprocess.Popen(["tcpdump", "-i", "tap1", "-s", "0", "-U", "-Z", "root", "-B", "65536", "-c", "400000", "-w",
+                          sys.argv[sys.argv.index("--capture") + 1]], stderr=subprocess.DEVNULL)
+    began = time.time()
+    while not any("flat-gen: done" in line for line in generator_said):
+        if time.time() - began > 240 or generator.poll() is not None or server.poll() is not None:
+            print("flat-load: it did not finish. The generator said:", generator_said[-5:], "the server:", server_said[-5:])
+            break
+        time.sleep(0.5)
+    time.sleep(5.5)
+    for line in server_said:
+        if "flat-os" in line or "silo" in line:
+            print(line)
+finally:
+    for process in (server, generator):
+        process.terminate()
+    for process in (server, generator):
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()

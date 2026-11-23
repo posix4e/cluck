@@ -17,8 +17,11 @@ host about every frame, each way. Here:
 * Nothing is allocated in either: what is read from the shared memory is read into arrays that are there
   already.
 
-The host, which is the other end of the shared memory. It can write anything there at any time. So what
-is read from it is read once into this program's own memory and only that copy is looked at: the count
+The host, which is the other end of the shared memory. It can write anything there at any time, and an
+honest one writes there all the time: a queue's position is two bytes that the other side changes while
+this side reads, so each is read and written in one go (`Hw.load16`, `Hw.store16`), never as two bytes one
+after the other. So what is read from it is read once into this program's own memory and only that copy
+is looked at: the count
 of what the card has finished is cut to the queue's size, a buffer's number is taken modulo the size, a
 length is cut to the buffer's. Descriptors are never read back. What the host can do by lying is lose
 or spoil frames, which it can do anyway. No feature is asked for that would have the card hand over a
@@ -183,7 +186,7 @@ def start (wanted : USize := 256) : BaseIO (Option (Card × Rings)) := do
   let macLow := ((← Hw.read (p.own + 2) 1) <<< 24) ||| ((← Hw.read (p.own + 3) 1) <<< 16) |||
     ((← Hw.read (p.own + 4) 1) <<< 8) ||| (← Hw.read (p.own + 5) 1)
   -- Every receive buffer is offered, and the card is told to go.
-  Hw.store (rxOffered + 2) (Virtq.le size.toNat 2)
+  Hw.store16 (rxOffered + 2) size.toUInt16
   Hw.write (c + 20) 1 15
   Hw.write tellRx 2 0
   return some ({ size, tellRx, tellTx, rxOffered, rxFinished, rxBuffers, txOffered, txFinished, txBuffers,
@@ -196,9 +199,9 @@ bytes of length, then the frame, one after another), and the buffers given back.
 def receive (card : @& Card) (rings : Rings) (scratch batch : ByteArray) : BaseIO (Rings × ByteArray × ByteArray × USize) := do
   let size := card.size
   let mask := size - 1
-  let scratch ← Hw.loadInto (card.rxFinished + 2) scratch 0 2
-  -- How many more the card says it has finished: its word, cut to what there can be.
-  let claimed := (le16 scratch 0 - rings.taken).toUSize
+  -- How many more the card says it has finished: its word, read in one go (it changes as we look) and cut
+  -- to what there can be.
+  let claimed := ((← Hw.load16 (card.rxFinished + 2)) - rings.taken).toUSize
   let count := if claimed > size then size else claimed
   if count == 0 then return (rings, scratch, batch, 0)
   -- Those entries of the ring, copied out once: eight bytes each, a buffer's number and a length.
@@ -226,8 +229,7 @@ def receive (card : @& Card) (rings : Rings) (scratch batch : ByteArray) : BaseI
   Hw.storeFrom (card.rxOffered + 4 + (next * 2).toUInt64) scratch numbers (run * 2)
   if run < count then Hw.storeFrom (card.rxOffered + 4) scratch (numbers + run * 2) ((count - run) * 2)
   let given := rings.given + count.toUInt16
-  scratch := putLe16 scratch 0 given
-  Hw.storeFrom (card.rxOffered + 2) scratch 0 2
+  Hw.store16 (card.rxOffered + 2) given
   Hw.write card.tellRx 2 0
   return ({ rings with taken := rings.taken + count.toUInt16, given }, scratch, batch, at_)
 
@@ -254,14 +256,12 @@ def transmit (card : @& Card) (rings : Rings) (scratch : ByteArray) (tx : @& Byt
       -- Full. What is queued is handed over, and the card is asked how far it has got, a few thousand
       -- times at most.
       if told != rings.sent then
-        scratch := putLe16 scratch 0 rings.sent
-        Hw.storeFrom (card.txOffered + 2) scratch 0 2
+        Hw.store16 (card.txOffered + 2) rings.sent
         Hw.write card.tellTx 2 1
         told := rings.sent
       let mut tries := 0
       while (rings.sent - rings.done).toUSize ≥ size && tries < patience do
-        scratch ← Hw.loadInto (card.txFinished + 2) scratch 0 2
-        let finished := le16 scratch 0
+        let finished ← Hw.load16 (card.txFinished + 2)
         -- Its word again: believed only if it is between what was known and what was sent.
         if (finished - rings.done) ≤ (rings.sent - rings.done) then rings := { rings with done := finished }
         if (rings.sent - rings.done).toUSize ≥ size then Hw.pause
@@ -277,12 +277,10 @@ def transmit (card : @& Card) (rings : Rings) (scratch : ByteArray) (tx : @& Byt
     rings := { rings with sent := rings.sent + 1 }
     o := o + 2 + length
   if told != rings.sent then
-    scratch := putLe16 scratch 0 rings.sent
-    Hw.storeFrom (card.txOffered + 2) scratch 0 2
+    Hw.store16 (card.txOffered + 2) rings.sent
     Hw.write card.tellTx 2 1
   -- How far the card has got, for next time.
-  scratch ← Hw.loadInto (card.txFinished + 2) scratch 0 2
-  let finished := le16 scratch 0
+  let finished ← Hw.load16 (card.txFinished + 2)
   if (finished - rings.done) ≤ (rings.sent - rings.done) then rings := { rings with done := finished }
   return (rings, scratch)
 

@@ -188,6 +188,24 @@ lean_obj_res silo_hw_store_from(uint64_t address, b_lean_obj_arg bytes, size_t a
     return lean_box(0);
 }
 
+// Two bytes of device memory read, or written, in one go. A queue's position is such a pair, changed by
+// the other side while this side looks: copied a byte at a time it can be read half old and half new,
+// which is a position 256 away from either. (It was, until this was here: whole queues of frames were
+// taken a second time, and sent a second time.) The address must be even.
+static volatile uint16_t *pair_at(uint64_t address) {
+    if (address & 1) rt_stop("a driver reached for two bytes of device memory at an odd address");
+    return (volatile uint16_t *)device_memory(address, 2);
+}
+
+uint16_t silo_hw_load16(uint64_t address) {
+    return *pair_at(address);
+}
+
+lean_obj_res silo_hw_store16(uint64_t address, uint16_t value) {
+    *pair_at(address) = value;
+    return lean_box(0);
+}
+
 lean_obj_res silo_hw_command_line(void) {
     return lean_alloc_sarray(1, 0, 0);
 }

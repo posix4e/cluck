@@ -44,6 +44,11 @@ exposes, and what stands in the way:
   back, and asks the card for no feature that would hand it a frame unfinished. It trusts the card to
   finish transmit buffers in the order they were given: a host that does not can spoil frames on their
   way out, as it can anyway. None of it has been tried against a card that misbehaves on purpose.
+- A queue's position is two bytes that an honest card changes while the driver reads them. Read a byte
+  at a time they came out half old and half new about once in some thousands of batches, a position 256
+  away, and a whole queue of old frames was taken again, or sent again by the card. They are now read
+  and written in one go (`silo_hw_load16`, `silo_hw_store16`). It was found by two guests under load on
+  separate processors and by nothing before that: a test on one processor does not show it.
 
 The host and anyone on the network can observe, change, replay or drop Ethernet traffic.
 ARP and Neighbor Discovery establish reachability. Neither authenticates a peer. The demo

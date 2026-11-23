@@ -84,6 +84,16 @@ opaque loadInto (address : UInt64) (bytes : ByteArray) (at_ size : USize) : Base
 @[extern "silo_hw_store_from"]
 opaque storeFrom (address : UInt64) (bytes : @& ByteArray) (at_ size : USize) : BaseIO Unit
 
+/-- Two bytes of device memory at an even address, least significant first, read in one go: what a
+position in a queue must be read with, since the device changes it while it is read, and bytes copied one
+at a time can come out half old and half new. -/
+@[extern "silo_hw_load16"]
+opaque load16 (address : UInt64) : BaseIO UInt16
+
+/-- The same, written in one go. -/
+@[extern "silo_hw_store16"]
+opaque store16 (address : UInt64) (value : UInt16) : BaseIO Unit
+
 /-- The boot loader's command line, as the bytes it gave. -/
 @[extern "silo_hw_command_line"]
 opaque commandLine : BaseIO ByteArray

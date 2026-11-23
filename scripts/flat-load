@@ -4,7 +4,7 @@
 what was answered and how long it took. The two are joined by a bridge between their tap devices, each with
 the kernel's vhost-net behind it, in a network namespace made for the run. No root is needed.
 
-    scripts/flat-load tdx|dev [--pairs N] [--cores A,B,C,...] [--capture FILE.pcap] [--backend dpdk [--poll-cores 2]]
+    scripts/flat-load tdx|dev [--pairs N] [--cores A,B,C,...] [--capture FILE.pcap] [--backend dpdk [--poll-cores 2]] [--keep K]
 
 (scripts/build-efi PROFILE flat-os and flat-gen first.) Each guest has one processor. With --pairs there are
 N servers and N generators, each pair on a bridge of its own, and what is printed at the end is the sum.
@@ -12,6 +12,9 @@ N servers and N generators, each pair on a bridge of its own, and what is printe
 Each guest is kept to two host processors: beside the guest's own, the kernel runs a thread for its card
 (vhost), and on one host processor the two take turns. --cores lists the host processors to use, four a
 pair; by default whole cores of the first socket and then of the second, as this machine numbers them.
+
+--keep has every connection make K requests, each after the answer to the one before, and then close;
+the rates are then of requests, three times as many, and "opened" is requests too.
 
 --capture keeps the first 400,000 frames on the first generator's side of its bridge.
 
@@ -87,7 +90,7 @@ if polled:
 for k in range(pairs):
     a, b, c, d = pool[4 * k:4 * k + 4]
     servers.append(guest("flat-os", f"{sockets}/{k}a.sock" if polled else f"tap{2 * k}", f"52:54:00:00:{k:02x}:01", a if polled else f"{a},{b}", 5100 + 2 * k, False))
-    generators.append(guest("flat-gen", f"{sockets}/{k}b.sock" if polled else f"tap{2 * k + 1}", f"52:54:00:00:{k:02x}:02", c if polled else f"{c},{d}", 5101 + 2 * k, pairs == 1))
+    generators.append(guest("flat-gen", f"{sockets}/{k}b.sock" if polled else f"tap{2 * k + 1}", f"52:54:00:{int(option('--keep', '0')):02x}:{k:02x}:02", c if polled else f"{c},{d}", 5101 + 2 * k, pairs == 1))
 everyone = servers + generators + pollers
 
 def run(command):

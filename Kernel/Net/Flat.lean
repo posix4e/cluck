@@ -17,7 +17,8 @@ What is different from the system's, and why each thing is so:
 * **Time is a sweep.** Every entry carries the time by which something must have happened to it. `tick`
   looks at a part of the table each time it is called, so that the whole is looked at once every
   `sweepMs`, and acts on entries whose time has come: what was sent and not acknowledged is sent again,
-  with the wait doubled, and a connection that has said nothing for too long is reset and forgotten.
+  with the wait doubled, a connection that is open and has been asked nothing for too long is closed,
+  and one that owes or is owed something and has said nothing for too long is reset and forgotten.
   How long is waited is worked out from how long acknowledgements have been taking (`measure`,
   `waitOf`), between `waitLeast` and `waitMost`.
   Timers are therefore late by up to `sweepMs`, and cost the same whether one connection is open or a
@@ -45,13 +46,16 @@ window's scale (so no timestamps or selective acknowledgement), and its own wind
 IPv6; IP options or fragments.
 
 **The application** is a function and a list of answers. What a connection sends is always one whole
-answer out of the list, an array of bytes that does not change, and then the end of the stream: so a
+answer out of the list, an array of bytes that does not change, and then either the end of the stream
+or, if the function said so (`sendOn`), nothing, the connection staying open for the next request: so a
 connection holds a number and not a copy, a thousand connections sending the same megabyte hold it once,
 and what must be sent again is read from where it always was. The function, `respond`, is shown each
 run of bytes that arrives, where it lies in the frame, with a number of its own that the connection
 keeps for it between runs; it says which answer to send, or that it wants more, and what its number is
 now. Bytes are not kept for it: what it needs from an earlier run it must have put in its number. This
-suits a server that answers requests from a store of ready answers, and nothing else.
+suits a server that answers requests from a store of ready answers, and nothing else. While an answer
+is on its way on a connection that stays open, what the peer sends is not taken (it will send it again):
+a peer that sends its next request before it has the answer to the last waits a timer for it.
 
 Laid out:
 
@@ -63,7 +67,8 @@ Laid out:
             connections were open, 120 round trips measured
     entry   0 state (0 free, 1 open, 2 answering and closing, 3 waiting out its end)
             1 flags (1: the peer has closed; 2: there is no answer, only the end; 4: a byte is being
-              timed; 8: lost segments are being made good)
+              timed; 8: lost segments are being made good; 16: the connection stays open after
+              the answer)
             2 times sent again without an acknowledgement   3 acknowledgements repeated
             4 the time by which something must happen
             8 the key: remote address, remote port, local port
@@ -494,14 +499,15 @@ def emit (cfg : @& Tuning) (tx : ByteArray) (macHigh : UInt16) (macLow rip : UIn
   st64 tx 0 (at_ + 2 + total).toUInt64
 
 /-- How far sending may go for an entry: the answer and then the end of the stream (which counts as one
-more), no further than the peer's window and this end's own allow beyond what is acknowledged, and never
-back. The end goes with the last of the answer, whatever the windows say, since it takes no room. -/
-@[inline] def reach (sent unacked first size window own : UInt32) : UInt32 :=
+more; `tail` is 1 when there is to be an end and 0 when the connection stays open), no further than the
+peer's window and this end's own allow beyond what is acknowledged, and never back. The end goes with
+the last of the answer, whatever the windows say, since it takes no room. -/
+@[inline] def reach (sent unacked first size tail window own : UInt32) : UInt32 :=
   let last := first + size
   let allowed := if window < own then window else own
-  -- What is left of the stream, its end counted: nothing once the end itself is acknowledged.
-  let left := last + 1 - unacked
-  let to := if left == 0 then sent else if left - 1 ≤ allowed then last + 1 else unacked + allowed
+  -- What is left of the stream, its end counted: nothing once the last of it is acknowledged.
+  let left := last + tail - unacked
+  let to := if left == 0 then sent else if left - tail ≤ allowed then last + tail else unacked + allowed
   if to - unacked < sent - unacked then sent else to
 
 /-- `to` brought back to what there is room in `tx` to write from `sent`: whole segments only. -/
@@ -529,8 +535,12 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
 /-- What `respond` says when it wants more before it answers, with its number to keep. -/
 @[inline] def more (number : UInt32) : UInt64 := (number.toUInt64 <<< 32) ||| 0xffffffff
 
-/-- What `respond` says to have answer `index` sent, with its number to keep. -/
+/-- What `respond` says to have answer `index` sent and then the stream ended, with its number to keep. -/
 @[inline] def send (index number : UInt32) : UInt64 := (number.toUInt64 <<< 32) ||| index.toUInt64
+
+/-- What `respond` says to have answer `index` sent and the connection left open for another request. Its
+number is what it will be shown with the first bytes of that request. -/
+@[inline] def sendOn (index number : UInt32) : UInt64 := (number.toUInt64 <<< 32) ||| index.toUInt64 ||| 0x80000000
 
 /-- Every frame of `rx` from `o` to `stop` taken in turn. -/
 @[specialize] partial def loop (cfg : @& Tuning) (answers : @& Array ByteArray)
@@ -646,24 +656,39 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
     -- Both ends had closed. A last segment sent again is acknowledged again.
     loop cfg answers respond now rx next stop t (if fin then emit cfg tx macHigh macLow rip rport 0x10 sent expected false ByteArray.empty 0 0 else tx)
   else
-  let expected := expected + length + (if fin then 1 else 0)
   let marks := rd8 t (off + 1)
+  -- An answer after which the connection stays open, all acknowledged by this very segment: the
+  -- connection is as it was before the request, and what the segment carries is the next one. (A peer
+  -- that has its answer sends the next request and the acknowledgement together.)
+  let over := state == 2 && marks &&& 16 != 0 &&
+    unacked == ld32 t (off + 28) + (answers.getD (ld32 t (off + 56)).toNat ByteArray.empty).size.toUInt32
+  let state : UInt8 := if over then 1 else state
+  let marks := if over then marks &&& 1 else marks
+  -- While an answer is on its way on a connection that stays open, nothing the peer sends is taken.
+  let held := state == 2 && marks &&& 16 != 0 && length != 0
+  let fin := fin && !held
+  let length := if held then 0 else length
+  let expected := expected + length + (if fin then 1 else 0)
   let peerClosed := fin || marks &&& 1 != 0
   -- The application is shown what has come, while it has not yet answered: it names an answer, or
   -- wants more. If the peer ends before it has named one, the end alone is sent.
   let said := if state == 1 && length != 0 then respond rx (f + 34 + header) length.toUSize (ld32 t (off + 60))
     else more (ld32 t (off + 60))
   let number := (said >>> 32).toUInt32
-  let named := state == 1 && length != 0 && said.toUInt32.toNat < answers.size
+  let named := state == 1 && length != 0 && (said.toUInt32 &&& 0x7fffffff).toNat < answers.size
   let ends := state == 1 && !named && fin
   let begins := named || ends
   let state : UInt8 := if begins then 2 else state
   let bare := if ends then true else marks &&& 2 != 0
   let first := if begins then sent else ld32 t (off + 28)
   let top := if begins then sent else top
-  let which := if named then said.toUInt32 else ld32 t (off + 56)
+  let which := if named then said.toUInt32 &&& 0x7fffffff else ld32 t (off + 56)
   let answer := answers.getD which.toNat ByteArray.empty
   let size : UInt32 := if bare then 0 else answer.size.toUInt32
+  -- Whether the connection stays open after the answer: as the application said, unless the peer has
+  -- closed, when the answer is followed by this end's closing too.
+  let stays := (if named then said.toUInt32 &&& 0x80000000 != 0 else marks &&& 16 != 0) && !peerClosed
+  let tail : UInt32 := if stays then 0 else 1
   -- This end's own window: so many segments to begin with; one more for each acknowledgement that moves
   -- while it is below `limit`, which is where it was halved to when a segment was last lost; above that,
   -- one more a window's worth of acknowledgements.
@@ -695,13 +720,13 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   let own := if again then half else own
   let tx :=
     if again || part then
-      let one := reach unacked unacked first size mss mss
+      let one := reach unacked unacked first size tail mss mss
       segments cfg answer tx macHigh macLow rip rport expected first size mss unacked (if one - unacked ≤ sent - unacked then one else sent)
     else tx
   let t := if again || part then bump t 96 else t
   let t := if again then st32 t (off + 76) top else t
   let mending := mending || again
-  let wanted := if state == 2 then reach sent unacked first size window own else sent
+  let wanted := if state == 2 then reach sent unacked first size tail window own else sent
   -- No further than there is room to write: what is held back goes when an acknowledgement or the sweep
   -- comes round to this connection again, and is not taken for sent.
   let to := fitting tx sent wanted mss
@@ -725,7 +750,7 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
     if to != sent then segments cfg answer tx macHigh macLow rip rport expected first size mss sent to
     else if length != 0 || fin then emit cfg tx macHigh macLow rip rport 0x10 sent expected false ByteArray.empty 0 0
     else tx
-  if state == 2 && unacked == first + size + 1 && peerClosed then
+  if state == 2 && !stays && unacked == first + size + 1 && peerClosed then
     -- Both ends have closed and ours is acknowledged: the entry goes, at once or after `linger`.
     if cfg.linger == 0 then loop cfg answers respond now rx next stop (bump (forget cfg t mask off) 16) tx
     else
@@ -736,13 +761,20 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
     let wait := waitOf cfg kept (if moved then 0 else rd8 t (off + 2))
     -- Something is owed an acknowledgement, or there is more to send that was held back: looked at
     -- again soon. Otherwise the connection has `idle` to say something.
-    let due := now + (if unacked != to || (state == 2 && to != first + size + 1) then wait else cfg.idle)
-    let t := wr8 (wr8 t off state) (off + 1) ((if peerClosed then 1 else 0) ||| (if bare then 2 else 0) ||| (if timing then 4 else 0) ||| (if mending then 8 else 0))
-    -- A peer that answers with its window still shut is there: it is tried again no faster for that,
-    -- and never given up on.
+    -- An answer after which the connection stays open, all acknowledged: the connection is as it was
+    -- before the request, and waits for the next.
+    let answered := state == 2 && stays && unacked == first + size
+    let state : UInt8 := if answered then 1 else state
+    let due := now + (if unacked != to || (state == 2 && to != first + size + tail) then wait else cfg.idle)
+    let t := wr8 (wr8 t off state) (off + 1) (if answered then (if peerClosed then 1 else 0) else
+      (if peerClosed then 1 else 0) ||| (if bare then 2 else 0) ||| (if timing then 4 else 0) ||| (if mending then 8 else 0) |||
+      (if stays then 16 else 0))
+    -- A peer that answers with its window still shut is there, and is not given up on: the count of
+    -- tries goes back to half of what is allowed, so that it takes several unanswered in a row, and
+    -- not two, to give up on one that has been answering.
     let tries := rd8 t (off + 2)
     let t := if moved then wr8 t (off + 2) 0
-      else if window == 0 && acked == was && length == 0 && tries != 0 && tries + 1 ≥ cfg.tries then wr8 t (off + 2) (tries - 1)
+      else if window == 0 && acked == was && length == 0 && tries > cfg.tries / 2 then wr8 t (off + 2) (cfg.tries / 2)
       else t
     let t := wr8 t (off + 3) count
     let t := st32 t (off + 4) due
@@ -789,10 +821,11 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
     let answer := answers.getD (ld32 t (off + 56)).toNat ByteArray.empty
     let size : UInt32 := if rd8 t (off + 1) &&& 2 != 0 then 0 else answer.size.toUInt32
     let mss := (rd16 t (off + 38)).toUInt32
-    if state == 2 && unacked == sent && sent != first + size + 1 then
+    let tail : UInt32 := if rd8 t (off + 1) &&& 16 != 0 then 0 else 1
+    if state == 2 && unacked == sent && sent != first + size + tail then
       -- Nothing is on its way and there is more to send: it was held back for want of room, or the
       -- peer's window was shut. It goes on from here, as far as the windows and the room allow.
-      let wanted := reach sent unacked first size ((rd16 t (off + 36)).toUInt32 <<< ((rd8 t (off + 72)).toUInt32 &&& 15)) (ld32 t (off + 48))
+      let wanted := reach sent unacked first size tail ((rd16 t (off + 36)).toUInt32 <<< ((rd8 t (off + 72)).toUInt32 &&& 15)) (ld32 t (off + 48))
       let to := fitting tx sent wanted mss
       -- A window shut to nothing is tried with one byte: if the word that it had opened was lost, this
       -- is how it is heard again. The byte is then owed an acknowledgement like any other.
@@ -802,6 +835,14 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
       let t := st32 (st32 t (off + 16) to) (off + 4) (now + waitOf cfg (ld32 t (off + 52)) 0)
       let t := if to - unacked > top - unacked then st32 t (off + 32) to else t
       sweep cfg answers now mask onward (left - 1) t tx
+    else if state == 1 && unacked == sent then
+      -- Open, with nothing asked of it for `idle`: this end closes, as it would after an answer with
+      -- nothing in it, and the peer's closing or a timer finishes it.
+      let tx := emit cfg tx macHigh macLow rip rport 0x11 sent expected false ByteArray.empty 0 0
+      let t := wr8 (wr8 (wr8 t off 2) (off + 1) ((rd8 t (off + 1) &&& 1) ||| 2)) (off + 2) 0
+      let t := st32 (st32 (st32 t (off + 16) (sent + 1)) (off + 28) sent) (off + 32) (sent + 1)
+      let t := st32 t (off + 4) (now + waitOf cfg (ld32 t (off + 52)) 0)
+      sweep cfg answers now mask onward (left - 1) t tx
     else if unacked == sent || tries ≥ cfg.tries then
       -- Nothing was owed and nothing came, or what was owed was sent again often enough: given up.
       let tx := emit cfg tx macHigh macLow rip rport 0x14 sent expected false ByteArray.empty 0 0
@@ -810,7 +851,7 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
       -- What was sent and not acknowledged is sent again, one segment of it, the wait doubled, and this
       -- end's own window shut to one segment, to open fast again only as far as half of what it was.
       -- Nothing is timed any more: an acknowledgement now could be of either sending.
-      let to := reach unacked unacked first size mss mss
+      let to := reach unacked unacked first size tail mss mss
       let to := if to - unacked ≤ sent - unacked then to else sent
       let tx := segments cfg answer tx macHigh macLow rip rport expected first size mss unacked to
       let wait := waitOf cfg (ld32 t (off + 52)) (tries + 1)

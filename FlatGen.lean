@@ -55,7 +55,7 @@ partial def answered (rx : @& ByteArray) (o stop : USize) : UInt64 :=
 /-- Every frame of `rx` answered as it asks to be. `stats` counts, eight bytes each: 0 answers that ended
 the stream, 8 resets, 16 SYN-ACKs, and from 64 on how many of the ended ones took under 1, 2, 4, …
 milliseconds. `now` is this machine's milliseconds. -/
-partial def reflect (cfg : @& Tuning) (macHigh : UInt16) (macLow : UInt32) (request : @& ByteArray) (now : UInt32)
+partial def reflect (cfg : @& Tuning) (macHigh : UInt16) (macLow : UInt32) (request : @& ByteArray) (each now : UInt32)
     (rx : @& ByteArray) (o stop : USize) (tx stats : ByteArray) : ByteArray × ByteArray :=
   if o + 2 > stop then (tx, stats) else
   let n := (rd16 rx o).toUSize
@@ -63,7 +63,7 @@ partial def reflect (cfg : @& Tuning) (macHigh : UInt16) (macLow : UInt32) (requ
   let next := f + n
   if next > stop then (tx, stats) else
   if n < 54 || rd16 rx (f + 12) != 0x0800 || rd8 rx (f + 14) != 0x45 || rd8 rx (f + 23) != 6 || rd32 rx (f + 26) != target then
-    reflect cfg macHigh macLow request now rx next stop tx stats
+    reflect cfg macHigh macLow request each now rx next stop tx stats
   else
   let header := ((rd8 rx (f + 46)) >>> 4).toUSize <<< 2
   let length := ((rd16 rx (f + 16)).toUSize - 20 - header).toUInt32
@@ -72,36 +72,51 @@ partial def reflect (cfg : @& Tuning) (macHigh : UInt16) (macLow : UInt32) (requ
   let flags := rd8 rx (f + 47)
   -- This end of the connection is whoever the frame is addressed to.
   let from_ : Tuning := { cfg with localIp := rd32 rx (f + 30), localPort := rd16 rx (f + 36) }
-  if flags &&& 0x04 != 0 then reflect cfg macHigh macLow request now rx next stop tx (bump stats 8)
+  if flags &&& 0x04 != 0 then reflect cfg macHigh macLow request each now rx next stop tx (bump stats 8)
   else if flags == 0x12 then
     let tx := emit from_ tx macHigh macLow target 80 0x10 acked (seq + 1) false request 0 0
     let tx := emit from_ tx macHigh macLow target 80 0x18 acked (seq + 1) false request 0 request.usize
-    reflect cfg macHigh macLow request now rx next stop tx (bump stats 16)
+    reflect cfg macHigh macLow request each now rx next stop tx (bump stats 16)
+  else if each > 1 && flags &&& 0x01 != 0 then
+    -- On a connection kept open this end closed first, and this is the server's closing after it.
+    reflect cfg macHigh macLow request each now rx next stop
+      (emit from_ tx macHigh macLow target 80 0x10 acked (seq + length + 1) false request 0 0) stats
+  else if each > 1 && length != 0 && flags &&& 0x08 != 0 then
+    -- An answer on a connection kept open. How many requests the server has had is in what it
+    -- acknowledges, since the number this end began with has nothing in its twelve lowest bits: the next
+    -- request goes with the acknowledgement, or after the last of them this end's closing.
+    let had := ((acked - 1) &&& 0xfff) / request.size.toUInt32
+    let tx := if had < each then emit from_ tx macHigh macLow target 80 0x18 acked (seq + length) false request 0 request.usize
+      else emit from_ tx macHigh macLow target 80 0x11 acked (seq + length) false request 0 0
+    reflect cfg macHigh macLow request each now rx next stop tx (bump stats 0)
   else if flags &&& 0x01 != 0 then
     let tx := emit from_ tx macHigh macLow target 80 0x11 acked (seq + length + 1) false request 0 0
     -- When it began is in the number it began with, which is what is acknowledged less the request.
-    let began := (acked - 1 - request.size.toUInt32) >>> 10
-    let took := (now - began) &&& 0x3fffff
+    let began := (acked - 1 - request.size.toUInt32) >>> 12
+    let took := (now - began) &&& 0xfffff
     let bucket : USize := if took < 1 then 0 else if took < 2 then 1 else if took < 4 then 2 else if took < 8 then 3
       else if took < 16 then 4 else if took < 32 then 5 else if took < 64 then 6 else if took < 128 then 7
       else if took < 256 then 8 else if took < 512 then 9 else if took < 1024 then 10 else 11
-    reflect cfg macHigh macLow request now rx next stop tx (bump (bump stats 0) (64 + bucket * 8))
+    reflect cfg macHigh macLow request each now rx next stop tx (bump (bump stats 0) (64 + bucket * 8))
   else if length != 0 then
-    reflect cfg macHigh macLow request now rx next stop
+    reflect cfg macHigh macLow request each now rx next stop
       (emit from_ tx macHigh macLow target 80 0x10 acked (seq + length) false request 0 0) stats
-  else reflect cfg macHigh macLow request now rx next stop tx stats
+  else reflect cfg macHigh macLow request each now rx next stop tx stats
 
 /-- `count` connections begun, each from the next address and port in turn. -/
 partial def open_ (cfg : @& Tuning) (macHigh : UInt16) (macLow : UInt32) (now : UInt32) (serial count : Nat) (tx : ByteArray) : ByteArray :=
   if count == 0 then tx else
   let from_ : Tuning := { cfg with localIp := 0x0a010000 + (serial % 65536).toUInt32, localPort := (1024 + serial / 65536 % 60000).toUInt16 }
-  let first : UInt32 := (now <<< 10) ||| (serial % 1024).toUInt32
+  let first : UInt32 := now <<< 12
   open_ cfg macHigh macLow now (serial + 1) (count - 1) (emit from_ tx macHigh macLow target 80 0x02 first 0 true ByteArray.empty 0 0)
 
 def main : IO UInt32 := do
   let some (card, rings) ← VirtioNet.start 1024 | do say "flat-gen: no network card that will do"; return 1
   let cfg : Tuning := { localIp := own, macHigh := card.macHigh, macLow := card.macLow }
-  let request := "GET / HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n".toUTF8
+  -- How many requests a connection makes is said by whoever starts this guest, in the fourth byte of
+  -- the card's Ethernet address: nothing there, or 1, is one request and then the end, as it always was.
+  let each : UInt32 := let said := (card.macLow >>> 16) &&& 0xff; if said < 2 then 1 else if said > 100 then 100 else said
+  let request := (if each > 1 then "GET / HTTP/1.1\r\nHost: 10.0.2.15\r\n\r\n" else "GET / HTTP/1.1\r\nHost: 10.0.2.15\r\nConnection: close\r\n\r\n").toUTF8
   let mut rings := rings
   let mut scratch := VirtioNet.scratchFor card
   let mut batch := Flat.zeros (card.size.toNat * 1520)
@@ -151,10 +166,12 @@ def main : IO UInt32 := do
     let clock ← Efi.millis
     let now := clock.toUInt32
     tx := st64 tx 0 8
-    if length != 0 then (tx, stats) := reflect cfg macHigh macLow request now batch 0 length tx stats
+    if length != 0 then (tx, stats) := reflect cfg macHigh macLow request each now batch 0 length tx stats
     -- What the time since the last turn owes at the rate set, and whatever earlier turns could not be
     -- given room for, up to a fiftieth of a second's worth.
-    let rate := (rates[step]!).toUInt64
+    -- With several requests a connection the rates are of requests, three times those listed.
+    let wanted := if each > 1 then rates[step]! * 3 else rates[step]!
+    let rate := (wanted / each.toNat).toUInt64
     let present ← Hw.ticks
     credit := credit + rate * (present - tick)
     tick := present
@@ -170,7 +187,7 @@ def main : IO UInt32 := do
     if length == 0 then idle := idle + 1
     if clock ≥ second + 1000 then
       let times := (List.range 12).map fun b => toString (ld64 stats (64 + b.toUSize * 8))
-      notes := notes.push s!"flat-gen: rate {rates[step]!}: opened {opened}, answered {ld64 stats 0}, reset {ld64 stats 8}, not taken by the card {rings.dropped}, {turns} turns of which {idle} with nothing, {rings.waits - waited} waits for the card; under 1 2 4 8 16 32 64 128 256 512 1024 ms and over: {" ".intercalate times}"
+      notes := notes.push s!"flat-gen: rate {wanted}: opened {opened * each.toNat}, answered {ld64 stats 0}, reset {ld64 stats 8}, not taken by the card {rings.dropped}, {turns} turns of which {idle} with nothing, {rings.waits - waited} waits for the card; under 1 2 4 8 16 32 64 128 256 512 1024 ms and over: {" ".intercalate times}"
       stats := Flat.zeros 256
       turns := 0
       idle := 0

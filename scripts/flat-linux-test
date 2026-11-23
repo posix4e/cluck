@@ -6,14 +6,16 @@ and must get the whole answer and the end of the stream.
 
     scripts/flat-linux-test [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES] [--request BYTES]
     scripts/flat-linux-test --http [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES-OF-/big]
-                            [--delay MS] [--fixed-wait] [--window SEGMENTS] [--stall SECONDS]
+                            [--delay MS] [--fixed-wait] [--window SEGMENTS] [--stall SECONDS] [--keep N] [--idle]
 
 With --http the stack is run as its small web server and asked for pages by Python's own HTTP client, and
 by curl if there is one: /, /big and a page that is not there, in turn. --delay holds every frame from
 Linux back so many milliseconds, which is then the round trip; --fixed-wait has the stack not measure
 round trips, to see what measuring them is worth; --window is the most segments the stack will have on
 their way at once (64 if not said). --stall first asks for /big over a connection that has room for
-4 KB and reads nothing for so many seconds, so that its window shuts, and then reads it all.
+4 KB and reads nothing for so many seconds, so that its window shuts, and then reads it all. --keep has
+each connection ask N times before it closes, one request after another's answer. --idle first makes
+one request on a connection it then leaves open, and says how the server ends it.
 
     scripts/flat-linux-test --guest dev|tdx [--connections N] [--at-once K]
 
@@ -137,21 +139,25 @@ else:
         threading.Thread(target=work, daemon=True).start()
 
 expected = bytes(i % 251 for i in range(answer_bytes))
+keep = option("--keep", 1)
 request = b"a" * request_bytes
 
 def one(i):
     began = time.time()
     if web:
         import http.client
-        path, status, body = (("/", 200, b"a TCP written in Lean\n"), ("/big", 200, expected), ("/nothing", 404, b"nothing here\n"))[i % 3]
+        pages = (("/", 200, b"a TCP written in Lean\n"), ("/big", 200, expected), ("/nothing", 404, b"nothing here\n"))
         try:
             c = http.client.HTTPConnection(address, 80, timeout=120)
-            c.request("GET", path)
-            r = c.getresponse()
-            got = r.read()
+            for k in range(keep):
+                path, status, body = pages[(i + k) % 3]
+                c.request("GET", path)
+                r = c.getresponse()
+                got = r.read()
+                if not (r.status == status and got == body):
+                    return f"wrong: {path} gave {r.status} and {len(got)} bytes", time.time() - began
             c.close()
-            ok = r.status == status and got == body
-            return ("whole" if ok else f"wrong: {path} gave {r.status} and {len(got)} bytes"), time.time() - began
+            return "whole", time.time() - began
         except (OSError, http.client.HTTPException) as error:
             return f"{type(error).__name__}: {error}", time.time() - began
     try:
@@ -181,7 +187,7 @@ if web and "--stall" in sys.argv:
     stalled = time.time()
     try:
         s.connect((address, 80))
-        s.sendall(b"GET /big HTTP/1.1\r\nHost: x\r\n\r\n")
+        s.sendall(b"GET /big HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
         time.sleep(stall)
         got = b""
         while True:
@@ -193,6 +199,19 @@ if web and "--stall" in sys.argv:
         print(f"a reader that read nothing for {stall:g} s: " + ("whole" if body == expected else f"wrong: {len(body)} bytes of {len(expected)}") + f", {time.time() - stalled:.1f} s in all")
     except OSError as error:
         print(f"a reader that read nothing for {stall:g} s: {type(error).__name__}: {error}")
+    s.close()
+if web and "--idle" in sys.argv:
+    s = socket.socket()
+    s.settimeout(60)
+    try:
+        s.connect((address, 80))
+        s.sendall(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+        got = s.recv(65536)
+        waited = time.time()
+        more = s.recv(65536)
+        print(f"a connection left open after its answer ({len(got)} bytes): " + ("closed by the server" if more == b"" else f"sent {len(more)} bytes more") + f" after {time.time() - waited:.1f} s")
+    except OSError as error:
+        print(f"a connection left open after its answer: {type(error).__name__}: {error}")
     s.close()
 began = time.time()
 with ThreadPoolExecutor(at_once) as pool:

@@ -483,6 +483,39 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     connection open this way for as long as it likes, which costs this end
     128 bytes and a byte every three seconds; there is no setting yet for
     how long that may go on.
+  - **A connection can carry more than one request** (2026-11-23). The
+    application may say that the connection stays open after its answer
+    (`Flat.sendOn`); the answer then has no end of stream after it, and when
+    it is all acknowledged the connection is as it was before the request.
+    The segment that acknowledges the last of an answer usually carries the
+    next request, and that is taken from it. A connection open and asked
+    nothing for `idle` is closed, not reset. The small web server, now in one
+    place (`Kernel/Net/FlatHttp.lean`) for the hosted server and the guest,
+    keeps a connection open as HTTP/1.1 has it unless the request says
+    `Connection: close`, and waits for a request's empty line before it
+    answers.
+    - Against Linux: 300 connections of twelve requests each, pages and
+      100 KB in turn, all whole; 100 such with 3% of frames lost each way,
+      all whole; a connection left open after its answer is closed by the
+      server after 10 s; and the same against the guest in TDX (1,500
+      connections of eight).
+    - In memory, one core, checksums on: 2.0 million requests a second at
+      ten a connection and 2.5 million at a hundred, where one a connection
+      is 1.07 million.
+    - In a trust domain on the polling backend, one processor a guest
+      (`scripts/flat-load tdx --backend dpdk --keep 16`): 2.1 million
+      requests a second all answered, about 2.25 million at the most. Eight
+      guests: 14.4 million all answered, 16.5 million at the most.
+    - One request a connection costs more than it did, since the request now
+      says `Connection: close` and the server looks for that: 790,000 of
+      800,000 a second answered for one guest (was 798,756) and about 800,000
+      at the most (was 850,000); eight guests answer 5.6 million at the most
+      (was 6.5).
+    - What it does not do: take a second request sent before the first is
+      answered (it is not acknowledged, and comes again on the peer's
+      timer); HTTP/1.0's closing by default; a request with a body. The
+      generator's times are not kept for requests after a connection's
+      first.
   - Not run against anything but Linux; not run with a peer that does not
     offer to scale (the generator guest is one, and it is answered).
 

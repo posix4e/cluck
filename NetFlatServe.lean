@@ -1,4 +1,4 @@
-import Kernel.Net.Flat
+import Kernel.Net.FlatHttp
 
 /-! The trial TCP (`Kernel/Net/Flat.lean`) as a process that somebody else brings frames to, for trying it
 against a real TCP (`scripts/flat-linux-test`). On standard input: two bytes of length, then a frame of
@@ -14,14 +14,6 @@ line must come in one segment. -/
 
 open Kernel.Net.Flat
 
-def page (status : String) (body : ByteArray) : ByteArray :=
-  s!"HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {body.size}\r\nConnection: close\r\n\r\n".toUTF8 ++ body
-
-/-- Whether the bytes of `rx` from `at_` begin with `text`. -/
-def begins (rx : ByteArray) (at_ length : USize) (text : String) : Bool :=
-  let want := text.toUTF8
-  want.usize ≤ length && (List.range want.size).all fun i => rd8 rx (at_ + i.toUSize) == want[i]!
-
 def main (args : List String) : IO UInt32 := do
   let web := args.head? == some "http"
   let number (i : Nat) (otherwise : Nat) : Nat := (args[i]?.bind String.toNat?).getD otherwise
@@ -29,14 +21,11 @@ def main (args : List String) : IO UInt32 := do
                         mostWindow := if web then (number 3 64).toUInt32 else 64 }
   let pattern (n : Nat) : ByteArray := ByteArray.mk (Array.range n |>.map fun i => (i % 251).toUInt8)
   let answers : Array ByteArray :=
-    if web then #[page "200 OK" "a TCP written in Lean\n".toUTF8, page "200 OK" (pattern (number 1 1000000)), page "404 Not Found" "nothing here\n".toUTF8]
+    if web then Kernel.Net.FlatHttp.pages (pattern (number 1 1000000))
     else #[pattern (number 1 128)]
   let wanted := (number 0 100).toUInt32
   let respond (rx : ByteArray) (at_ length : USize) (had : UInt32) : UInt64 :=
-    if web then
-      if begins rx at_ length "GET / " then send 0 0
-      else if begins rx at_ length "GET /big " then send 1 0
-      else send 2 0
+    if web then Kernel.Net.FlatHttp.respond rx at_ length had
     else
       let got := had + length.toUInt32
       if got ≥ wanted then send 0 got else more got

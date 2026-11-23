@@ -1,5 +1,6 @@
 import Kernel.Efi
 import Kernel.Net.VirtioNet
+import Kernel.Net.FlatHttp
 import Platform
 
 /-! The trial TCP (`Kernel/Net/Flat.lean`) on a network card of its own (`Kernel/Net/VirtioNet.lean`), as
@@ -16,13 +17,6 @@ open Kernel.Net
 open Kernel.Net.Flat
 
 def say (line : String) : IO Unit := Platform.write (line ++ "\n").toUTF8
-
-def page (status : String) (body : ByteArray) : ByteArray :=
-  s!"HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {body.size}\r\nConnection: close\r\n\r\n".toUTF8 ++ body
-
-def begins (rx : ByteArray) (at_ length : USize) (text : String) : Bool :=
-  let want := text.toUTF8
-  want.usize ≤ length && (List.range want.size).all fun i => rd8 rx (at_ + i.toUSize) == want[i]!
 
 /-- For every frame of `rx` that asks whose Ethernet address `cfg.localIp` is, the answer written to `tx`
 after what is there. -/
@@ -69,13 +63,8 @@ def main : IO UInt32 := do
   -- Nor is one such batch: after any pause there is one, and the next is small again.)
   let behind : Tuning := { cfg with busy := 1 }
   let mut pressed := false
-  let pattern := ByteArray.mk ((Array.range 1000000).map fun i => (i % 251).toUInt8)
-  let answers : Array ByteArray :=
-    #[page "200 OK" "a TCP written in Lean\n".toUTF8, page "200 OK" pattern, page "404 Not Found" "nothing here\n".toUTF8]
-  let respond (rx : ByteArray) (at_ length : USize) (_ : UInt32) : UInt64 :=
-    if begins rx at_ length "GET / " then send 0 0
-    else if begins rx at_ length "GET /big " then send 1 0
-    else send 2 0
+  let answers := Kernel.Net.FlatHttp.pages (ByteArray.mk ((Array.range 1000000).map fun i => (i % 251).toUInt8))
+  let respond := Kernel.Net.FlatHttp.respond
   let mut rings := rings
   let mut scratch := VirtioNet.scratchFor card
   let mut batch := Flat.zeros (card.size.toNat * 1520)
@@ -86,7 +75,7 @@ def main : IO UInt32 := do
   let mut seen : UInt64 := 0
   -- For whoever asks what the limit is: each second, how many times round, how many of them with nothing
   -- from the card, and how long the card was waited for.
-  -- What there is to say is kept until a second goes by with no frames, and said then: writing a line
+  -- What there is to say is kept until a second goes by with next to no frames, and said then: writing a line
   -- takes about a millisecond here, in which a thousand frames come and some are lost.
   let mut notes : Array String := #[]
   let mut second := last
@@ -133,7 +122,7 @@ def main : IO UInt32 := do
     turns := turns + 1
     if length == 0 then idle := idle + 1
     if clock - second ≥ 1000 then
-      if rings.frames == counted then
+      if rings.frames - counted < 1000 then
         for note in notes do say note
         notes := #[]
       else

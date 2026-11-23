@@ -5,7 +5,8 @@ import Kernel.Net.Tcp
 network card: clients made up here open a connection, send a request, take the answer and close, over and
 over, and only the time spent inside the stack is counted.
 
-    .lake/build/bin/net-flat-bench [connections] [at once] [checksums: 1 or 0] [request bytes] [answer bytes] [FILE.pcap]
+    .lake/build/bin/net-flat-bench [connections] [at once] [checksums: 1 or 0] [request bytes] [answer bytes] [FILE.pcap or -]
+                                   [requests a connection]
 
 With a file named, every frame of the run, both ways, is written to it as a capture, for another program
 to read and judge (`scripts/flat-capture-check`); a run for that should be a small one.
@@ -62,14 +63,15 @@ partial def captured (capture : ByteArray) (frames : ByteArray) (o stop : USize)
   let capture := st32 (st32 (st32 (st32 capture at_ (round / 1000)) (at_ + 4) (round % 1000 * 1000)) (at_ + 8) n.toUInt32) (at_ + 12) n.toUInt32
   captured (capture ++ frames.extract (o + 2).toNat (o + 2 + n).toNat) frames (o + 2 + n) stop round
 
-def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes : Nat) (capturePath : Option String := none) : IO Unit := do
+def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes : Nat) (capturePath : Option String := none)
+    (each : Nat := 1) : IO Unit := do
   let slotBits := (Nat.log2 (4 * atOnce) + 1).max 10
   let cfg : Tuning := { slotBits := slotBits.toUSize, checksums }
   -- The application: when so many bytes have come, the one answer.
   let wanted := requestBytes.toUInt32
   let respond (_ : ByteArray) (_ length : USize) (had : UInt32) : UInt64 :=
     let got := had + length.toUInt32
-    if got ≥ wanted then Flat.send 0 got else Flat.more got
+    if got ≥ wanted then (if each > 1 then Flat.sendOn 0 0 else Flat.send 0 got) else Flat.more got
   let request := ByteArray.mk (Array.replicate requestBytes 0x61)
   let answers := #[ByteArray.mk (Array.replicate answerBytes 0x62)]
   -- For each client: its state (1 has sent a SYN, 2 the request, 3 its FIN), its port, its first number.
@@ -126,6 +128,27 @@ def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes
         (rx, rxLength) := clientFrame cfg rx rxLength cip port 0x18 (first + 1) (theirs + 1) request
         clients := st32 clients c 2
         pendingIn := pendingIn + 2
+      else if each > 1 && state == 2 && payload != 0 && flags &&& 0x08 != 0 then
+        -- The answer, on a connection that stays open: the next request with its acknowledgement, or after
+        -- the last of them this end's closing.
+        let had := ld32 clients (c + 12) + 1
+        let at_ := first + 1 + had * request.size.toUInt32
+        if had.toNat < each then
+          (rx, rxLength) := clientFrame cfg rx rxLength cip port 0x18 at_ (theirs + payload) request
+          clients := st32 clients (c + 12) had
+        else
+          (rx, rxLength) := clientFrame cfg rx rxLength cip port 0x11 at_ (theirs + payload) .empty
+          clients := st32 (st32 clients c 3) (c + 12) 0
+        pendingIn := pendingIn + 1
+      else if each > 1 && state == 3 && flags == 0x11 then
+        -- The server's closing in answer to this end's: acknowledged, and the next connection begun.
+        (rx, rxLength) := clientFrame cfg rx rxLength cip port 0x10 acked (theirs + 1) .empty
+        done := done + 1
+        let port := if port ≥ 60000 then 1024 else port + 1
+        let first := first * 1664525 + 1013904223
+        clients := st32 (st32 (st32 clients c 1) (c + 4) port.toUInt32) (c + 8) first
+        (rx, rxLength) := clientFrame cfg rx rxLength cip port 0x02 first 0 .empty
+        pendingIn := pendingIn + 2
       else if flags &&& 0x01 != 0 && state == 2 && payload != 0 then
         -- The last of the answer, with the end of the stream on it: everything before it is acknowledged
         -- with it, and this end closes.
@@ -146,6 +169,7 @@ def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes
   let seconds := spent.toFloat / 1e9
   IO.println s!"flat: {done} connections, {atOnce} at once, checksums {if checksums then "on" else "off"}, request {requestBytes} bytes, answer {answerBytes} bytes, table of 2^{slotBits}"
   IO.println s!"  {seconds} s in the stack: {(done.toFloat / seconds).round} connections a second on one core, {(spent.toFloat / framesIn.toFloat).round} ns a frame in ({framesIn} in, {framesOut} out)"
+  if each > 1 then IO.println s!"  {each} requests a connection: {((done * each).toFloat / seconds).round} requests a second"
   if let some path := capturePath then IO.FS.writeBinFile path capture
   IO.println s!"  counters: live {ld64 t 0}, accepted {ld64 t 8}, closed {ld64 t 16}, SYNs {ld64 t 24}, dropped {ld64 t 32}, out of order {ld64 t 40}, resets taken {ld64 t 48}, no room {ld64 t 56}, sent again {ld64 t 72}, timed out {ld64 t 80}, resets sent {ld64 t 88}, sent again on repeats {ld64 t 96}, held back {ld64 t 104}, round trips measured {ld64 t 120}"
 
@@ -195,6 +219,6 @@ def main (args : List String) : IO UInt32 := do
   let number (i : Nat) (otherwise : Nat) : Nat := (args[i]?.bind String.toNat?).getD otherwise
   let connections := number 0 1000000
   let atOnce := number 1 1000
-  flat connections atOnce (number 2 1 == 1) (number 3 100) (number 4 128) args[5]?
+  flat connections atOnce (number 2 1 == 1) (number 3 100) (number 4 128) (args[5]?.filter (· != "-")) (number 6 1)
   system (min connections 200000) (number 3 100) (number 4 128)
   return 0

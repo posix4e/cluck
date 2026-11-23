@@ -110,7 +110,7 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   agrees on the checksums.
 - What it does not do: there is no network card under it, and getting frames
   from one fast in a trust domain is the hard part; segments out of order are
-  asked for again, not kept; a window shut to nothing is not probed; no options but the largest segment
+  asked for again, not kept; no options but the largest segment
   and the window's scale (no timestamps; no selective
   acknowledgement); IPv4 with no options only; one core; and the application
   is one fixed answer. It is slow at moving much data (2 MB took 1.7 s on one
@@ -470,6 +470,19 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     that come out of order would win the speed back. That is for what this
     end receives; for what it sends, this was the thing.) Still without
     selective acknowledgements, which would say all the holes at once.
+  - **A window shut to nothing is tried** (2026-11-23). A peer that stops
+    reading shuts its window, and says so again when it opens; if that word
+    was lost this end waited for ever. Now one byte is sent against a shut
+    window, and again at the pace of the timer for as long as the peer
+    answers; a peer that stops answering is reset after `tries` like any
+    other. `scripts/flat-linux-test --http --stall 15` asks for a megabyte
+    over a connection with room for 4 KB and reads nothing for 15 s: whole
+    with none lost, whole with 10% of frames lost each way (in 57 s), whole
+    against the guest in TDX. Not shown: the same test failing before the
+    change (with nothing lost it passes without it). A peer may hold a
+    connection open this way for as long as it likes, which costs this end
+    128 bytes and a byte every three seconds; there is no setting yet for
+    how long that may go on.
   - Not run against anything but Linux; not run with a peer that does not
     offer to scale (the generator guest is one, and it is answered).
 

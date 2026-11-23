@@ -6,13 +6,14 @@ and must get the whole answer and the end of the stream.
 
     scripts/flat-linux-test [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES] [--request BYTES]
     scripts/flat-linux-test --http [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES-OF-/big]
-                            [--delay MS] [--fixed-wait] [--window SEGMENTS]
+                            [--delay MS] [--fixed-wait] [--window SEGMENTS] [--stall SECONDS]
 
 With --http the stack is run as its small web server and asked for pages by Python's own HTTP client, and
 by curl if there is one: /, /big and a page that is not there, in turn. --delay holds every frame from
 Linux back so many milliseconds, which is then the round trip; --fixed-wait has the stack not measure
 round trips, to see what measuring them is worth; --window is the most segments the stack will have on
-their way at once (64 if not said).
+their way at once (64 if not said). --stall first asks for /big over a connection that has room for
+4 KB and reads nothing for so many seconds, so that its window shuts, and then reads it all.
 
     scripts/flat-linux-test --guest dev|tdx [--connections N] [--at-once K]
 
@@ -172,6 +173,27 @@ if web and subprocess.run(["which", "curl"], capture_output=True).returncode == 
     print(f"curl -i http://{address}/ :", repr(shown.stdout), shown.stderr.strip())
     sized = subprocess.run(["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code} %{size_download} bytes in %{time_total} s", "--max-time", "60", f"http://{address}/big"], capture_output=True, text=True)
     print(f"curl http://{address}/big :", sized.stdout, sized.stderr.strip())
+if web and "--stall" in sys.argv:
+    stall = option("--stall", 5.0)
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    s.settimeout(120)
+    stalled = time.time()
+    try:
+        s.connect((address, 80))
+        s.sendall(b"GET /big HTTP/1.1\r\nHost: x\r\n\r\n")
+        time.sleep(stall)
+        got = b""
+        while True:
+            piece = s.recv(65536)
+            if not piece:
+                break
+            got += piece
+        body = got.split(b"\r\n\r\n", 1)[-1]
+        print(f"a reader that read nothing for {stall:g} s: " + ("whole" if body == expected else f"wrong: {len(body)} bytes of {len(expected)}") + f", {time.time() - stalled:.1f} s in all")
+    except OSError as error:
+        print(f"a reader that read nothing for {stall:g} s: {type(error).__name__}: {error}")
+    s.close()
 began = time.time()
 with ThreadPoolExecutor(at_once) as pool:
     results = list(pool.map(one, range(connections)))

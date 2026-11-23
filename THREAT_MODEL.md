@@ -18,6 +18,25 @@ IDs at runtime and selects DMA buffers from driver-owned records. Its code proce
 I/O below the Lean Ethernet parser. The Nitro boot stub's W^X and stack-guard checks do not
 exercise this path.
 
+A program on this target can also take a PCI device from the firmware's drivers and drive it itself
+(`Kernel/Hw.lean`, whose C half here is `boot/efi/hw.c`). No image that serves anything does yet; a probe
+does (`pci-probe`). What that C exposes, and what stands in the way:
+- It reads any device's configuration space and, for the one device claimed, its registers and an arena
+  of memory shared with it. All of it goes through the firmware's PCI protocol, so the firmware's PCI
+  bus driver, its register access and, in a trust domain, its code that makes pages visible to the host
+  (`IoMmuDxe`) are in the path of every such access, as they are for the firmware's own drivers.
+- It decides nothing about what it reads. Which device to claim, what a capability or a register means,
+  what a queue holds: that is Lean. The C checks only that a register lies in one of the claimed device's
+  windows (the firmware checks it again) and that memory copied in or out lies in what the arena has
+  handed out. Lean is never given a pointer, so a wrong number from a device or a mistake in a driver
+  can stop the machine but cannot reach the heap, the stack or the code.
+- In a trust domain the arena is memory the host can read and change at any moment, and every register
+  access is a call to the host, which answers what it likes. A driver must treat what it copies out of
+  the arena, and every register it reads, as the host's word: read once, checked, and not read again.
+- The firmware's driver for the device is disconnected when the device is claimed, and the device is
+  held so that the firmware cannot bind it again. An image that claims the network card no longer has
+  the firmware's network driver under it at all.
+
 The host and anyone on the network can observe, change, replay or drop Ethernet traffic.
 ARP and Neighbor Discovery establish reachability. Neither authenticates a peer. The demo
 serves cleartext TCP and UDP, and exposes its framing and transport state to remote clients.

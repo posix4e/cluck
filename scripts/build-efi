@@ -48,6 +48,7 @@ done
 compile "$os/rt/bare/libc.c" -fno-builtin -Wall -Wextra -Werror
 compile "$os/rt/bare/platform.c" -Wall -Wextra -Werror
 compile "$os/boot/efi/platform.c" -DREQUIRE_TDX="$require_tdx" -Wall -Wextra -Werror
+compile "$os/boot/efi/hw.c" -Wall -Wextra -Werror
 # C from Lake's actual dependency closure, never its hosted platform objects.
 while IFS= read -r arg; do
   arg="${arg#\"}"; arg="${arg%\"}"

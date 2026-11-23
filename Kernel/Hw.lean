@@ -49,6 +49,41 @@ opaque load (address : UInt64) (size : USize) : BaseIO ByteArray
 @[extern "silo_hw_store"]
 opaque store (address : UInt64) (bytes : @& ByteArray) : BaseIO Unit
 
+/-! ## A PCI device, where the firmware offers them (the EFI target)
+
+There a driver first looks through the PCI devices by their configuration, claims one, and after that the
+windows are that device's six address ranges (window `i` at the made-up address `(i + 1) <<< 32`), and the
+shared memory is an arena got when it was claimed. Registers come in three widths. -/
+
+/-- How many PCI devices the firmware found. -/
+@[extern "silo_hw_devices"]
+opaque devices : BaseIO USize
+
+/-- `width` bytes (1, 2 or 4) of device `index`'s configuration at `offset`; all ones if it will not say. -/
+@[extern "silo_hw_config"]
+opaque config (index : USize) (offset : UInt32) (width : UInt8) : BaseIO UInt32
+
+/-- Takes device `index` from the firmware's drivers for this program alone, lets it use memory, and sets
+aside the memory shared with it. Once, for one device. Whether it worked. -/
+@[extern "silo_hw_claim"]
+opaque claim (index : USize) : BaseIO Bool
+
+/-- A device register of `width` bytes (1, 2 or 4). Stops the machine if it is not inside a window. -/
+@[extern "silo_hw_read"]
+opaque read (address : UInt64) (width : UInt8) : BaseIO UInt32
+
+@[extern "silo_hw_write"]
+opaque write (address : UInt64) (width : UInt8) (value : UInt32) : BaseIO Unit
+
+/-- `size` bytes of device memory copied into `bytes` from place `at_` on, where `bytes` is: nothing is
+allocated. Stops the machine if `bytes` has another owner or is too short. -/
+@[extern "silo_hw_load_into"]
+opaque loadInto (address : UInt64) (bytes : ByteArray) (at_ size : USize) : BaseIO ByteArray
+
+/-- `size` bytes of `bytes` from place `at_` on copied into device memory. -/
+@[extern "silo_hw_store_from"]
+opaque storeFrom (address : UInt64) (bytes : @& ByteArray) (at_ size : USize) : BaseIO Unit
+
 /-- The boot loader's command line, as the bytes it gave. -/
 @[extern "silo_hw_command_line"]
 opaque commandLine : BaseIO ByteArray

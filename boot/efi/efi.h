@@ -29,7 +29,7 @@ typedef struct {
     Status (EFIAPI *stall)(size_t);
     Status (EFIAPI *watchdog)(size_t, uint64_t, size_t, uint16_t *);
     Status (EFIAPI *connect)(Handle, Handle *, void *, uint8_t);
-    void *disconnect;
+    Status (EFIAPI *disconnect)(Handle, Handle, Handle);
     Status (EFIAPI *open_protocol)(Handle, const Guid *, void **, Handle, Handle, uint32_t);
     void *close_protocol, *open_protocol_information, *protocols_per_handle;
     Status (EFIAPI *handles)(uint32_t, const Guid *, void *, size_t *, Handle **);
@@ -67,6 +67,34 @@ struct Network {
     NetworkMode *mode;
 };
 
+// A PCI device as the firmware offers it: its configuration, its registers by window and offset, and
+// memory it can be pointed at. Widths are 0, 1, 2 for one, two and four bytes.
+typedef struct PciIo PciIo;
+typedef Status (EFIAPI *PciIoAccess)(PciIo *, uint32_t width, uint8_t bar, uint64_t offset, size_t count, void *buffer);
+typedef Status (EFIAPI *PciIoConfig)(PciIo *, uint32_t width, uint32_t offset, size_t count, void *buffer);
+struct PciIo {
+    void *poll_mem, *poll_io;
+    PciIoAccess mem_read, mem_write, io_read, io_write;
+    PciIoConfig config_read, config_write;
+    void *copy_mem;
+    Status (EFIAPI *map)(PciIo *, uint32_t operation, void *host, size_t *bytes, uint64_t *device_address, void **mapping);
+    void *unmap;
+    Status (EFIAPI *allocate_buffer)(PciIo *, uint32_t type, uint32_t memory_type, size_t pages, void **host, uint64_t attributes);
+    void *free_buffer, *flush, *get_location;
+    Status (EFIAPI *attributes)(PciIo *, uint32_t operation, uint64_t attributes, uint64_t *result);
+    Status (EFIAPI *bar_attributes)(PciIo *, uint8_t bar, uint64_t *supports, void **resources);
+    void *set_bar_attributes;
+    uint64_t rom_size;
+    void *rom_image;
+};
+
+// The firmware's table and this image's handle, kept by platform.c.
+extern SystemTable *efi_system_table;
+extern Handle efi_image_handle;
+
+_Static_assert(offsetof(PciIo, map) == 72, "x64 PCI IO protocol");
+_Static_assert(offsetof(PciIo, attributes) == 120, "x64 PCI IO protocol");
+_Static_assert(offsetof(BootServices, disconnect) == 272, "x64 boot services");
 _Static_assert(offsetof(SystemTable, boot) == 96, "x64 system table");
 _Static_assert(offsetof(BootServices, handles) == 312, "x64 boot services");
 _Static_assert(offsetof(Network, mode) == 120, "x64 simple network protocol");

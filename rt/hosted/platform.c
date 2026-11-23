@@ -112,6 +112,13 @@ lean_obj_res silo_hw_write32(uint64_t address, uint32_t value) { (void)address; 
 uint64_t silo_hw_alloc(size_t size) { (void)size; no_hardware(); }
 lean_obj_res silo_hw_load(uint64_t address, size_t size) { (void)address; (void)size; no_hardware(); }
 lean_obj_res silo_hw_store(uint64_t address, b_lean_obj_arg bytes) { (void)address; (void)bytes; no_hardware(); }
+size_t silo_hw_devices(void) { return 0; }
+uint32_t silo_hw_config(size_t index, uint32_t offset, uint8_t width) { (void)index; (void)offset; (void)width; return 0xffffffff; }
+uint8_t silo_hw_claim(size_t index) { (void)index; return 0; }
+uint32_t silo_hw_read(uint64_t address, uint8_t width) { (void)address; (void)width; no_hardware(); }
+lean_obj_res silo_hw_write(uint64_t address, uint8_t width, uint32_t value) { (void)address; (void)width; (void)value; no_hardware(); }
+lean_obj_res silo_hw_load_into(uint64_t address, lean_obj_arg bytes, size_t at, size_t size) { (void)address; (void)bytes; (void)at; (void)size; no_hardware(); }
+lean_obj_res silo_hw_store_from(uint64_t address, b_lean_obj_arg bytes, size_t at, size_t size) { (void)address; (void)bytes; (void)at; (void)size; no_hardware(); }
 lean_obj_res silo_hw_command_line(void) { return lean_alloc_sarray(1, 0, 0); }
 lean_obj_res silo_hw_pause(void) { return lean_box(0); }
 uint32_t silo_check(void) { no_hardware(); }

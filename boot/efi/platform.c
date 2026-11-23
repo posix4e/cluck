@@ -4,8 +4,10 @@
 #include "../boot.h"
 #include "../../rt/rt.h"
 
-static SystemTable *system_table;
-static Handle image_handle;
+SystemTable *efi_system_table;
+Handle efi_image_handle;
+#define system_table efi_system_table
+#define image_handle efi_image_handle
 static Network *nic;
 void *boot_heap_start;
 // How much the runtime's heap is. A package whose program needs more says so when it compiles this file.

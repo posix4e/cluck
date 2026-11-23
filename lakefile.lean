@@ -190,6 +190,10 @@ lean_exe «net-internet-test» where
 lean_exe «net-tcp-test» where
   root := `NetTcpTest
 
+lean_exe «pci-probe» where
+  root := `PciProbe
+  moreLinkObjs := #[platformHosted, efiHosted]
+
 lean_exe «net-flat-bench» where
   root := `NetFlatBench
 

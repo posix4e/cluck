@@ -179,6 +179,21 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   in closing was mended made 10 connections a second against Linux: each waited
   a second to close.
 
+- **Lean can reach a PCI device on this target** (2026-11-23). `boot/efi/hw.c` is
+  the C half of `Kernel/Hw.lean` here, on the firmware's PCI protocol: any
+  device's configuration as numbers; for one device claimed from the firmware's
+  drivers, its registers by window and offset in one, two or four bytes, and an
+  arena of 8 MB shared with it, reached only by checked copies, one of them into
+  an array that is already there. `pci-probe` finds the virtio network card,
+  reads its capabilities, claims it, and reads what it offers: in the emulator
+  and in TDX alike five capabilities in one window of 16 KB, three queues of 256
+  entries, its Ethernet address, and a page of shared memory that holds what is
+  put there. In TDX it offers one thing more than in the emulator, the bit that
+  says its memory must be the kind the host can see. `scripts/test-efi tdx`
+  passes on the demo image built with the changed `platform.c`. Not built or run:
+  the `evm/` images with it (a run of the builder has those files in use), and
+  nothing drives the card yet.
+
 ## Ethereum block import, as a service (`evm/`)
 
 An experiment: whether someone else's Lean, written for proofs and for Lean's own runtime, can be the service

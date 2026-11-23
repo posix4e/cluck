@@ -19,8 +19,10 @@ I/O below the Lean Ethernet parser. The Nitro boot stub's W^X and stack-guard ch
 exercise this path.
 
 A program on this target can also take a PCI device from the firmware's drivers and drive it itself
-(`Kernel/Hw.lean`, whose C half here is `boot/efi/hw.c`). No image that serves anything does yet; a probe
-does (`pci-probe`). What that C exposes, and what stands in the way:
+(`Kernel/Hw.lean`, whose C half here is `boot/efi/hw.c`). A probe does (`pci-probe`), and so does a test
+image, `flat-os`, which serves three fixed pages over a trial TCP on a driver of this project's own for the
+virtio network card (`Kernel/Net/VirtioNet.lean`); the builder's images and the demo do not. What that C
+exposes, and what stands in the way:
 - It reads any device's configuration space and, for the one device claimed, its registers and an arena
   of memory shared with it. All of it goes through the firmware's PCI protocol, so the firmware's PCI
   bus driver, its register access and, in a trust domain, its code that makes pages visible to the host
@@ -36,6 +38,12 @@ does (`pci-probe`). What that C exposes, and what stands in the way:
 - The firmware's driver for the device is disconnected when the device is claimed, and the device is
   held so that the firmware cannot bind it again. An image that claims the network card no longer has
   the firmware's network driver under it at all.
+- The driver for the network card keeps to that: it copies what the card has finished out of the shared
+  memory once and looks only at its copy; the count of finished buffers is cut to the queue's size, a
+  buffer's number is taken modulo the size, a length is cut to the buffer's; it never reads a descriptor
+  back, and asks the card for no feature that would hand it a frame unfinished. It trusts the card to
+  finish transmit buffers in the order they were given: a host that does not can spoil frames on their
+  way out, as it can anyway. None of it has been tried against a card that misbehaves on purpose.
 
 The host and anyone on the network can observe, change, replay or drop Ethernet traffic.
 ARP and Neighbor Discovery establish reachability. Neither authenticates a peer. The demo

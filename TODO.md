@@ -194,6 +194,35 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   the `evm/` images with it (a run of the builder has those files in use), and
   nothing drives the card yet.
 
+- **The trial TCP on a card of its own, in a guest** (2026-11-23).
+  `Kernel/Net/VirtioNet.lean` is a driver for the virtio network card written
+  for batches: buffers set up once, everything the card has finished taken in
+  one go and each frame copied once, the host told once a batch, nothing
+  allocated. `flat-os` is the trial TCP's small web server on it, with no
+  firmware network driver under it.
+  - `scripts/flat-linux-test --guest tdx` runs it in a trust domain on a tap
+    device with the kernel's vhost-net (no root) and fetches its pages with
+    Python's HTTP client and `curl`: 3,000 requests, a megabyte in every third,
+    32 at a time, in 2.0 s; every answer whole; nothing sent again by either
+    end; no bad checksum counted by Linux or found by `tcpdump` in a capture
+    of 317,000 frames. That is a gigabyte in two seconds from one processor.
+    In the emulator, 300 requests whole.
+  - It did not start that way. The same 3,000 took 12.7 s, one connection 11.6 s
+    of it. Two things, both in the stack and neither in the driver. It wrote
+    more frames in one go than the card has buffers and the driver dropped what
+    did not fit after a third of a millisecond: the driver now waits some tens
+    of milliseconds, and the stack holds an answer back when there is no room
+    to write it and goes on when the sweep or an acknowledgement comes round.
+    And after a timer it sent one lost segment again and no more, so that a run
+    of 64 lost together cost 64 timers: now everything from the oldest
+    unacknowledged byte is taken for lost and follows as the window reopens.
+    With that the runs against Linux with frames lost on purpose are quicker
+    too (200,000 bytes at 3% lost: 0.38 s a connection where it was 0.5).
+  - Not done or not known: how many connections a second this carries, since
+    nothing here can ask fast enough (next: something that can); what a card
+    that misbehaves on purpose can do; more than one queue; the card is told
+    once a batch whether or not it needs telling.
+
 ## Ethereum block import, as a service (`evm/`)
 
 An experiment: whether someone else's Lean, written for proofs and for Lean's own runtime, can be the service

@@ -194,6 +194,10 @@ lean_exe «pci-probe» where
   root := `PciProbe
   moreLinkObjs := #[platformHosted, efiHosted]
 
+lean_exe «flat-os» where
+  root := `FlatMain
+  moreLinkObjs := #[platformHosted, efiHosted]
+
 lean_exe «net-flat-bench» where
   root := `NetFlatBench
 

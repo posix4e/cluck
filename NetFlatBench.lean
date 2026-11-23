@@ -82,7 +82,8 @@ def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes
     clients := st32 (st32 (st32 clients c 1) (c + 4) 1024) (c + 8) first
     (rx, rxLength) := clientFrame cfg rx rxLength (clientBase + i.toUInt32) 1024 0x02 first 0 .empty
   let mut t := Flat.table cfg
-  let mut tx := Flat.outbox (atOnce * (60 + answerBytes))
+  -- Room for every client's answer at once, a frame's heading for each segment of it.
+  let mut tx := Flat.outbox (atOnce * (answerBytes + 64 * (answerBytes / 1000 + 2)))
   let mut done := 0
   let mut spent := 0
   let mut framesIn := 0
@@ -146,7 +147,7 @@ def flat (connections atOnce : Nat) (checksums : Bool) (requestBytes answerBytes
   IO.println s!"flat: {done} connections, {atOnce} at once, checksums {if checksums then "on" else "off"}, request {requestBytes} bytes, answer {answerBytes} bytes, table of 2^{slotBits}"
   IO.println s!"  {seconds} s in the stack: {(done.toFloat / seconds).round} connections a second on one core, {(spent.toFloat / framesIn.toFloat).round} ns a frame in ({framesIn} in, {framesOut} out)"
   if let some path := capturePath then IO.FS.writeBinFile path capture
-  IO.println s!"  counters: live {ld64 t 0}, accepted {ld64 t 8}, closed {ld64 t 16}, SYNs {ld64 t 24}, dropped {ld64 t 32}, out of order {ld64 t 40}, resets taken {ld64 t 48}, no room {ld64 t 56}, sent again {ld64 t 72}, timed out {ld64 t 80}, resets sent {ld64 t 88}, sent again on repeats {ld64 t 96}"
+  IO.println s!"  counters: live {ld64 t 0}, accepted {ld64 t 8}, closed {ld64 t 16}, SYNs {ld64 t 24}, dropped {ld64 t 32}, out of order {ld64 t 40}, resets taken {ld64 t 48}, no room {ld64 t 56}, sent again {ld64 t 72}, timed out {ld64 t 80}, resets sent {ld64 t 88}, sent again on repeats {ld64 t 96}, held back {ld64 t 104}"
 
 /-- The system's TCP through the same exchange, one connection at a time, in TCP segments. -/
 def system (connections requestBytes answerBytes : Nat) : IO Unit := do

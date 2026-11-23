@@ -9,6 +9,12 @@ and must get the whole answer and the end of the stream.
 
 With --http the stack is run as its small web server and asked for pages by Python's own HTTP client, and
 by curl if there is one: /, /big and a page that is not there, in turn.
+
+    scripts/flat-linux-test --guest dev|tdx [--connections N] [--at-once K]
+
+With --guest the stack is not a process here but the guest `flat-os`, on its own driver for a virtio card
+(scripts/build-efi PROFILE flat-os first), the tap device given to QEMU with the kernel's vhost-net behind
+it; the web server's pages are asked for as with --http. No frames are lost on purpose in this mode.
 """
 import fcntl, os, random, socket, struct, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
@@ -21,71 +27,102 @@ def option(name, default):
 connections, at_once = option("--connections", 2000), option("--at-once", 32)
 loss, answer_bytes, request_bytes = option("--loss", 0.0) / 100, option("--answer", 128), option("--request", 100)
 here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-web = "--http" in sys.argv
+guest = option("--guest", "")
+web = "--http" in sys.argv or bool(guest)
 if web and "--answer" not in sys.argv:
     answer_bytes = 1000000
+address = "10.0.2.15" if guest else "10.0.0.2"
 
-tap = os.open("/dev/net/tun", os.O_RDWR)
-fcntl.ioctl(tap, 0x400454ca, struct.pack("16sH22s", b"tap0", 0x0002 | 0x1000, b""))     # TUNSETIFF: a tap, frames bare
-for command in ("ip addr add 10.0.0.1/24 dev tap0", "ip link set tap0 up", "ip link set lo up",
-                "ip neigh replace 10.0.0.2 lladdr 02:00:00:00:00:02 dev tap0 nud permanent"):
-    subprocess.run(command.split(), check=True)
-
-server = subprocess.Popen([os.path.join(here, ".lake/build/bin/net-flat-serve")] + (["http", str(answer_bytes)] if web else [str(request_bytes), str(answer_bytes)]),
-                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
-to_server = threading.Lock()
 counts = {"to_stack": 0, "from_stack": 0, "lost_to": 0, "lost_from": 0}
 running = True
 rng = random.Random(1)
+console = []
 
-def inward():
-    while running:
-        try:
-            frame = os.read(tap, 4096)
-        except OSError:
-            return
-        if len(frame) < 34 or frame[12:14] != b"\x08\x00":
-            continue                                     # not IPv4: neighbour discovery and the like
-        if rng.random() < loss:
-            counts["lost_to"] += 1
-            continue
-        counts["to_stack"] += 1
-        with to_server:
-            server.stdin.write(struct.pack(">H", len(frame)) + frame)
+if guest:
+    # QEMU makes the tap device and puts vhost-net behind it; this end only gives it an address.
+    server = subprocess.Popen([os.path.join(here, "scripts/run-efi"), guest, "flat-os"], env=dict(os.environ, SILO_NET_TAP="tap0"),
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    def listen():
+        for line in server.stdout:
+            console.append(line.rstrip())
+    threading.Thread(target=listen, daemon=True).start()
+    for _ in range(200):
+        if subprocess.run(["ip", "link", "show", "tap0"], capture_output=True).returncode == 0:
+            break
+        time.sleep(0.1)
+    for command in ("ip addr add 10.0.2.2/24 dev tap0", "ip link set tap0 up", "ip link set lo up"):
+        subprocess.run(command.split(), check=True)
+    if "--capture" in sys.argv:
+        # Every frame on the tap, for scripts/flat-capture-check to judge afterwards.
+        watcher = subprocess.Popen(["tcpdump", "-i", "tap0", "-s", "0", "-U", "-Z", "root", "-B", "65536", "-w", option("--capture", "")], stderr=subprocess.DEVNULL)
+        import atexit
+        atexit.register(lambda: (watcher.terminate(), watcher.wait()))
+        time.sleep(0.5)
+    began = time.time()
+    while not any("serving" in line for line in console):
+        if time.time() - began > 120 or server.poll() is not None:
+            print("\n".join(console[-15:]))
+            sys.exit("flat-linux-test: the guest did not come up")
+        time.sleep(0.2)
+else:
+    tap = os.open("/dev/net/tun", os.O_RDWR)
+    fcntl.ioctl(tap, 0x400454ca, struct.pack("16sH22s", b"tap0", 0x0002 | 0x1000, b""))     # TUNSETIFF: a tap, frames bare
+    for command in ("ip addr add 10.0.0.1/24 dev tap0", "ip link set tap0 up", "ip link set lo up",
+                    "ip neigh replace 10.0.0.2 lladdr 02:00:00:00:00:02 dev tap0 nud permanent"):
+        subprocess.run(command.split(), check=True)
 
-def outward():
-    def exactly(n):
-        got = b""
-        while len(got) < n:
-            piece = server.stdout.read(n - len(got))
-            if not piece:
-                return None
-            got += piece
-        return got
-    while True:
-        head = exactly(2)
-        if head is None:
-            return
-        frame = exactly(struct.unpack(">H", head)[0])
-        if frame is None:
-            return
-        if rng.random() < loss:
-            counts["lost_from"] += 1
-            continue
-        counts["from_stack"] += 1
-        os.write(tap, frame)
+    server = subprocess.Popen([os.path.join(here, ".lake/build/bin/net-flat-serve")] + (["http", str(answer_bytes)] if web else [str(request_bytes), str(answer_bytes)]),
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+    to_server = threading.Lock()
 
-def clock():
-    while running:
-        time.sleep(0.01)
-        with to_server:
+    def inward():
+        while running:
             try:
-                server.stdin.write(b"\0\0")
+                frame = os.read(tap, 4096)
             except OSError:
                 return
+            if len(frame) < 34 or frame[12:14] != b"\x08\x00":
+                continue                                     # not IPv4: neighbour discovery and the like
+            if rng.random() < loss:
+                counts["lost_to"] += 1
+                continue
+            counts["to_stack"] += 1
+            with to_server:
+                server.stdin.write(struct.pack(">H", len(frame)) + frame)
 
-for work in (inward, outward, clock):
-    threading.Thread(target=work, daemon=True).start()
+    def outward():
+        def exactly(n):
+            got = b""
+            while len(got) < n:
+                piece = server.stdout.read(n - len(got))
+                if not piece:
+                    return None
+                got += piece
+            return got
+        while True:
+            head = exactly(2)
+            if head is None:
+                return
+            frame = exactly(struct.unpack(">H", head)[0])
+            if frame is None:
+                return
+            if rng.random() < loss:
+                counts["lost_from"] += 1
+                continue
+            counts["from_stack"] += 1
+            os.write(tap, frame)
+
+    def clock():
+        while running:
+            time.sleep(0.01)
+            with to_server:
+                try:
+                    server.stdin.write(b"\0\0")
+                except OSError:
+                    return
+
+    for work in (inward, outward, clock):
+        threading.Thread(target=work, daemon=True).start()
 
 expected = bytes(i % 251 for i in range(answer_bytes))
 request = b"a" * request_bytes
@@ -96,7 +133,7 @@ def one(i):
         import http.client
         path, status, body = (("/", 200, b"a TCP written in Lean\n"), ("/big", 200, expected), ("/nothing", 404, b"nothing here\n"))[i % 3]
         try:
-            c = http.client.HTTPConnection("10.0.0.2", 80, timeout=120)
+            c = http.client.HTTPConnection(address, 80, timeout=120)
             c.request("GET", path)
             r = c.getresponse()
             got = r.read()
@@ -106,7 +143,7 @@ def one(i):
         except (OSError, http.client.HTTPException) as error:
             return f"{type(error).__name__}: {error}", time.time() - began
     try:
-        with socket.create_connection(("10.0.0.2", 80), timeout=120) as s:
+        with socket.create_connection((address, 80), timeout=120) as s:
             s.settimeout(120)
             s.sendall(request)
             got = b""
@@ -120,25 +157,33 @@ def one(i):
         return f"{type(error).__name__}: {error}", time.time() - began
 
 if web and subprocess.run(["which", "curl"], capture_output=True).returncode == 0:
-    shown = subprocess.run(["curl", "-sS", "-i", "--max-time", "20", "http://10.0.0.2/"], capture_output=True, text=True)
-    print("curl -i http://10.0.0.2/ :", repr(shown.stdout), shown.stderr.strip())
-    sized = subprocess.run(["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code} %{size_download} bytes in %{time_total} s", "--max-time", "60", "http://10.0.0.2/big"], capture_output=True, text=True)
-    print("curl http://10.0.0.2/big :", sized.stdout, sized.stderr.strip())
+    shown = subprocess.run(["curl", "-sS", "-i", "--max-time", "20", f"http://{address}/"], capture_output=True, text=True)
+    print(f"curl -i http://{address}/ :", repr(shown.stdout), shown.stderr.strip())
+    sized = subprocess.run(["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code} %{size_download} bytes in %{time_total} s", "--max-time", "60", f"http://{address}/big"], capture_output=True, text=True)
+    print(f"curl http://{address}/big :", sized.stdout, sized.stderr.strip())
 began = time.time()
 with ThreadPoolExecutor(at_once) as pool:
     results = list(pool.map(one, range(connections)))
 took = time.time() - began
 running = False
 time.sleep(0.3)
-server.stdin.close()
-said = server.stderr.read().decode().strip()
+if guest:
+    server.terminate()
+    try:
+        server.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        server.kill()
+    said = "the guest said: " + " | ".join(line for line in console if "flat-os" in line or "silo" in line)
+else:
+    server.stdin.close()
+    said = server.stderr.read().decode().strip()
 kinds = {}
 for kind, _ in results:
     kinds[kind] = kinds.get(kind, 0) + 1
 times = sorted(t for _, t in results)
 linux = dict(line.split()[:2] for line in subprocess.run(["nstat", "-az"], capture_output=True, text=True).stdout.splitlines()[1:]
              if line.split()[0] in ("TcpInCsumErrors", "TcpRetransSegs", "TcpInErrs", "TcpExtTCPTimeouts", "TcpAttemptFails", "TcpEstabResets", "IpInHdrErrors"))
-print((f"{connections} requests by HTTP from Linux, {at_once} at once, /big of {answer_bytes} bytes" if web else
+print((f"{connections} requests by HTTP from Linux{' to the guest (' + guest + ')' if guest else ''}, {at_once} at once, /big of {answer_bytes} bytes" if web else
        f"{connections} connections from Linux, {at_once} at once, request {request_bytes} bytes, answer {answer_bytes} bytes") + f", {loss * 100:g}% of frames lost each way")
 print(f"  {kinds}")
 print(f"  {took:.1f} s; a connection took {times[len(times) // 2] * 1000:.1f} ms at the median, {times[-1] * 1000:.0f} ms at the most")

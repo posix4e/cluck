@@ -62,5 +62,5 @@ def main (args : List String) : IO UInt32 := do
     if stop > 8 then
       stdout.write (tx.extract 8 stop)
       stdout.flush
-  IO.eprintln s!"net-flat-serve: live {ld64 t 0}, accepted {ld64 t 8}, closed {ld64 t 16}, SYNs {ld64 t 24}, dropped {ld64 t 32}, out of order {ld64 t 40}, resets taken {ld64 t 48}, no room {ld64 t 56}, sent again {ld64 t 72}, timed out {ld64 t 80}, resets sent {ld64 t 88}, sent again on repeats {ld64 t 96}"
+  IO.eprintln s!"net-flat-serve: live {ld64 t 0}, accepted {ld64 t 8}, closed {ld64 t 16}, SYNs {ld64 t 24}, dropped {ld64 t 32}, out of order {ld64 t 40}, resets taken {ld64 t 48}, no room {ld64 t 56}, sent again {ld64 t 72}, timed out {ld64 t 80}, resets sent {ld64 t 88}, sent again on repeats {ld64 t 96}, held back {ld64 t 104}"
   return 0

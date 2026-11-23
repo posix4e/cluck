@@ -713,7 +713,7 @@ The first piece of that is done: the guest builds a block (`evm/Evm/Build.lean`)
   2026-11-21: Flashbots, Ultra Sound, Aestus and Titan take bids from a key they have not seen (as
   low-priority, fully simulated); bloXroute wants a paid plan; a bid below a relay's floor is skipped, not
   refused, and Flashbots drops an empty block without saying so.
-- Not done: 1,000 slots in a row with a valid block ready in time (two runs fell short, above); a second
+- Not done (1,000 slots in a row with a valid block ready in time has been, twice: below); a second
   landed block, or one that wins without a payment on top; the report that ties the key to the image has
   not been fetched by anything outside (the kept quote covers the reply, which holds the key, and is not
   published); the order privacy a builder in a trust domain is for: transactions still reach the guest in
@@ -1285,7 +1285,29 @@ times, and the block from the relay. Six stages:
     the stand-in: 349 blocks sent, all valid, signed and the same there, none late, and the
     guest's FIN 1.9 ms after the relay's at the median where it had been 1,017 ms. The 1,000 slots
     and the hour at real relays were run on the images before it.
-  - Not done: 1,000 slots on the image as it now is; a bid can still be answered after its slot
+  - **1,000 slots in a row on the image as it now is**, 2026-11-22 23:35 to 2026-11-23 02:56
+    UTC, blocks 26473983 to 26474981, in TDX against the stand-in, image `9dbd42e7…d731193c`,
+    the same command and a watcher of the node's pool beside it (frames not kept this time).
+    - The guest was never restarted. It built 6,460 blocks and sent 6,327; it kept 129 that paid
+      no more than one already sent and 4 that it ended too long after their time.
+    - Every block sent was judged valid and its signature checked; 6,326 were at the stand-in as
+      made from the guest's answer. One was not answered in the guest's three seconds (02:21:43
+      UTC, the second of two rounds for its slot, the first of which was there): the same once
+      in some six thousand as the run before, and nothing else was running on the machine then
+      that had not been all along.
+    - None reached the stand-in after its slot had begun. The last block of a slot was there
+      0.64 s before the slot at the median; one slot in ten had its last more than 2.4 s before.
+    - Every one of the 1,000 slots had a block sent. Nothing was mended and nothing given up.
+    - Against the blocks proposers took in 874 of the slots: ours paid 0.00134 ETH at the median
+      and theirs 0.00492; ours was 27% of theirs at the median, 83% at best, never more; summed,
+      1.29 ETH against 7.47 (17%). Of what the taken block held that had been pending here at
+      least a second before the slot, ours held 90% by fees at the median (84% summed); at least
+      3 s before, 99% (94%).
+    - The machine was not otherwise idle for it: from 00:20 on, load tests of the trial TCP ran
+      beside it on up to eight cores (above, "Connections a second").
+    - Rebuilt after the changes under `boot/efi` for the card driver, the image is the same,
+      byte for byte.
+  - Not done: a bid can still be answered after its slot
     has begun when the parent comes very late (one in 1,432 at the real relays); the builders
     that win go on to the slot's start or past it, and ours stops half a second short on purpose;
     transactions with blobs are left out; Ethereum's suites were not run again for these images

@@ -6,12 +6,12 @@ What is different from the system's, and why each thing is so:
 * **Frames come and go in batches**, many to an array, each with its length in two bytes before it. A
   network card hands over dozens at a time, and a call a frame is what a fast stack cannot afford.
 * **Nothing is allocated for a frame.** A frame is read where it lies; an answer is written into an array
-  that was there before, at a place kept in that array's first eight bytes; a connection is 64 bytes in
-  one flat table, found by a keyed hash of its addresses and changed in place. Lean changes an array in
+  that was there before, at a place kept in that array's first eight bytes; a connection is 128 bytes in
+  one flat table (what every frame needs in the first 64), found by a keyed hash of its addresses and changed in place. Lean changes an array in
   place when nothing else holds it, and everything here is written to keep it so.
 * **A connection costs nothing until it is real.** The answer to a SYN is worked out from a keyed hash of
-  the addresses and a clock (a SYN cookie), with the peer's largest segment in its two lowest bits and
-  the clock in steps of 16 ms in the six above them, and
+  the addresses and a clock (a SYN cookie), with the peer's largest segment in its two lowest bits, how
+  the peer scales its window in the four above, and the clock in steps of 64 ms in the four above those, and
   nothing is kept; the table gets an entry only when the third packet of the handshake comes back with
   that number in it, and how long it took to come back is the connection's first round trip.
 * **Time is a sweep.** Every entry carries the time by which something must have happened to it. `tick`
@@ -25,16 +25,18 @@ What is different from the system's, and why each thing is so:
 * **What can be tuned is in one place**, `Tuning`.
 
 What it does: the handshake by cookie; data in, in order; an answer of any length out, cut to the
-peer's largest segment and kept within the peer's window and a window of its own that opens as
-acknowledgements come, halves when a segment is seen to be lost and shuts to one segment when a timer
-fires; sending again on a timer, and at once when the same acknowledgement has come `repeats` times
+peer's largest segment and kept within the peer's window, scaled as the peer said, and a window of its
+own: one segment more for every acknowledgement until a segment is first lost, half of that when one is
+seen to be lost, one segment when a timer fires, and from then on a segment more a round trip once it
+is back to half of where it was (Reno, as RFC 5681 has it, without the inflating); sending again on a timer, and at once when the same acknowledgement has come `repeats` times
 (after a timer everything from the oldest unacknowledged byte is taken for lost and sent again as the
 window reopens, so a run of lost segments costs one timer and not one each);
 both orders of closing; a reset for a segment that belongs to nothing.
 
 What it does not do, and a TCP must or should: keep segments that come out of order (it asks again for
-the next byte); probe a window that has shut to nothing; any option but the largest segment
-(so no window scaling, timestamps or selective acknowledgement); IPv6; IP options or fragments.
+the next byte); probe a window that has shut to nothing; any option but the largest segment and the
+window's scale (so no timestamps or selective acknowledgement), and its own window is never scaled;
+IPv6; IP options or fragments.
 
 **The application** is a function and a list of answers. What a connection sends is always one whole
 answer out of the list, an array of bytes that does not change, and then the end of the stream: so a
@@ -47,7 +49,7 @@ suits a server that answers requests from a store of ready answers, and nothing 
 
 Laid out:
 
-    table   128 bytes of counters and marks, then 2^slotBits entries of 64 bytes
+    table   128 bytes of counters and marks, then 2^slotBits entries of 128 bytes
             eight bytes each: 0 live, 8 accepted, 16 closed, 24 SYNs, 32 dropped, 40 out of order,
             48 resets taken, 56 no room, 64 where the sweep has got to, 72 sent again, 80 timed out,
             88 resets sent, 96 sent again on repeated acknowledgements, 104 times an answer was held
@@ -65,8 +67,9 @@ Laid out:
             the clock)   48 this end's window of its own
             52 the round trip as measured: sixteen bits of eight times its smoothed length, then
             sixteen of four times how far it strays, in milliseconds; nothing until one is measured
-            56 which answer is being sent (sixteen bits), then sixteen bits of the number of the byte
-            being timed   60 the application's own number
+            56 which answer is being sent   60 the application's own number
+            64 the byte being timed   68 where this end's window stops opening a segment an
+            acknowledgement   72 how many places the peer's window is shifted   the rest is not used
     out     eight bytes saying where the next frame goes, then frames -/
 
 namespace Kernel.Net.Flat
@@ -284,7 +287,7 @@ where
     | fuel + 1 => if b.size < n then go (b ++ b) fuel else b
 
 /-- A fresh table, and a fresh array to write frames to. -/
-def table (cfg : Tuning) : ByteArray := zeros (128 + (1 <<< cfg.slotBits.toNat) * 64)
+def table (cfg : Tuning) : ByteArray := zeros (128 + (1 <<< cfg.slotBits.toNat) * 128)
 
 def outbox (bytes : Nat) : ByteArray := st64 (zeros (8 + bytes)) 0 8
 
@@ -299,13 +302,30 @@ def outbox (bytes : Nat) : ByteArray := st64 (zeros (8 + bytes)) 0 8
 @[inline] def home (cfg : @& Tuning) (k : UInt64) : USize :=
   (sip cfg.key0 cfg.key1 k 0).toUSize &&& (((1 : USize) <<< cfg.slotBits) - 1)
 
-/-- The number that answers a SYN, but for its eight lowest bits: nothing is kept, and the same number is
+/-- The number that answers a SYN, but for its ten lowest bits: nothing is kept, and the same number is
 worked out again when the third packet comes. `tick` moves on every minute or so, and the one before is
-still taken. `step` is the six bits of the clock that go below it in the open, hashed with the rest so
-that they cannot be changed on the way. That leaves 24 bits to be guessed by someone who would open a
-connection from an address that is not theirs, which is what Linux's cookies leave. -/
-@[inline] def cookie (cfg : @& Tuning) (k : UInt64) (theirs tick step : UInt32) : UInt32 :=
-  (sip cfg.key1 cfg.key0 k ((theirs.toUInt64 <<< 32) ||| (tick.toUInt64 <<< 8) ||| step.toUInt64)).toUInt32 &&& 0xffffff00
+still taken. `low` is what goes below it in the open (`lowOf`), hashed with the rest so that it cannot
+be changed on the way. That leaves 22 bits to be guessed by someone who would open a connection from an
+address that is not theirs (Linux's cookies leave 24): one guess in two million, with two ticks taken. -/
+@[inline] def cookie (cfg : @& Tuning) (k : UInt64) (theirs tick low : UInt32) : UInt32 :=
+  (sip cfg.key1 cfg.key0 k ((theirs.toUInt64 <<< 32) ||| (tick.toUInt64 <<< 10) ||| low.toUInt64)).toUInt32 &&& 0xfffffc00
+
+/-- How a SYN says its sender's window is to be shifted: its options looked through for it. 255 when it
+does not say (and then neither end scales), which is written 15. -/
+partial def scaleOffered (rx : @& ByteArray) (i stop : USize) : UInt32 :=
+  if i ≥ stop then 15 else
+  let kind := rd8 rx i
+  if kind == 0 then 15
+  else if kind == 1 then scaleOffered rx (i + 1) stop
+  else
+    let size := (rd8 rx (i + 1)).toUSize
+    if size < 2 || i + size > stop then 15
+    else if kind == 3 && size == 3 then (let by_ := (rd8 rx (i + 2)).toUInt32; if by_ > 14 then 14 else by_)
+    else scaleOffered rx (i + size) stop
+
+/-- The ten lowest bits of the number that answers a SYN: four of the clock in steps of 64 ms, four for
+the window's shift (15 for none), two for the largest segment. -/
+@[inline] def lowOf (now : UInt32) (scale index : UInt32) : UInt32 := (((now >>> 6) &&& 15) <<< 6) ||| (scale <<< 2) ||| index
 
 /-- The largest segments a cookie can remember, by its two lowest bits: the four Linux uses. -/
 @[inline] def segmentOf (index : UInt32) : UInt16 :=
@@ -358,8 +378,8 @@ run out already. -/
   if w > cfg.waitMost then cfg.waitMost else w
 
 /-- Where the entry at place `i` begins in the table, and the place of the entry that begins at `off`. -/
-@[inline] def place (i : USize) : USize := (i <<< 6) + 128
-@[inline] def placeOf (off : USize) : USize := (off - 128) >>> 6
+@[inline] def place (i : USize) : USize := (i <<< 7) + 128
+@[inline] def placeOf (off : USize) : USize := (off - 128) >>> 7
 
 /-- Where the entry with this key is, looking on from place `i`; 0 when there is none. -/
 partial def find (t : @& ByteArray) (mask : USize) (k : UInt64) (i : USize) : USize :=
@@ -392,6 +412,8 @@ partial def remove (cfg : @& Tuning) (t : ByteArray) (mask : USize) (i j : USize
       let t := st64 t (hole + 40) (ld64 t (off + 40))
       let t := st64 t (hole + 48) (ld64 t (off + 48))
       let t := st64 t (hole + 56) (ld64 t (off + 56))
+      let t := st64 t (hole + 64) (ld64 t (off + 64))
+      let t := st64 t (hole + 72) (ld64 t (off + 72))
       remove cfg t mask j ((j + 1) &&& mask)
 
 /-- The entry that begins at `off` taken out, and one fewer counted as live. -/
@@ -403,9 +425,10 @@ partial def remove (cfg : @& Tuning) (t : ByteArray) (mask : USize) (i j : USize
 /-- A frame written to `tx`: to this Ethernet and IP address and port, with these flags and numbers, and
 `length` bytes of `payload` from `start`. Nothing is written when there is no room. -/
 def emit (cfg : @& Tuning) (tx : ByteArray) (macHigh : UInt16) (macLow rip : UInt32) (rport : UInt16)
-    (flags : UInt8) (seq ack : UInt32) (mssOption : Bool) (payload : @& ByteArray) (start length : USize) : ByteArray :=
+    (flags : UInt8) (seq ack : UInt32) (mssOption : Bool) (payload : @& ByteArray) (start length : USize)
+    (scaleOption : Bool := false) : ByteArray :=
   let at_ := written tx
-  let options : USize := if mssOption then 4 else 0
+  let options : USize := if mssOption then (if scaleOption then 8 else 4) else 0
   let segment := 20 + options + length
   let total := 34 + segment
   if at_.toNat + 2 + total.toNat > tx.size then tx else
@@ -427,11 +450,14 @@ def emit (cfg : @& Tuning) (tx : ByteArray) (macHigh : UInt16) (macLow rip : UIn
   let tx := wr16 tx (t + 2) rport
   let tx := wr32 tx (t + 4) seq
   let tx := wr32 tx (t + 8) ack
-  let tx := wr8 tx (t + 12) (if mssOption then 0x60 else 0x50)
+  let tx := wr8 tx (t + 12) (if mssOption then (if scaleOption then 0x70 else 0x60) else 0x50)
   let tx := wr8 tx (t + 13) flags
   let tx := wr16 tx (t + 14) cfg.window
   let tx := wr32 tx (t + 16) 0
   let tx := if mssOption then wr16 (wr16 tx (t + 20) 0x0204) (t + 22) cfg.mss else tx
+  -- This end's own window is not scaled: the option is there, saying no places, so that the peer may
+  -- scale its own.
+  let tx := if mssOption && scaleOption then wr32 tx (t + 24) 0x01030300 else tx
   let tx := if length == 0 then tx else payload.copySlice start.toNat tx (t + 20 + options).toNat length.toNat
   let tx :=
     if cfg.checksums then
@@ -520,9 +546,11 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
     else if cfg.busy != 0 && ld64 t 0 > cfg.busy then loop cfg answers respond now rx next stop (bump t 112) tx
     else
       let theirs := offered rx (f + 54) (f + 34 + header)
-      let step := (now >>> 4) &&& 63
-      let ours := cookie cfg k seq (now >>> 16) step ||| (step <<< 2) ||| indexOf (if theirs < cfg.mss then theirs else cfg.mss)
-      loop cfg answers respond now rx next stop (bump t 24) (emit cfg tx macHigh macLow rip rport 0x12 ours (seq + 1) true ByteArray.empty 0 0)
+      let scale := scaleOffered rx (f + 54) (f + 34 + header)
+      let low := lowOf now scale (indexOf (if theirs < cfg.mss then theirs else cfg.mss))
+      let ours := cookie cfg k seq (now >>> 16) low ||| low
+      loop cfg answers respond now rx next stop (bump t 24)
+        (emit cfg tx macHigh macLow rip rport 0x12 ours (seq + 1) true ByteArray.empty 0 0 (scale != 15))
   else
   let h := home cfg k
   let known := find t mask k h
@@ -534,9 +562,9 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   else
   -- The third packet of a handshake makes the entry, if its number is the cookie's and there is room.
   let tick := now >>> 16
-  let theirs := (acked - 1) &&& 0xffffff00
-  let step := ((acked - 1) >>> 2) &&& 63
-  let fresh := known == 0 && (theirs == cookie cfg k (seq - 1) tick step || theirs == cookie cfg k (seq - 1) (tick - 1) step)
+  let theirs := (acked - 1) &&& 0xfffffc00
+  let low := (acked - 1) &&& 0x3ff
+  let fresh := known == 0 && (theirs == cookie cfg k (seq - 1) tick low || theirs == cookie cfg k (seq - 1) (tick - 1) low)
   let room := ld64 t 0 < ((1 : USize) <<< (cfg.slotBits - 1)).toUInt64
   if known == 0 && !fresh then
     -- It belongs to nothing here: said so, unless told to keep quiet.
@@ -552,14 +580,15 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
       let t := st64 t (off + 8) k
       let t := st32 (st32 t (off + 16) acked) (off + 20) acked
       let t := st32 (st32 (st32 t (off + 24) seq) (off + 28) 0) (off + 32) acked
-      let t := wr16 (wr16 t (off + 36) (rd16 rx (f + 48))) (off + 38) (segmentOf ((acked - 1) &&& 3))
+      let t := wr16 (wr16 t (off + 36) (rd16 rx (f + 48))) (off + 38) (segmentOf (low &&& 3))
       let t := wr32 (wr16 t (off + 40) macHigh) (off + 42) macLow
-      -- How long the handshake took, from the cookie, in steps of 16 ms and at most 63 of them: the first
+      -- How long the handshake took, from the cookie, in steps of 64 ms and at most 15 of them: the first
       -- round trip, when it is a step or more. Less than that says nothing a setting does not say better.
-      let steps := ((now >>> 4) - step) &&& 63
+      let steps := ((now >>> 6) - (low >>> 6)) &&& 15
       let timed := cfg.measures && steps != 0
-      let t := st32 (st32 t (off + 48) 0) (off + 52) (if timed then measure 0 (steps <<< 4) else 0)
+      let t := st32 (st32 t (off + 48) 0) (off + 52) (if timed then measure 0 (steps <<< 6) else 0)
       let t := st64 t (off + 56) 0
+      let t := st64 (st64 t (off + 64) 0) (off + 72) (if (low >>> 2) &&& (15 : UInt32) == 15 then (0 : UInt32) else (low >>> 2) &&& (15 : UInt32)).toUInt64
       let t := if timed then bump t 120 else t
       bump (bump t 0) 8
   let state := rd8 t off
@@ -594,29 +623,35 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   let said := if state == 1 && length != 0 then respond rx (f + 34 + header) length.toUSize (ld32 t (off + 60))
     else more (ld32 t (off + 60))
   let number := (said >>> 32).toUInt32
-  let named := state == 1 && length != 0 && said.toUInt32.toNat < answers.size && said.toUInt32 < 0x10000
+  let named := state == 1 && length != 0 && said.toUInt32.toNat < answers.size
   let ends := state == 1 && !named && fin
   let begins := named || ends
   let state : UInt8 := if begins then 2 else state
   let bare := if ends then true else marks &&& 2 != 0
   let first := if begins then sent else ld32 t (off + 28)
   let top := if begins then sent else top
-  let both := ld32 t (off + 56)
-  let which := if named then said.toUInt32 else both &&& 0xffff
+  let which := if named then said.toUInt32 else ld32 t (off + 56)
   let answer := answers.getD which.toNat ByteArray.empty
   let size : UInt32 := if bare then 0 else answer.size.toUInt32
-  -- This end's own window: so many segments to begin with, one more for each acknowledgement that moves.
+  -- This end's own window: so many segments to begin with; one more for each acknowledgement that moves
+  -- while it is below `limit`, which is where it was halved to when a segment was last lost; above that,
+  -- one more a window's worth of acknowledgements.
   let own := ld32 t (off + 48)
+  let limit := if begins then cfg.mostWindow * mss else ld32 t (off + 68)
   let own := if begins then cfg.firstWindow * mss
-    else if moved && own < cfg.mostWindow * mss then own + mss else own
-  let window := (rd16 rx (f + 48)).toUInt32
+    else if moved && own != 0 && own < cfg.mostWindow * mss then
+      (if own < limit then own + mss else own + (if mss * mss / own == 0 then 1 else mss * mss / own))
+    else own
+  let window := (rd16 rx (f + 48)).toUInt32 <<< ((rd8 t (off + 72)).toUInt32 &&& 15)
   -- The same acknowledgement again, with nothing else in the segment and something still owed: counted,
   -- and at the count set, the segment after it is sent again and this end's window halved.
   let repeated := state == 2 && !begins && !moved && length == 0 && !fin && acked == was && sent != was
   let count := rd8 t (off + 3)
   let count : UInt8 := if moved || begins then 0 else if repeated && count < 255 then count + 1 else count
   let again := repeated && cfg.repeats != 0 && count == cfg.repeats
-  let own := if again then (if own / 2 < mss then mss else own / 2) else own
+  let half := if own / 2 < 2 * mss then 2 * mss else own / 2
+  let limit := if again then half else limit
+  let own := if again then half else own
   let tx :=
     if again then
       let one := reach unacked unacked first size mss mss
@@ -630,18 +665,16 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   let t := if to != wanted then bump t 104 else t
   -- The round trip. One byte at a time is timed: the first of something sent for the first time. When an
   -- acknowledgement passes it, how long that took is taken in; if anything is sent again meanwhile the
-  -- timing is dropped, since which sending was acknowledged cannot then be told. The byte's number is
-  -- kept as sixteen bits, which is enough while it is less than 65,536 past what is acknowledged: always,
-  -- while the peer's window is sixteen bits itself.
+  -- timing is dropped, since which sending was acknowledged cannot then be told.
   let kept := ld32 t (off + 52)
   let timing := marks &&& 4 != 0 && !begins
-  let timed := (both >>> 16).toUInt16
-  let passed := cfg.measures && timing && moved && unacked - was > (timed - was.toUInt16).toUInt32
+  let timed := ld32 t (off + 64)
+  let passed := cfg.measures && timing && moved && unacked - was > timed - was
   let kept := if passed then measure kept (now.toUInt16 - rd16 t (off + 46)).toUInt32 else kept
   let t := if passed then bump t 120 else t
   let timing := timing && !passed && !again
-  let starts := !timing && !again && to != sent && sent == top && sent - unacked < 0x10000
-  let timed := if starts then sent.toUInt16 else timed
+  let starts := !timing && !again && to != sent && sent == top
+  let timed := if starts then sent else timed
   let t := if starts then wr16 t (off + 46) now.toUInt16 else t
   let timing := timing || starts
   let top := if to - unacked > top - unacked then to else top
@@ -667,9 +700,13 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
     let t := st32 t (off + 4) due
     let t := st32 (st32 t (off + 16) to) (off + 20) unacked
     let t := st32 (st32 (st32 t (off + 24) expected) (off + 28) first) (off + 32) top
-    let t := wr16 t (off + 36) window.toUInt16
-    let t := st32 (st32 t (off + 48) own) (off + 52) kept
-    let t := st32 (st32 t (off + 56) (which ||| (timed.toUInt32 <<< 16))) (off + 60) number
+    let t := wr16 t (off + 36) (rd16 rx (f + 48))
+    let t := st32 t (off + 48) own
+    let t := if passed then st32 t (off + 52) kept else t
+    let t := st32 (st32 t (off + 56) which) (off + 60) number
+    -- What few frames change is written only when it has changed.
+    let t := if starts then st32 t (off + 64) timed else t
+    let t := if begins || again then st32 t (off + 68) limit else t
     loop cfg answers respond now rx next stop t tx
 
 /-- The frames in the first `length` bytes of `rx` taken in, the table changed, and the answers written
@@ -701,13 +738,13 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
     let expected := ld32 t (off + 24)
     let tries := rd8 t (off + 2)
     let first := ld32 t (off + 28)
-    let answer := answers.getD (ld32 t (off + 56) &&& 0xffff).toNat ByteArray.empty
+    let answer := answers.getD (ld32 t (off + 56)).toNat ByteArray.empty
     let size : UInt32 := if rd8 t (off + 1) &&& 2 != 0 then 0 else answer.size.toUInt32
     let mss := (rd16 t (off + 38)).toUInt32
     if state == 2 && unacked == sent && sent != first + size + 1 then
       -- Nothing is on its way and there is more to send: it was held back for want of room, or the
       -- peer's window was shut. It goes on from here, as far as the windows and the room allow.
-      let wanted := reach sent unacked first size (rd16 t (off + 36)).toUInt32 (ld32 t (off + 48))
+      let wanted := reach sent unacked first size ((rd16 t (off + 36)).toUInt32 <<< ((rd8 t (off + 72)).toUInt32 &&& 15)) (ld32 t (off + 48))
       let to := fitting tx sent wanted mss
       let tx := if to != sent then segments cfg answer tx macHigh macLow rip rport expected first size mss sent to else tx
       let top := ld32 t (off + 32)
@@ -720,8 +757,8 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
       sweep cfg answers now mask i (left - 1) (bump (bump (forget cfg t mask off) 80) 88) tx
     else
       -- What was sent and not acknowledged is sent again, one segment of it, the wait doubled, and this
-      -- end's own window shut to one segment. Nothing is timed any more: an acknowledgement now could be
-      -- of either sending.
+      -- end's own window shut to one segment, to open fast again only as far as half of what it was.
+      -- Nothing is timed any more: an acknowledgement now could be of either sending.
       let to := reach unacked unacked first size mss mss
       let to := if to - unacked ≤ sent - unacked then to else sent
       let tx := segments cfg answer tx macHigh macLow rip rport expected first size mss unacked to
@@ -729,6 +766,8 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
       -- Sending goes on from the end of what was just sent again: the rest of what was on its way is
       -- taken for lost with it, and follows as acknowledgements open the window.
       let t := st32 (wr8 (wr8 t (off + 1) (rd8 t (off + 1) &&& 0xfb)) (off + 2) (tries + 1)) (off + 4) (now + wait)
+      let own := ld32 t (off + 48)
+      let t := st32 t (off + 68) (if own / 2 < 2 * mss then 2 * mss else own / 2)
       let t := st32 (st32 t (off + 16) to) (off + 48) mss
       sweep cfg answers now mask onward (left - 1) (bump t 72) tx
 

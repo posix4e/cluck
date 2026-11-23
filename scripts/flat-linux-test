@@ -6,12 +6,13 @@ and must get the whole answer and the end of the stream.
 
     scripts/flat-linux-test [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES] [--request BYTES]
     scripts/flat-linux-test --http [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES-OF-/big]
-                            [--delay MS] [--fixed-wait]
+                            [--delay MS] [--fixed-wait] [--window SEGMENTS]
 
 With --http the stack is run as its small web server and asked for pages by Python's own HTTP client, and
 by curl if there is one: /, /big and a page that is not there, in turn. --delay holds every frame from
 Linux back so many milliseconds, which is then the round trip; --fixed-wait has the stack not measure
-round trips, to see what measuring them is worth.
+round trips, to see what measuring them is worth; --window is the most segments the stack will have on
+their way at once (64 if not said).
 
     scripts/flat-linux-test --guest dev|tdx [--connections N] [--at-once K]
 
@@ -75,8 +76,13 @@ else:
         subprocess.run(command.split(), check=True)
     if "--delay" in sys.argv:
         subprocess.run(f"tc qdisc add dev tap0 root netem delay {option('--delay', 0)}ms limit 100000".split(), check=True)
+    if "--capture" in sys.argv:
+        watcher = subprocess.Popen(["tcpdump", "-i", "tap0", "-s", "100", "-U", "-Z", "root", "-B", "65536", "-w", option("--capture", "")], stderr=subprocess.DEVNULL)
+        import atexit
+        atexit.register(lambda: (watcher.terminate(), watcher.wait()))
+        time.sleep(0.5)
 
-    server = subprocess.Popen([os.path.join(here, ".lake/build/bin/net-flat-serve")] + (["http", str(answer_bytes), "0" if "--fixed-wait" in sys.argv else "1"] if web else [str(request_bytes), str(answer_bytes)]),
+    server = subprocess.Popen([os.path.join(here, ".lake/build/bin/net-flat-serve")] + (["http", str(answer_bytes), "0" if "--fixed-wait" in sys.argv else "1", str(option("--window", 64))] if web else [str(request_bytes), str(answer_bytes)]),
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
     to_server = threading.Lock()
 

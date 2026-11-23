@@ -111,7 +111,7 @@ sweep over the table; what can be tuned is one record, `Tuning`.
 - What it does not do: there is no network card under it, and getting frames
   from one fast in a trust domain is the hard part; segments out of order are
   asked for again, not kept; a window shut to nothing is not probed; no options but the largest segment
-  (no window scaling, so no window past 64 KB; no timestamps; no selective
+  and the window's scale (no timestamps; no selective
   acknowledgement); IPv4 with no options only; one core; and the application
   is one fixed answer. It is slow at moving much data (2 MB took 1.7 s on one
   machine). It has been tried against Linux only, and only as the side that is
@@ -304,6 +304,8 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   and 28 on repeated acknowledgements, every one of them for nothing; measured,
   5 and 4. In memory a connection costs about 6% more (914,000 a second on one
   core against 973,000, while other work ran on the machine).
+  - The byte being timed was first kept as sixteen bits of its number; it has
+    its whole number now that a connection has the room (below).
   - **The handshake is timed too, with nothing kept.** A TCP with a table times
     its SYN-ACK; this one answers a SYN from a cookie and keeps nothing. So six
     bits of the clock, in steps of 16 ms, now go in the cookie beside the two
@@ -311,12 +313,37 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     long it took is the connection's first round trip (when it is a step or
     more). Over the same 300 ms path nothing at all is then sent again for
     nothing: 0 and 0, against 42 and 35 with the wait fixed. The cookie's hash
-    is 24 bits where it was 30, as Linux's is: one guess in eight million opens
-    a connection from an address that is not the guesser's.
-  - A megabyte over that path still takes 5.4 s, and that is the window: 64 KB
-    a round trip is all a TCP without window scaling can have on its way.
-  - The byte being timed is kept as sixteen bits of its number, which is right
-    only while windows are sixteen bits; it wants widening with them.
+    was 24 bits for that where it had been 30 (and is 22 now, below).
+- **Windows past 64 KB, and a proper rule for this end's own** (2026-11-23).
+  - The peer's window is read scaled as its SYN said. The shift is four more
+    bits in the cookie, exactly as said: a first try kept it rounded down in
+    two bits, and against this machine's Linux, which shifts by 10, read an
+    eighth of the window and was slower than before. The cookie's hash is now
+    22 bits (Linux's leave 24): one guess in two million opens a connection
+    from an address not the guesser's, and the handshake is timed in steps of
+    64 ms. This end's own window is not scaled; it takes requests.
+  - This end's own window follows RFC 5681 without the inflating: a segment
+    more an acknowledgement until a segment is first lost, half when one is
+    seen lost, one segment on a timer, and a segment more a round trip once
+    back at half of where it was. Before, it grew a segment an acknowledgement
+    always, which after a loss is much too fast for anyone sharing the path.
+  - A connection is 128 bytes now, not 64: there was no room left, and what
+    is still to come (segments kept out of order, IPv6) needs more than this.
+  - `--window SEGMENTS` sets `Tuning.mostWindow` in the Linux test. A megabyte
+    over 300 ms: 2.4 s with 1,024 segments allowed, 4.2 s with the 64 that is
+    still the default, 5.4 s before any of this. Nothing sent again for
+    nothing in either.
+  - What it cost: in memory, 865,000 connections a second on one core with
+    checksums where it was 973,000 before round trips were measured (1.16
+    million without, from 1.24). In a trust domain one run answered 232,000
+    at the most where earlier runs answered 262,000 to 280,000, and 200,000 a
+    second still all answered: so the guest's own work is part of that limit,
+    not only the host's thread. With frames lost it is slower than it was at
+    moving a megabyte (60 of them with 2% lost: 5.6 s, was 3.1), which is the
+    price of no longer opening the window fast after every loss; keeping
+    segments that come out of order is what would win that back.
+  - Not run against anything but Linux; not run with a peer that does not
+    offer to scale (the generator guest is one, and it is answered).
 
 ## Ethereum block import, as a service (`evm/`)
 

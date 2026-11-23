@@ -6,7 +6,7 @@ that length; a length of nothing means only that time has passed. On standard ou
 frames it sends. Its address is 10.0.0.2, its port 80.
 
     .lake/build/bin/net-flat-serve [request bytes] [answer bytes] [linger ms]
-    .lake/build/bin/net-flat-serve http [bytes of /big] [0 not to measure round trips]
+    .lake/build/bin/net-flat-serve http [bytes of /big] [0 not to measure round trips] [most segments on their way]
 
 The first answers every connection alike, once so many bytes have come. The second is a small web
 server: `GET /` gets a page, `GET /big` so many bytes, anything else is not found. The request's first
@@ -25,7 +25,8 @@ def begins (rx : ByteArray) (at_ length : USize) (text : String) : Bool :=
 def main (args : List String) : IO UInt32 := do
   let web := args.head? == some "http"
   let number (i : Nat) (otherwise : Nat) : Nat := (args[i]?.bind String.toNat?).getD otherwise
-  let cfg : Tuning := { slotBits := 16, linger := if web then 0 else (number 2 0).toUInt32, measures := !web || number 2 1 != 0 }
+  let cfg : Tuning := { slotBits := 16, linger := if web then 0 else (number 2 0).toUInt32, measures := !web || number 2 1 != 0,
+                        mostWindow := if web then (number 3 64).toUInt32 else 64 }
   let pattern (n : Nat) : ByteArray := ByteArray.mk (Array.range n |>.map fun i => (i % 251).toUInt8)
   let answers : Array ByteArray :=
     if web then #[page "200 OK" "a TCP written in Lean\n".toUTF8, page "200 OK" (pattern (number 1 1000000)), page "404 Not Found" "nothing here\n".toUTF8]

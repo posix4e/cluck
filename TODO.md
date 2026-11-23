@@ -234,7 +234,7 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   a request for a page of 106 bytes: seven frames. Third second of four at each
   rate:
 
-  | opened a second | answered | under 1 ms | 1 to 8 ms | over 250 ms |
+  | opened a second | answered | under 1 ms | 1 to 8 ms | over 128 ms |
   |---|---|---|---|---|
   | 50,000 | 50,000 | 48,805 | 1,195 | 0 |
   | 100,000 | 100,000 | 98,404 | 1,596 | 0 |
@@ -262,9 +262,9 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     queue's position is two bytes; the driver copied them one at a time while
     the other side changed them, and now and then got one old and one new, a
     position 256 away. `Kernel/Hw.lean` has `load16` and `store16` for it now.
-    The runs against Linux before that had it too and mostly did not show it:
-    the odd errors Linux counted in one of them (above, since removed from the
-    account) were this.
+    The runs against Linux before that had the fault too and mostly did not
+    show it; some hundreds of errors Linux counted in one early run of 3,000
+    requests, which no checksum explained, were very likely this.
 
 ## Ethereum block import, as a service (`evm/`)
 

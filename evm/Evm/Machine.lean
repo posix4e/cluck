@@ -545,8 +545,9 @@ partial def work : M Unit := do
     transmit (← modifyGet (·.drop (← Efi.millis).toNat key))
     work
   | .run key request since =>
-    Platform.write s!"evm: request of {request.size} bytes\n".toUTF8
     let started ← Efi.millis
+    -- How long it took to arrive is said too: it has been most of what a round costs outside this work.
+    Platform.write s!"evm: request of {request.size} bytes, {if since == 0 then 0 else started.toNat - since} ms in coming\n".toUTF8
     let (asked, inner) := match Evm.Attest.asked? request with
       | some asked => (some asked, Evm.Attest.request asked)
       | none => (none, request)

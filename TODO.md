@@ -1505,8 +1505,9 @@ times, and the block from the relay. Six stages:
     (the driver written for the trial TCP), the system's TCP unchanged above it. And the service
     slept a millisecond of the firmware's whenever no frame was there, which between the frames of
     a request was often. In the last 25 slots 205 blocks were sent, all valid, signed and the same
-    at the stand-in, none late. The images are `39d10d82…b4d032f8` and, for shadow runs,
-    `637da15f…10ce7d48`; `check-secret-code tdx`, `run-fixtures tdx --limits --key`,
+    at the stand-in, none late. With one line more on the console (how long each request took to
+    arrive: 12 ms at the median for 1.7 MB in twelve slots more, where it had been some 400) the
+    images are `9cba036e…533321d7` and, for shadow runs, `ce2638bb…7e5dcfec`; `check-secret-code tdx`, `run-fixtures tdx --limits --key`,
     `run-fixtures dev --limits`, the hosted tests and `scripts/test-efi` in both profiles pass.
     - The 1,000 slots above are on the image before this. A run on this one was started after
       this was written; its result goes below.

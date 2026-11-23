@@ -260,13 +260,29 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     move with that (261,000 to 269,000 at 300,000 opened), so the limit is the
     work the host's kernel does a frame, about two million frames a second
     through each guest's vhost thread, and not the guest's calls.
-  - **More guests, more connections: two pairs.** `scripts/flat-load tdx
-    --pairs 2` runs two servers and two generators, each pair on a bridge of
-    its own, eight host cores of one socket in all. Added up: every one of
-    100,000 a second answered, 394,045 of 400,000, and 480,408 at the most
-    (when 600,000 are opened), against 280,000 for one pair. Not yet run: more
-    pairs than two, which waits for the builder's long run to be over, since
-    it would take most of the machine.
+  - **More guests, more connections.** `scripts/flat-load tdx --pairs N` runs
+    N servers and N generators, each a trust domain with one processor, each
+    pair on a bridge of its own and each guest on two host cores (its own and
+    its vhost thread's). The third second at each rate, added up:
+
+    | pairs | host cores | all answered at | most answered a second |
+    |---|---|---|---|
+    | 1 | 4 | 200,000 | about 280,000 (232,000 after the fuller TCP) |
+    | 2 | 8 | 100,000 (394,045 of 400,000) | 480,408 |
+    | 4 | 16 | 800,000 | 965,006 |
+    | 8 | 32 | 800,000 (1,500,117 of 1,600,000) | 1,813,322 |
+
+    Two pairs were run before the stack measured round trips and scaled
+    windows, four and eight after. Eight pairs are every core of the machine,
+    one thread of each, and half of them are the generators': the servers'
+    side of 1.8 million a second is eight guests on sixteen cores. One of the
+    eight servers took half what the others did; something else was running
+    (the node, and a guest of the builder's that is left up). With four
+    pairs, 781,169 of 800,000 a second were answered inside a millisecond.
+    - What this is not: one guest with many processors. Each guest has its
+      own address, its own table and its own attestation, and something
+      outside must share connections out between them; here each generator
+      simply has its own server.
   - **Asked for more than that, it now falls off slowly and not at once.**
     `Tuning.busy` stops SYNs being answered while more than so many connections
     are open (1,024 in `flat-os`), so that what has begun is finished first.

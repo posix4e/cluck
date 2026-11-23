@@ -158,10 +158,26 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     an operating system (`TdxDxe.c`, `MpInitLibUp`). The runtime's allocator is
     not made for more than one either. So more cores means more guests, each
     with one.
-  - To measure first, in this order: how many frames a second the present path
-    carries in a trust domain; the same with a tap and vhost-net under the
-    firmware's own driver, which says how much is the host's side and how much
-    the one-frame-a-call driver.
+- **What today's path carries**, measured on 2026-11-22 with `scripts/net-ceiling`
+  against the demo image (`tdx-os`: the system's TCP and a UDP echo, on the
+  firmware's driver), in TDX, one run of five seconds each, the builder's run
+  going on the same machine:
+
+  | host side | UDP datagrams echoed a second | TCP connections a second |
+  |---|---|---|
+  | QEMU's own network | 5,580 | 403 |
+  | a tap with vhost-net | 9,671 | 1,656 |
+
+  With one datagram out at a time, 897 a second: the guest waits a millisecond
+  when it finds no frame. So a frame costs about a tenth of a millisecond on
+  this path whatever is behind the card, and the trial TCP, which does a million
+  connections a second from memory, is several hundred times faster than
+  anything that can reach it. The driver is what to change first; the host's
+  side cannot be measured for its own limit until something in the guest can
+  keep up with it. (The tap and vhost-net need no root: `--tap` makes a network
+  namespace for the run.) The same test on the image as it was before the fault
+  in closing was mended made 10 connections a second against Linux: each waited
+  a second to close.
 
 ## Ethereum block import, as a service (`evm/`)
 

@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""How much the guest's network path carries as it is: UDP datagrams echoed a second, and TCP connections
+made, asked one thing, answered and closed a second, against an image that serves both on port 5005
+(the TDX demo, `tdx-os`).
+
+    scripts/net-ceiling tdx|dev [--tap] [--seconds N] [--window W] [--threads K]
+
+Without --tap the guest is on QEMU's own user-mode network, as every test here runs it. With --tap it is
+on a tap device with the kernel's vhost-net behind it, in a network namespace made for the run, which
+needs no root: this user may open /dev/kvm and /dev/vhost-net, and owns the namespace.
+"""
+import os, socket, struct, subprocess, sys, threading, time
+
+profile = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("tdx", "dev") else sys.exit(__doc__)
+tap = "--tap" in sys.argv
+def option(name, default):
+    return type(default)(sys.argv[sys.argv.index(name) + 1]) if name in sys.argv else default
+seconds, window, threads = option("--seconds", 5.0), option("--window", 64), option("--threads", 8)
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+if tap and os.environ.get("CEILING_INSIDE") != "1":
+    os.execvpe("unshare", ["unshare", "-Urn", sys.executable, os.path.abspath(__file__)] + sys.argv[1:], dict(os.environ, CEILING_INSIDE="1"))
+
+env = dict(os.environ)
+if tap:
+    env["SILO_NET_TAP"] = "tap0"
+    target = ("10.0.2.15", 5005)
+else:
+    env["SILO_HOST_PORT"] = "5077"
+    target = ("127.0.0.1", 5077)
+guest = subprocess.Popen([os.path.join(here, "scripts/run-efi"), profile], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+try:
+    if tap:
+        for _ in range(100):
+            if subprocess.run(["ip", "link", "show", "tap0"], capture_output=True).returncode == 0:
+                break
+            time.sleep(0.1)
+        for command in ("ip addr add 10.0.2.2/24 dev tap0", "ip link set tap0 up", "ip link set lo up"):
+            subprocess.run(command.split(), check=True)
+    def ping():
+        with socket.create_connection(target, timeout=2) as s:
+            s.sendall(struct.pack(">I", 6) + b"\x01hello")
+            got = b""
+            while len(got) < 10:
+                piece = s.recv(10 - len(got))
+                if not piece:
+                    break
+                got += piece
+            return got == struct.pack(">I", 6) + b"\x81hello"
+    began = time.time()
+    while True:
+        try:
+            if ping():
+                break
+        except OSError:
+            pass
+        if time.time() - began > 90 or guest.poll() is not None:
+            sys.exit("net-ceiling: the guest did not come up")
+        time.sleep(0.3)
+
+    # UDP: `window` datagrams out, and another for each one that comes back.
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.connect(target)
+    udp.settimeout(0.5)
+    payload = b"x" * 32
+    for _ in range(window):
+        udp.send(payload)
+    echoed, lost, stop = 0, 0, time.time() + seconds
+    while time.time() < stop:
+        try:
+            udp.recv(2048)
+            echoed += 1
+        except socket.timeout:
+            lost += 1
+        udp.send(payload)
+    print(f"UDP echo, {window} out at once: {echoed / seconds:,.0f} datagrams a second each way ({lost} waits of half a second for one that did not come)")
+
+    # TCP: connect, one framed request, its answer, close; from `threads` threads.
+    counts, failures, stop = [0] * threads, [0] * threads, time.time() + seconds
+    def worker(i):
+        while time.time() < stop:
+            try:
+                if ping():
+                    counts[i] += 1
+                else:
+                    failures[i] += 1
+            except OSError:
+                failures[i] += 1
+    pool = [threading.Thread(target=worker, args=(i,)) for i in range(threads)]
+    for t in pool: t.start()
+    for t in pool: t.join()
+    print(f"TCP, {threads} at once: {sum(counts) / seconds:,.0f} connections a second ({sum(failures)} failed)")
+finally:
+    guest.terminate()
+    try:
+        guest.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        guest.kill()

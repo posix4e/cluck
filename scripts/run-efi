@@ -63,6 +63,12 @@ if [[ -n "${SILO_NET_SOCKET:-}" ]]; then
   # A point-to-point Ethernet link for raw-frame integration and IPv6 tests.
   net="stream,id=net0,server=on,addr.type=unix,addr.path=$SILO_NET_SOCKET"
 fi
+if [[ -n "${SILO_NET_TAP:-}" ]]; then
+  # A tap device with the kernel's vhost-net behind it, in place of QEMU's own network: for measuring.
+  # The device is made here if it is not there, which wants a network namespace this user owns
+  # (scripts/net-ceiling makes one), and `SILO_NET_QUEUES` queue pairs of it, one by default.
+  net="tap,id=net0,ifname=$SILO_NET_TAP,script=no,downscript=no,vhost=on"
+fi
 if [[ -n "${SILO_NET_DUMP:-}" ]]; then
   # Every Ethernet frame the guest sends or is sent, written to a file as a packet capture.
   args+=(-object "filter-dump,id=dump0,netdev=net0,file=$SILO_NET_DUMP")

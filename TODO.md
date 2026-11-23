@@ -261,6 +261,13 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     move with that (261,000 to 269,000 at 300,000 opened), so the limit is the
     work the host's kernel does a frame, about two million frames a second
     through each guest's vhost thread, and not the guest's calls.
+  - **More guests, more connections: two pairs.** `scripts/flat-load tdx
+    --pairs 2` runs two servers and two generators, each pair on a bridge of
+    its own, eight host cores of one socket in all. Added up: every one of
+    100,000 a second answered, 394,045 of 400,000, and 480,408 at the most
+    (when 600,000 are opened), against 280,000 for one pair. Not yet run: more
+    pairs than two, which waits for the builder's long run to be over, since
+    it would take most of the machine.
   - **Asked for more than that, it now falls off slowly and not at once.**
     `Tuning.busy` stops SYNs being answered while more than so many connections
     are open (1,024 in `flat-os`), so that what has begun is finished first.

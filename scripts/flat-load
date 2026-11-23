@@ -4,66 +4,115 @@
 what was answered and how long it took. The two are joined by a bridge between their tap devices, each with
 the kernel's vhost-net behind it, in a network namespace made for the run. No root is needed.
 
-    scripts/flat-load tdx|dev [--cores A+B,C+D]
+    scripts/flat-load tdx|dev [--pairs N] [--cores A,B,C,...] [--capture FILE.pcap]
 
-(scripts/build-efi PROFILE flat-os and flat-gen first.) Each guest has one processor. --cores says which
-host processors each QEMU may use, the server's then the generator's (default 20+24,22+26): two each,
-because beside the guest's own processor the kernel runs a thread for its card (vhost), and on one host
-processor the two take turns. What is printed is the generator's own account and, at the end, the
-server's.
+(scripts/build-efi PROFILE flat-os and flat-gen first.) Each guest has one processor. With --pairs there are
+N servers and N generators, each pair on a bridge of its own, and what is printed at the end is the sum.
+
+Each guest is kept to two host processors: beside the guest's own, the kernel runs a thread for its card
+(vhost), and on one host processor the two take turns. --cores lists the host processors to use, four a
+pair; by default whole cores of the first socket and then of the second, as this machine numbers them.
+
+--capture keeps the first 400,000 frames on the first generator's side of its bridge.
 """
-import os, subprocess, sys, threading, time
+import os, re, subprocess, sys, threading, time
 
 profile = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("tdx", "dev") else sys.exit(__doc__)
 if os.environ.get("LOAD_INSIDE") != "1":
     os.execvpe("unshare", ["unshare", "-Urn", sys.executable, os.path.abspath(__file__)] + sys.argv[1:], dict(os.environ, LOAD_INSIDE="1"))
-cores = [c.replace("+", ",") for c in (sys.argv[sys.argv.index("--cores") + 1] if "--cores" in sys.argv else "20+24,22+26").split(",")]
+
+def option(name, otherwise):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else otherwise
+
+pairs = int(option("--pairs", "1"))
+pool = option("--cores", ",".join(str(c) for c in list(range(16, 32, 2)) + list(range(0, 16, 2)) + list(range(1, 32, 2)))).split(",")
+if len(pool) < 4 * pairs:
+    sys.exit(f"flat-load: {pairs} pairs want {4 * pairs} host processors and --cores names {len(pool)}")
 here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-def guest(name, tap, mac, core, port):
+def guest(name, tap, mac, cores, port, loud):
     said = []
-    env = dict(os.environ, SILO_NET_TAP=tap, SILO_NET_MAC=mac, SILO_HOST_PORT=port)
-    process = subprocess.Popen(["taskset", "-c", core, os.path.join(here, "scripts/run-efi"), profile, name], env=env,
+    env = dict(os.environ, SILO_NET_TAP=tap, SILO_NET_MAC=mac, SILO_HOST_PORT=str(port))
+    process = subprocess.Popen(["taskset", "-c", cores, os.path.join(here, "scripts/run-efi"), profile, name], env=env,
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     def listen():
         for line in process.stdout:
             said.append(line.rstrip())
-            if name == "flat-gen" and "flat-gen" in line:
+            if loud and "flat-gen" in line:
                 print(line.rstrip(), flush=True)
     threading.Thread(target=listen, daemon=True).start()
     return process, said
 
-server, server_said = guest("flat-os", "tap0", "52:54:00:00:00:01", cores[0], "5091")
-generator, generator_said = guest("flat-gen", "tap1", "52:54:00:00:00:02", cores[1], "5092")
+servers, generators = [], []
+for k in range(pairs):
+    a, b, c, d = pool[4 * k:4 * k + 4]
+    servers.append(guest("flat-os", f"tap{2 * k}", f"52:54:00:00:{k:02x}:01", f"{a},{b}", 5100 + 2 * k, False))
+    generators.append(guest("flat-gen", f"tap{2 * k + 1}", f"52:54:00:00:{k:02x}:02", f"{c},{d}", 5101 + 2 * k, pairs == 1))
+everyone = servers + generators
+
+def run(command):
+    subprocess.run(command.split(), check=True)
+
 try:
-    for tap in ("tap0", "tap1"):
-        for _ in range(300):
-            if subprocess.run(["ip", "link", "show", tap], capture_output=True).returncode == 0:
+    for k in range(2 * pairs):
+        for _ in range(600):
+            if subprocess.run(["ip", "link", "show", f"tap{k}"], capture_output=True).returncode == 0:
                 break
             time.sleep(0.1)
         else:
-            sys.exit(f"flat-load: {tap} did not appear")
-    for command in ("ip link add br0 type bridge stp_state 0 forward_delay 0", "ip link set tap0 master br0", "ip link set tap1 master br0",
-                    "ip link set tap0 up", "ip link set tap1 up", "ip link set br0 up"):
-        subprocess.run(command.split(), check=True)
+            sys.exit(f"flat-load: tap{k} did not appear")
+    for k in range(pairs):
+        run(f"ip link add br{k} type bridge stp_state 0 forward_delay 0")
+        for tap in (f"tap{2 * k}", f"tap{2 * k + 1}"):
+            run(f"ip link set {tap} master br{k}")
+            run(f"ip link set {tap} up")
+        run(f"ip link set br{k} up")
     if "--capture" in sys.argv:
-        # The first so many frames on the generator's side of the bridge, for looking at afterwards.
-        subprocess.Popen(["tcpdump", "-i", "tap1", "-s", "0", "-U", "-Z", "root", "-B", "65536", "-c", "400000", "-w",
-                          sys.argv[sys.argv.index("--capture") + 1]], stderr=subprocess.DEVNULL)
+        subprocess.Popen(["tcpdump", "-i", "tap1", "-s", "0", "-U", "-Z", "root", "-B", "65536", "-c", "400000", "-w", option("--capture", "")],
+                         stderr=subprocess.DEVNULL)
     began = time.time()
-    while not any("flat-gen: done" in line for line in generator_said):
-        if time.time() - began > 240 or generator.poll() is not None or server.poll() is not None:
-            print("flat-load: it did not finish. The generator said:", generator_said[-5:], "the server:", server_said[-5:])
+    while not all(any("flat-gen: done" in line for line in said) for _, said in generators):
+        if time.time() - began > 300 or any(process.poll() is not None for process, _ in everyone):
+            print("flat-load: it did not finish.")
+            for (_, g), (_, s) in zip(generators, servers):
+                print("  a generator said:", g[-2:], "its server:", s[-2:])
             break
         time.sleep(0.5)
     time.sleep(5.5)
-    for line in server_said:
-        if "flat-os" in line or "silo" in line:
-            print(line)
+    if pairs == 1:
+        for line in servers[0][1]:
+            if "flat-os" in line or "silo" in line:
+                print(line)
+    else:
+        # Each generator's third second at each rate, added up.
+        total, order = {}, []
+        for _, said in generators:
+            seen = {}
+            for line in said:
+                found = re.match(r"flat-gen: rate (\d+): opened (\d+), answered (\d+), reset (\d+).*over: (.*)", line)
+                if not found:
+                    continue
+                rate = int(found.group(1))
+                seen[rate] = seen.get(rate, 0) + 1
+                if seen[rate] != 3:
+                    continue
+                times = [int(x) for x in found.group(5).split()]
+                if rate not in total:
+                    total[rate] = [0, 0, 0, 0]
+                    order.append(rate)
+                row = total[rate]
+                row[0] += int(found.group(2)); row[1] += int(found.group(3)); row[2] += times[0]; row[3] += sum(times[7:])
+        print(f"{pairs} pairs of guests, the third second at each rate, added up:")
+        print("  opened a second | answered | under 1 ms | over 128 ms")
+        for rate in order:
+            print("  " + " | ".join(f"{x:,}" for x in total[rate]))
+        for k, (_, said) in enumerate(servers):
+            last = [line for line in said if "flat-os: accepted" in line]
+            print(f"  server {k}: {last[-1] if last else said[-2:]}")
 finally:
-    for process in (server, generator):
+    for process, _ in everyone:
         process.terminate()
-    for process in (server, generator):
+    for process, _ in everyone:
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:

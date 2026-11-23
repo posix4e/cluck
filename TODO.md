@@ -381,6 +381,8 @@ sweep over the table; what can be tuned is one record, `Tuning`.
       image. The driver's own copies use the processor's instruction for it.
       The Nitro target's `rt/bare/hw.c` has none of `load16`, `store16`,
       `store32` or `ticks`; nothing there uses them.
+    - After it, `scripts/test-efi` passes in the emulator and in TDX, and the
+      builder's image rebuilt is still `9dbd42e7…d731193c`.
     - Not known: what limits eight pairs at 6.5 million (they are every core
       but eight, and the pollers share sockets with the guests); how the TCP's
       83% divides, beyond what the hosted profile says (45% the per-frame

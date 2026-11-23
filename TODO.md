@@ -511,6 +511,28 @@ sweep over the table; what can be tuned is one record, `Tuning`.
       800,000 a second answered for one guest (was 798,756) and about 800,000
       at the most (was 850,000); eight guests answer 5.6 million at the most
       (was 6.5).
+    - **The TCP's main function is the dearer for every line in it, reached
+      or not.** With connections kept open added it was 12% slower at one
+      request a connection, though none of the new lines ran. Taking out of
+      it into functions of their own what is seldom reached or holds an
+      answer (whether an answer is all acknowledged, an answer's size, the
+      sending of segments, a new connection's record, the arithmetic of a
+      round trip, the answer to a SYN, the check of a cookie) gave all of it
+      back and more. In memory on a quiet core, best of five: 1.28 million
+      connections a second and 3.55 million requests a second at fifty a
+      connection (it was 1.23 million connections before connections could be
+      kept open). In TDX on the polling backend after it: one guest answers
+      799,988 of 800,000 connections a second and 2.1 million requests a
+      second of 2.1 million at sixteen a connection (2.4 million at the
+      most); eight guests 6,386,301 of 6.4 million connections and
+      16,800,494 of 16.8 million requests (18 million at the most). The
+      figures a few lines up are from before this.
+      Writing back only the fields of a connection that had changed was tried
+      too, and was no faster.
+    - Earlier figures here for the stack in memory (865,000 to 973,000
+      connections a second) were taken with the benchmark free to move
+      between cores and other work running; pinned to a quiet core the same
+      builds are about a quarter faster.
     - What it does not do: take a second request sent before the first is
       answered (it is not acknowledged, and comes again on the peer's
       timer); HTTP/1.0's closing by default; a request with a body. The

@@ -374,7 +374,7 @@ partial def offered (rx : @& ByteArray) (i stop : USize) : UInt16 :=
 an eighth of the way towards the new one, and how far it strays a quarter of the way towards how far this
 one was off. The low sixteen bits are eight times the smoothed round trip and are never nothing once one
 is measured; the high sixteen are four times the straying. -/
-@[inline] def measure (kept sample : UInt32) : UInt32 :=
+@[noinline] def measure (kept sample : UInt32) : UInt32 :=
   let sample := if sample > 8000 then 8000 else sample
   let smooth := kept &&& 0xffff
   let stray := kept >>> 16
@@ -542,6 +542,56 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
 number is what it will be shown with the first bytes of that request. -/
 @[inline] def sendOn (index number : UInt32) : UInt64 := (number.toUInt64 <<< 32) ||| index.toUInt64 ||| 0x80000000
 
+/-! `loop` below is the dearer for every line in it, whether the line is reached or not, and dearest for
+holding an answer, which it must then let go of on each of its many ways out. So what touches an answer
+is in functions of its own, which `loop` calls with the answer's number. -/
+
+/-- The answer to a SYN, written to `tx`: its options are from `i` to `stop` in `rx`. -/
+@[noinline] def greet (cfg : @& Tuning) (rx : @& ByteArray) (i stop : USize) (k : UInt64) (seq now : UInt32) (tx : ByteArray)
+    (macHigh : UInt16) (macLow rip : UInt32) (rport : UInt16) : ByteArray :=
+  let theirs := offered rx i stop
+  let scale := scaleOffered rx i stop
+  let low := lowOf now scale (indexOf (if theirs < cfg.mss then theirs else cfg.mss))
+  let ours := cookie cfg k seq (now >>> 16) low ||| low
+  emit cfg tx macHigh macLow rip rport 0x12 ours (seq + 1) true ByteArray.empty 0 0 (scale != 15)
+
+/-- Whether `theirs` is the cookie this end would have given for this connection, this tick or last. -/
+@[noinline] def genuine (cfg : @& Tuning) (k : UInt64) (first tick theirs low : UInt32) : Bool :=
+  theirs == cookie cfg k first tick low || theirs == cookie cfg k first (tick - 1) low
+
+/-- A new entry at `off` for the connection whose handshake's third packet has just come: what it
+acknowledges and its number, the window it gives, and `low`, the ten bits the cookie carried. -/
+@[noinline] def admit (cfg : @& Tuning) (t : ByteArray) (off : USize) (k : UInt64) (acked seq : UInt32) (window : UInt16)
+    (low : UInt32) (macHigh : UInt16) (macLow now : UInt32) : ByteArray :=
+  let t := st64 t off 1
+  let t := st64 t (off + 8) k
+  let t := st32 (st32 t (off + 16) acked) (off + 20) acked
+  let t := st32 (st32 (st32 t (off + 24) seq) (off + 28) 0) (off + 32) acked
+  let t := wr16 (wr16 t (off + 36) window) (off + 38) (segmentOf (low &&& 3))
+  let t := wr32 (wr16 t (off + 40) macHigh) (off + 42) macLow
+  -- How long the handshake took, from the cookie, in steps of 64 ms and at most 15 of them: the first
+  -- round trip, when it is a step or more. Less than that says nothing a setting does not say better.
+  let steps := ((now >>> 6) - (low >>> 6)) &&& 15
+  let timed := cfg.measures && steps != 0
+  let t := st32 (st32 t (off + 48) 0) (off + 52) (if timed then measure 0 (steps <<< 6) else 0)
+  let t := st64 t (off + 56) 0
+  let t := st64 (st64 t (off + 64) 0) (off + 72) (if (low >>> 2) &&& (15 : UInt32) == 15 then (0 : UInt32) else (low >>> 2) &&& (15 : UInt32)).toUInt64
+  let t := if timed then bump t 120 else t
+  bump (bump t 0) 8
+
+/-- How long answer `which` is. -/
+@[noinline] def sizeAt (answers : @& Array ByteArray) (which : UInt32) : UInt32 :=
+  (answers.getD which.toNat ByteArray.empty).size.toUInt32
+
+/-- Whether the answer the entry at `off` is sending is acknowledged to its last byte by `unacked`. -/
+@[noinline] def whole (answers : @& Array ByteArray) (t : @& ByteArray) (off : USize) (unacked : UInt32) : Bool :=
+  unacked == ld32 t (off + 28) + sizeAt answers (ld32 t (off + 56))
+
+/-- `segments` for answer `which`. -/
+@[noinline] def segmentsOf (cfg : @& Tuning) (answers : @& Array ByteArray) (which : UInt32) (tx : ByteArray) (macHigh : UInt16)
+    (macLow rip : UInt32) (rport : UInt16) (expected first size mss at_ to : UInt32) : ByteArray :=
+  segments cfg (answers.getD which.toNat ByteArray.empty) tx macHigh macLow rip rport expected first size mss at_ to
+
 /-- Every frame of `rx` from `o` to `stop` taken in turn. -/
 @[specialize] partial def loop (cfg : @& Tuning) (answers : @& Array ByteArray)
     (respond : ByteArray → USize → USize → UInt32 → UInt64) (now : UInt32) (rx : @& ByteArray) (o stop : USize)
@@ -581,13 +631,7 @@ number is what it will be shown with the first bytes of that request. -/
     -- its answer will not fit that connection and the peer will see so.)
     if flags &&& 0x10 != 0 then loop cfg answers respond now rx next stop (bump t 32) tx
     else if cfg.busy != 0 && ld64 t 0 > cfg.busy then loop cfg answers respond now rx next stop (bump t 112) tx
-    else
-      let theirs := offered rx (f + 54) (f + 34 + header)
-      let scale := scaleOffered rx (f + 54) (f + 34 + header)
-      let low := lowOf now scale (indexOf (if theirs < cfg.mss then theirs else cfg.mss))
-      let ours := cookie cfg k seq (now >>> 16) low ||| low
-      loop cfg answers respond now rx next stop (bump t 24)
-        (emit cfg tx macHigh macLow rip rport 0x12 ours (seq + 1) true ByteArray.empty 0 0 (scale != 15))
+    else loop cfg answers respond now rx next stop (bump t 24) (greet cfg rx (f + 54) (f + 34 + header) k seq now tx macHigh macLow rip rport)
   else
   let h := home cfg k
   let known := find t mask k h
@@ -601,7 +645,7 @@ number is what it will be shown with the first bytes of that request. -/
   let tick := now >>> 16
   let theirs := (acked - 1) &&& 0xfffffc00
   let low := (acked - 1) &&& 0x3ff
-  let fresh := known == 0 && (theirs == cookie cfg k (seq - 1) tick low || theirs == cookie cfg k (seq - 1) (tick - 1) low)
+  let fresh := if known != 0 then false else genuine cfg k (seq - 1) tick theirs low
   let room := ld64 t 0 < ((1 : USize) <<< (cfg.slotBits - 1)).toUInt64
   if known == 0 && !fresh then
     -- It belongs to nothing here: said so, unless told to keep quiet.
@@ -610,24 +654,7 @@ number is what it will be shown with the first bytes of that request. -/
   else if known == 0 && !room then loop cfg answers respond now rx next stop (bump t 56) tx
   else
   let off := if known != 0 then known else vacant t mask h
-  let t :=
-    if known != 0 then t
-    else
-      let t := st64 t off 1
-      let t := st64 t (off + 8) k
-      let t := st32 (st32 t (off + 16) acked) (off + 20) acked
-      let t := st32 (st32 (st32 t (off + 24) seq) (off + 28) 0) (off + 32) acked
-      let t := wr16 (wr16 t (off + 36) (rd16 rx (f + 48))) (off + 38) (segmentOf (low &&& 3))
-      let t := wr32 (wr16 t (off + 40) macHigh) (off + 42) macLow
-      -- How long the handshake took, from the cookie, in steps of 64 ms and at most 15 of them: the first
-      -- round trip, when it is a step or more. Less than that says nothing a setting does not say better.
-      let steps := ((now >>> 6) - (low >>> 6)) &&& 15
-      let timed := cfg.measures && steps != 0
-      let t := st32 (st32 t (off + 48) 0) (off + 52) (if timed then measure 0 (steps <<< 6) else 0)
-      let t := st64 t (off + 56) 0
-      let t := st64 (st64 t (off + 64) 0) (off + 72) (if (low >>> 2) &&& (15 : UInt32) == 15 then (0 : UInt32) else (low >>> 2) &&& (15 : UInt32)).toUInt64
-      let t := if timed then bump t 120 else t
-      bump (bump t 0) 8
+  let t := if known != 0 then t else admit cfg t off k acked seq (rd16 rx (f + 48)) low macHigh macLow now
   let state := rd8 t off
   let sent := ld32 t (off + 16)
   let was := ld32 t (off + 20)
@@ -660,8 +687,7 @@ number is what it will be shown with the first bytes of that request. -/
   -- An answer after which the connection stays open, all acknowledged by this very segment: the
   -- connection is as it was before the request, and what the segment carries is the next one. (A peer
   -- that has its answer sends the next request and the acknowledgement together.)
-  let over := state == 2 && marks &&& 16 != 0 &&
-    unacked == ld32 t (off + 28) + (answers.getD (ld32 t (off + 56)).toNat ByteArray.empty).size.toUInt32
+  let over := if state == 2 && marks &&& 16 != 0 then whole answers t off unacked else false
   let state : UInt8 := if over then 1 else state
   let marks := if over then marks &&& 1 else marks
   -- While an answer is on its way on a connection that stays open, nothing the peer sends is taken.
@@ -683,8 +709,7 @@ number is what it will be shown with the first bytes of that request. -/
   let first := if begins then sent else ld32 t (off + 28)
   let top := if begins then sent else top
   let which := if named then said.toUInt32 &&& 0x7fffffff else ld32 t (off + 56)
-  let answer := answers.getD which.toNat ByteArray.empty
-  let size : UInt32 := if bare then 0 else answer.size.toUInt32
+  let size : UInt32 := if bare then 0 else sizeAt answers which
   -- Whether the connection stays open after the answer: as the application said, unless the peer has
   -- closed, when the answer is followed by this end's closing too.
   let stays := (if named then said.toUInt32 &&& 0x80000000 != 0 else marks &&& 16 != 0) && !peerClosed
@@ -721,7 +746,7 @@ number is what it will be shown with the first bytes of that request. -/
   let tx :=
     if again || part then
       let one := reach unacked unacked first size tail mss mss
-      segments cfg answer tx macHigh macLow rip rport expected first size mss unacked (if one - unacked ≤ sent - unacked then one else sent)
+      segmentsOf cfg answers which tx macHigh macLow rip rport expected first size mss unacked (if one - unacked ≤ sent - unacked then one else sent)
     else tx
   let t := if again || part then bump t 96 else t
   let t := if again then st32 t (off + 76) top else t
@@ -747,7 +772,7 @@ number is what it will be shown with the first bytes of that request. -/
   let timing := timing || starts
   let top := if to - unacked > top - unacked then to else top
   let tx :=
-    if to != sent then segments cfg answer tx macHigh macLow rip rport expected first size mss sent to
+    if to != sent then segmentsOf cfg answers which tx macHigh macLow rip rport expected first size mss sent to
     else if length != 0 || fin then emit cfg tx macHigh macLow rip rport 0x10 sent expected false ByteArray.empty 0 0
     else tx
   if state == 2 && !stays && unacked == first + size + 1 && peerClosed then
@@ -818,8 +843,8 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
     let expected := ld32 t (off + 24)
     let tries := rd8 t (off + 2)
     let first := ld32 t (off + 28)
-    let answer := answers.getD (ld32 t (off + 56)).toNat ByteArray.empty
-    let size : UInt32 := if rd8 t (off + 1) &&& 2 != 0 then 0 else answer.size.toUInt32
+    let which := ld32 t (off + 56)
+    let size : UInt32 := if rd8 t (off + 1) &&& 2 != 0 then 0 else sizeAt answers which
     let mss := (rd16 t (off + 38)).toUInt32
     let tail : UInt32 := if rd8 t (off + 1) &&& 16 != 0 then 0 else 1
     if state == 2 && unacked == sent && sent != first + size + tail then
@@ -830,7 +855,7 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
       -- A window shut to nothing is tried with one byte: if the word that it had opened was lost, this
       -- is how it is heard again. The byte is then owed an acknowledgement like any other.
       let to := if to == sent && rd16 t (off + 36) == 0 then sent + 1 else to
-      let tx := if to != sent then segments cfg answer tx macHigh macLow rip rport expected first size mss sent to else tx
+      let tx := if to != sent then segmentsOf cfg answers which tx macHigh macLow rip rport expected first size mss sent to else tx
       let top := ld32 t (off + 32)
       let t := st32 (st32 t (off + 16) to) (off + 4) (now + waitOf cfg (ld32 t (off + 52)) 0)
       let t := if to - unacked > top - unacked then st32 t (off + 32) to else t
@@ -853,7 +878,7 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
       -- Nothing is timed any more: an acknowledgement now could be of either sending.
       let to := reach unacked unacked first size tail mss mss
       let to := if to - unacked ≤ sent - unacked then to else sent
-      let tx := segments cfg answer tx macHigh macLow rip rport expected first size mss unacked to
+      let tx := segmentsOf cfg answers which tx macHigh macLow rip rport expected first size mss unacked to
       let wait := waitOf cfg (ld32 t (off + 52)) (tries + 1)
       -- Sending goes on from the end of what was just sent again: the rest of what was on its way is
       -- taken for lost with it, and follows as acknowledgements open the window.

@@ -98,6 +98,16 @@ opaque store16 (address : UInt64) (value : UInt16) : BaseIO Unit
 @[extern "silo_hw_command_line"]
 opaque commandLine : BaseIO ByteArray
 
+/-- Four bytes of device memory at an address that is a multiple of four, least significant first,
+written in one go. -/
+@[extern "silo_hw_store32"]
+opaque store32 (address : UInt64) (value : UInt32) : BaseIO Unit
+
+/-- The processor's count of time, in units of its own: for comparing how long things take with one
+another. Nothing says how many make a second. -/
+@[extern "silo_hw_ticks"]
+opaque ticks : BaseIO UInt64
+
 /-- A hint to the processor that this is a wait loop. -/
 @[extern "silo_hw_pause"]
 opaque pause : BaseIO Unit

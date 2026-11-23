@@ -4,7 +4,7 @@
 what was answered and how long it took. The two are joined by a bridge between their tap devices, each with
 the kernel's vhost-net behind it, in a network namespace made for the run. No root is needed.
 
-    scripts/flat-load tdx|dev [--pairs N] [--cores A,B,C,...] [--capture FILE.pcap] [--backend dpdk]
+    scripts/flat-load tdx|dev [--pairs N] [--cores A,B,C,...] [--capture FILE.pcap] [--backend dpdk [--poll-cores 2]]
 
 (scripts/build-efi PROFILE flat-os and flat-gen first.) Each guest has one processor. With --pairs there are
 N servers and N generators, each pair on a bridge of its own, and what is printed at the end is the sum.
@@ -20,7 +20,8 @@ program that polls them and never sleeps, DPDK's testpmd, to which QEMU gives th
 memory (vhost-user). SILO_DPDK must name a directory DPDK's packages were unpacked in (the one with
 usr/bin/dpdk-testpmd in it); nothing of it need be installed, and no root or huge pages are used. Of a
 pair's four host processors the guests then have one each, the poller one, and the fourth has the
-poller's idle first thread.
+poller's idle first thread; with --poll-cores 2 the poller has both, one for each direction, and its
+idle thread shares the server's.
 """
 import os, re, subprocess, sys, tempfile, threading, time
 
@@ -61,12 +62,13 @@ if polled:
         a, b, c, d = pool[4 * k:4 * k + 4]
         said = []
         # Its first thread only waits; the second does the carrying, both ways, and never sleeps.
+        two = option("--poll-cores", "1") == "2"
         process = subprocess.Popen(
-            [os.path.join(dpdk, "usr/bin/dpdk-testpmd"), "-l", f"{d},{b}", "--no-huge", "-m", "256", "--no-pci", "--in-memory",
+            [os.path.join(dpdk, "usr/bin/dpdk-testpmd")] + (["--lcores", f"0@{a},1@{b},2@{d}"] if two else ["-l", f"{d},{b}"]) + ["--no-huge", "-m", "256", "--no-pci", "--in-memory",
              "--file-prefix", f"flat{os.getpid()}-{k}", "-d", os.path.join(drivers, "librte_mempool_ring.so.26"),
              "-d", os.path.join(drivers, "librte_net_vhost.so.26"),
              "--vdev", f"net_vhost0,iface={sockets}/{k}a.sock,iommu-support=1", "--vdev", f"net_vhost1,iface={sockets}/{k}b.sock,iommu-support=1",
-             "--", "--forward-mode=io", "--nb-cores=1", "--total-num-mbufs=32768", "-a"],
+             "--", "--forward-mode=io", "--nb-cores=2" if two else "--nb-cores=1", "--total-num-mbufs=32768", "-a"],
             env=dict(os.environ, LD_LIBRARY_PATH=libraries), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         def listen(process=process, said=said):
             for line in process.stdout:
@@ -124,8 +126,8 @@ try:
             process.wait(timeout=10)
         except Exception:
             pass
-        counts = [line.strip() for line in said if "RX-packets" in line or "TX-packets" in line]
-        print(f"  poller {k}: " + (" | ".join(counts[-3:]) if counts else str(said[-3:])))
+        counts = [" ".join(line.split()) for line in said if "RX-packets" in line or "TX-packets" in line or "Forward statistics" in line]
+        print(f"  poller {k}: " + (" | ".join(counts[-9:]) if counts else str(said[-3:])))
     if pairs == 1:
         for line in servers[0][1]:
             if "flat-os" in line or "silo" in line:

@@ -23,7 +23,7 @@ def target : UInt32 := 0x0a00020f
 def own : UInt32 := 0x0a000263
 
 /-- Connections a second, each tried for `secondsEach` seconds, in turn. -/
-def rates : Array Nat := #[50000, 100000, 200000, 300000, 400000, 500000, 600000, 800000, 1000000, 1500000]
+def rates : Array Nat := #[100000, 200000, 300000, 400000, 500000, 600000, 700000, 800000, 1000000, 1500000]
 def secondsEach : Nat := 4
 
 /-- The question of whose Ethernet address `target` is, written to `tx`. -/
@@ -123,13 +123,28 @@ def main : IO UInt32 := do
   let macHigh := (mac >>> 32).toUInt16
   let macLow := mac.toUInt32
   say s!"flat-gen: found it; {rates.size} rates, {secondsEach} seconds each"
+  -- How many of the processor's ticks make a second, by the firmware's clock over a twentieth of one:
+  -- connections are opened by the tick, a few a turn, and not a millisecond's worth at once.
+  let edge ← Efi.millis
+  let mut clock0 ← Efi.millis
+  while clock0 == edge do clock0 ← Efi.millis
+  let ticks0 ← Hw.ticks
+  let mut clock1 ← Efi.millis
+  while clock1 < clock0 + 50 do clock1 ← Efi.millis
+  let perSecond : UInt64 := ((← Hw.ticks) - ticks0) * 20
+  let mut tick ← Hw.ticks
+  let mut credit : UInt64 := 0
   let began ← Efi.millis
-  let mut last := began
   let mut second := began
   let mut serial := 0
-  let mut owed := 0
   let mut opened := 0
   let mut step := 0
+  let mut turns := 0
+  let mut idle := 0
+  let mut waited : UInt64 := 0
+  -- What there is to say each second is kept and said at the end: writing a line takes about a
+  -- millisecond here, and the connections that millisecond owed would all be opened at once after it.
+  let mut notes : Array String := #[]
   repeat
     let mut length : USize := 0
     (rings, scratch, batch, length) ← VirtioNet.receive card rings scratch batch
@@ -137,27 +152,35 @@ def main : IO UInt32 := do
     let now := clock.toUInt32
     tx := st64 tx 0 8
     if length != 0 then (tx, stats) := reflect cfg macHigh macLow request now batch 0 length tx stats
-    if clock != last then
-      -- What this millisecond owes at the rate set, and whatever earlier ones could not be given room for.
-      let rate := rates[step]!
-      owed := owed + rate * (clock - last).toNat
-      let count := min (owed / 1000) 3000
-      owed := owed - count * 1000
-      if owed > rate * 20 then owed := rate * 20
+    -- What the time since the last turn owes at the rate set, and whatever earlier turns could not be
+    -- given room for, up to a fiftieth of a second's worth.
+    let rate := (rates[step]!).toUInt64
+    let present ← Hw.ticks
+    credit := credit + rate * (present - tick)
+    tick := present
+    let count := (min (credit / perSecond) 256).toNat
+    credit := credit - count.toUInt64 * perSecond
+    if credit > rate * (perSecond / 50) then credit := rate * (perSecond / 50)
+    if count != 0 then
       tx := open_ cfg macHigh macLow now serial count tx
       serial := serial + count
       opened := opened + count
-      last := clock
     (rings, scratch) ← VirtioNet.transmit card rings scratch tx
+    turns := turns + 1
+    if length == 0 then idle := idle + 1
     if clock ≥ second + 1000 then
       let times := (List.range 12).map fun b => toString (ld64 stats (64 + b.toUSize * 8))
-      say s!"flat-gen: rate {rates[step]!}: opened {opened}, answered {ld64 stats 0}, reset {ld64 stats 8}, not taken by the card {rings.dropped}; under 1 2 4 8 16 32 64 128 256 512 1024 ms and over: {" ".intercalate times}"
+      notes := notes.push s!"flat-gen: rate {rates[step]!}: opened {opened}, answered {ld64 stats 0}, reset {ld64 stats 8}, not taken by the card {rings.dropped}, {turns} turns of which {idle} with nothing, {rings.waits - waited} waits for the card; under 1 2 4 8 16 32 64 128 256 512 1024 ms and over: {" ".intercalate times}"
       stats := Flat.zeros 256
+      turns := 0
+      idle := 0
+      waited := rings.waits
       opened := 0
       second := clock
       if (clock - began) / 1000 ≥ ((step + 1) * secondsEach).toUInt64 then
         step := step + 1
         if step ≥ rates.size then
+          for note in notes do say note
           say "flat-gen: done"
           break
   return 0

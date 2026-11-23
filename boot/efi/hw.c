@@ -157,6 +157,14 @@ static uint8_t *device_memory(uint64_t address, size_t size) {
     return (uint8_t *)(uintptr_t)address;
 }
 
+// Bytes copied by the processor's own instruction for it, which on those that have trust domains is as
+// fast as anything for a frame's worth and for a megabyte. The runtime's `memcpy` (rt/bare/libc.c) is a
+// loop a byte at a time, which is right for what the runtime copies and a quarter of a card driver's
+// time when every frame goes through it.
+static void copy(void *to, void const *from, size_t count) {
+    __asm__ volatile("rep movsb" : "+D"(to), "+S"(from), "+c"(count) : : "memory");
+}
+
 lean_obj_res silo_hw_load(uint64_t address, size_t size) {
     uint8_t const *from = device_memory(address, size);
     lean_object *bytes = lean_alloc_sarray(1, size, size);
@@ -177,14 +185,14 @@ lean_obj_res silo_hw_load_into(uint64_t address, lean_obj_arg bytes, size_t at, 
     if (!lean_is_exclusive(bytes)) rt_stop("a driver filled an array that something else also holds");
     if (at > lean_sarray_size(bytes) || size > lean_sarray_size(bytes) - at)
         rt_stop("a driver filled an array past its end");
-    memcpy(lean_sarray_cptr(bytes) + at, from, size);
+    copy(lean_sarray_cptr(bytes) + at, from, size);
     return bytes;
 }
 
 lean_obj_res silo_hw_store_from(uint64_t address, b_lean_obj_arg bytes, size_t at, size_t size) {
     if (at > lean_sarray_size(bytes) || size > lean_sarray_size(bytes) - at)
         rt_stop("a driver sent an array from past its end");
-    memcpy(device_memory(address, size), lean_sarray_cptr(bytes) + at, size);
+    copy(device_memory(address, size), lean_sarray_cptr(bytes) + at, size);
     return lean_box(0);
 }
 
@@ -211,8 +219,25 @@ lean_obj_res silo_hw_store16(uint64_t address, uint16_t value) {
     return lean_box(0);
 }
 
+// Four bytes of device memory written in one go, at an address that is a multiple of four: a length in
+// a queue's table, say, which the other side must not see half written.
+lean_obj_res silo_hw_store32(uint64_t address, uint32_t value) {
+    if (address & 3) rt_stop("a driver reached for four bytes of device memory at an address not a multiple of four");
+    *(volatile uint32_t *)device_memory(address, 4) = value;
+    return lean_box(0);
+}
+
 lean_obj_res silo_hw_command_line(void) {
     return lean_alloc_sarray(1, 0, 0);
+}
+
+// The processor's own count of time, as it stands: for a program to see where its time goes. It is not
+// a clock of anyone's (the firmware's time is `silo_efi_millis`), and in a trust domain the host cannot
+// set it.
+uint64_t silo_hw_ticks(void) {
+    uint32_t low, high;
+    __asm__ volatile("lfence; rdtsc" : "=a"(low), "=d"(high) :: "memory");
+    return ((uint64_t)high << 32) | low;
 }
 
 lean_obj_res silo_hw_pause(void) {

@@ -76,11 +76,14 @@ structure Rings where
   sent : UInt16 := 0
   done : UInt16 := 0
   /-- Frames not sent because the card had not finished with any buffer in time. -/
-  dropped : Nat := 0
+  dropped : UInt64 := 0
   /-- Frames taken from the card and given to it, and the times the host was told of either: what leaving
   the guest costs is the second over the first. -/
-  frames : Nat := 0
-  calls : Nat := 0
+  frames : UInt64 := 0
+  calls : UInt64 := 0
+  /-- Times the card was asked how far it had got while every buffer for sending was still with it:
+  how long this end stood waiting for the other to take frames. -/
+  waits : UInt64 := 0
   deriving Inhabited
 
 /-- An array to read the shared memory into: room for one queue's ring of finished entries, then for the
@@ -203,11 +206,32 @@ here that leaves the guest, and in a trust domain it is dear; a card that is kep
 all the time. It says so and then looks once more before it stops looking, and `Hw.store16`, by which it
 was given what to look at, is seen by it before this reads its word: so nothing is missed. What comes
 back is 1 if the host was told. -/
-@[inline] def tell (register finished : UInt64) (number : UInt32) : BaseIO Nat := do
+@[inline] def tell (register finished : UInt64) (number : UInt32) : BaseIO UInt64 := do
   if (← Hw.load16 finished) &&& 1 == 0 then
     Hw.write register 2 number
     return 1
   else return 0
+
+/-! The two loops below, one turn a frame, are written as functions that call themselves with what
+changes as plain numbers. Written as `for` and `while` with variables, each turn made several small
+objects to carry the variables to the next, and at four million frames a second that was a quarter of
+the server's time. -/
+
+/-- The frames of the `count` finished entries copied out of `scratch` from the `k`-th on, into `batch`
+from `at_`, each buffer's number noted at `numbers` in `scratch` for giving back. -/
+partial def takeEach (card : @& Card) (count mask numbers k at_ : USize) (scratch batch : ByteArray) :
+    BaseIO (ByteArray × ByteArray × USize) :=
+  if k ≥ count then pure (scratch, batch, at_) else
+  let entry := k * 8
+  let buffer := (ld32 scratch entry).toUSize &&& mask
+  let said := (ld32 scratch (entry + 4)).toUSize
+  let length := (if said > stride then stride else said) - header
+  let scratch := putLe16 scratch (numbers + k * 2) buffer.toUInt16
+  -- A frame is at least an Ethernet header and no more than a buffer holds; anything else is skipped.
+  if said ≥ header + 14 && at_ + 2 + length ≤ batch.usize then do
+    let batch ← Hw.loadInto (card.rxBuffers + (buffer * stride + header).toUInt64) (wr16 batch at_ length.toUInt16) (at_ + 2) length
+    takeEach card count mask numbers (k + 1) (at_ + 2 + length) scratch batch
+  else takeEach card count mask numbers (k + 1) at_ scratch batch
 
 /-- Everything the card has received since the last call, copied into `batch` as the stack takes it (two
 bytes of length, then the frame, one after another), and the buffers given back. `scratch` is from
@@ -223,22 +247,10 @@ def receive (card : @& Card) (rings : Rings) (scratch batch : ByteArray) : BaseI
   -- Those entries of the ring, copied out once: eight bytes each, a buffer's number and a length.
   let first := rings.taken.toUSize &&& mask
   let run := if count < size - first then count else size - first
-  let mut scratch ← Hw.loadInto (card.rxFinished + 4 + (first * 8).toUInt64) scratch 0 (run * 8)
-  if run < count then scratch ← Hw.loadInto (card.rxFinished + 4) scratch (run * 8) ((count - run) * 8)
-  let mut batch := batch
-  let mut at_ : USize := 0
+  let scratch ← Hw.loadInto (card.rxFinished + 4 + (first * 8).toUInt64) scratch 0 (run * 8)
+  let scratch ← if run < count then Hw.loadInto (card.rxFinished + 4) scratch (run * 8) ((count - run) * 8) else pure scratch
   let numbers := size * 8
-  for k in [0:count.toNat] do
-    let entry := k.toUSize * 8
-    let buffer := (ld32 scratch entry).toUSize &&& mask
-    let said := (ld32 scratch (entry + 4)).toUSize
-    let length := (if said > stride then stride else said) - header
-    -- A frame is at least an Ethernet header and no more than a buffer holds; anything else is skipped.
-    if said ≥ header + 14 && at_ + 2 + length ≤ batch.usize then
-      batch := wr16 batch at_ length.toUInt16
-      batch ← Hw.loadInto (card.rxBuffers + (buffer * stride + header).toUInt64) batch (at_ + 2) length
-      at_ := at_ + 2 + length
-    scratch := putLe16 scratch (numbers + k.toUSize * 2) buffer.toUInt16
+  let (scratch, batch, at_) ← takeEach card count mask numbers 0 0 scratch batch
   -- The same buffers offered again, in the places after those already offered, and the host told once.
   let next := rings.given.toUSize &&& mask
   let run := if count < size - next then count else size - next
@@ -247,8 +259,52 @@ def receive (card : @& Card) (rings : Rings) (scratch batch : ByteArray) : BaseI
   let given := rings.given + count.toUInt16
   Hw.store16 (card.rxOffered + 2) given
   let told ← tell card.tellRx card.rxFinished 0
-  return ({ rings with taken := rings.taken + count.toUInt16, given, frames := rings.frames + count.toNat,
+  return ({ rings with taken := rings.taken + count.toUInt16, given, frames := rings.frames + count.toUInt64,
                        calls := rings.calls + told }, scratch, batch, at_)
+
+/-- The card asked how far it has got, up to `patience` times, while every buffer for sending is still
+with it. What comes back is how far, in the low sixteen bits, and above them how many times it was asked. -/
+partial def await (card : @& Card) (size : USize) (sent done : UInt16) (tries patience : UInt64) : BaseIO UInt64 :=
+  if (sent - done).toUSize < size || tries ≥ patience then pure ((tries <<< 16) ||| done.toUInt64) else do
+  let finished ← Hw.load16 (card.txFinished + 2)
+  -- Its word again: believed only if it is between what was known and what was sent.
+  let done := if (finished - done) ≤ (sent - done) then finished else done
+  if (sent - done).toUSize ≥ size then Hw.pause
+  await card size sent done (tries + 1) patience
+
+/-- The end of a sending: the card told of what is queued and not yet told of, how far it has got asked
+for next time, and the rings as they now are. -/
+def closeOut (card : @& Card) (rings : Rings) (sent done told : UInt16) (dropped frames waits calls : UInt64) : BaseIO Rings := do
+  let calls ← if told != sent then do
+      Hw.store16 (card.txOffered + 2) sent
+      pure (calls + (← tell card.tellTx card.txFinished 1))
+    else pure calls
+  let finished ← Hw.load16 (card.txFinished + 2)
+  let done := if (finished - done) ≤ (sent - done) then finished else done
+  return { rings with sent, done, dropped, frames, waits, calls }
+
+/-- The frames of `tx` from `o` to `stop` put into the card's buffers in turn. -/
+partial def giveEach (card : @& Card) (rings : Rings) (tx : @& ByteArray) (stop size mask : USize) (patience : UInt64)
+    (o : USize) (sent done told : UInt16) (dropped frames waits calls : UInt64) : BaseIO Rings :=
+  if o + 2 > stop then closeOut card rings sent done told dropped frames waits calls else
+  let length := (rd16 tx o).toUSize
+  if length < 14 || length > stride - header || o + 2 + length > stop then closeOut card rings sent done told dropped frames waits calls
+  else if (sent - done).toUSize ≥ size then do
+    -- Full. What is queued is handed over, and the card is waited for.
+    let calls ← if told != sent then do
+        Hw.store16 (card.txOffered + 2) sent
+        pure (calls + (← tell card.tellTx card.txFinished 1))
+      else pure calls
+    let got ← await card size sent done 0 patience
+    let done := got.toUInt16
+    let waits := waits + (got >>> 16)
+    if (sent - done).toUSize ≥ size then giveEach card rings tx stop size mask patience (o + 2 + length) sent done sent (dropped + 1) frames waits calls
+    else giveEach card rings tx stop size mask patience o sent done sent dropped frames waits calls
+  else do
+    let buffer := sent.toUSize &&& mask
+    Hw.storeFrom (card.txBuffers + (buffer * stride + header).toUInt64) tx (o + 2) length
+    Hw.store32 (card.txDescriptors + (buffer * 16 + 8).toUInt64) (header + length).toUInt32
+    giveEach card rings tx stop size mask patience (o + 2 + length) (sent + 1) done told dropped (frames + 1) waits calls
 
 /-- Every frame the stack wrote to `tx` (from its ninth byte to where its first eight say) put into the
 card's buffers in turn, and the host told once. When every buffer is still with the card it is waited
@@ -256,49 +312,12 @@ for, asking `patience` times how far the card has got (some tens of milliseconds
 cannot be sent then is dropped and counted, and the stack will send it again. A stack that writes more
 in one go than the card has buffers leans on this wait: a frame dropped here costs its connection a
 timer. -/
-def transmit (card : @& Card) (rings : Rings) (scratch : ByteArray) (tx : @& ByteArray) (patience : Nat := 400000) :
+def transmit (card : @& Card) (rings : Rings) (scratch : ByteArray) (tx : @& ByteArray) (patience : UInt64 := 400000) :
     BaseIO (Rings × ByteArray) := do
   let stop := Flat.written tx
   if stop ≤ 8 then return (rings, scratch)
-  let size := card.size
-  let mask := size - 1
-  let mut rings := rings
-  let mut scratch := scratch
-  let mut o : USize := 8
-  let mut told := rings.sent
-  while o + 2 ≤ stop do
-    let length := (rd16 tx o).toUSize
-    if length < 14 || length > stride - header || o + 2 + length > stop then break
-    if (rings.sent - rings.done).toUSize ≥ size then
-      -- Full. What is queued is handed over, and the card is asked how far it has got, a few thousand
-      -- times at most.
-      if told != rings.sent then
-        Hw.store16 (card.txOffered + 2) rings.sent
-        rings := { rings with calls := rings.calls + (← tell card.tellTx card.txFinished 1) }
-        told := rings.sent
-      let mut tries := 0
-      while (rings.sent - rings.done).toUSize ≥ size && tries < patience do
-        let finished ← Hw.load16 (card.txFinished + 2)
-        -- Its word again: believed only if it is between what was known and what was sent.
-        if (finished - rings.done) ≤ (rings.sent - rings.done) then rings := { rings with done := finished }
-        if (rings.sent - rings.done).toUSize ≥ size then Hw.pause
-        tries := tries + 1
-      if (rings.sent - rings.done).toUSize ≥ size then
-        rings := { rings with dropped := rings.dropped + 1 }
-        o := o + 2 + length
-        continue
-    let buffer := rings.sent.toUSize &&& mask
-    Hw.storeFrom (card.txBuffers + (buffer * stride + header).toUInt64) tx (o + 2) length
-    scratch := st32 scratch 4 (header + length).toUInt32
-    Hw.storeFrom (card.txDescriptors + (buffer * 16 + 8).toUInt64) scratch 4 4
-    rings := { rings with sent := rings.sent + 1, frames := rings.frames + 1 }
-    o := o + 2 + length
-  if told != rings.sent then
-    Hw.store16 (card.txOffered + 2) rings.sent
-    rings := { rings with calls := rings.calls + (← tell card.tellTx card.txFinished 1) }
-  -- How far the card has got, for next time.
-  let finished ← Hw.load16 (card.txFinished + 2)
-  if (finished - rings.done) ≤ (rings.sent - rings.done) then rings := { rings with done := finished }
+  let rings ← giveEach card rings tx stop card.size (card.size - 1) patience 8 rings.sent rings.done rings.sent
+    rings.dropped rings.frames rings.waits rings.calls
   return (rings, scratch)
 
 end Kernel.Net.VirtioNet

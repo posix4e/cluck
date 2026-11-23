@@ -259,7 +259,19 @@ def sip (k0 k1 m0 m1 : UInt64) : UInt64 :=
   v0 ^^^ v1 ^^^ v2 ^^^ v3
 
 @[inline] def rd64 (a : @& ByteArray) (i : USize) : UInt64 :=
-  ((rd32 a i).toUInt64 <<< 32) ||| (rd32 a (i + 4)).toUInt64
+  if h : i.toNat + 7 < a.size then
+    ((a.uget i (by omega)).toUInt64 <<< 56) |||
+    ((a.uget (i + USize.ofNat 1) (within 1 (by omega))).toUInt64 <<< 48) |||
+    ((a.uget (i + USize.ofNat 2) (within 2 (by omega))).toUInt64 <<< 40) |||
+    ((a.uget (i + USize.ofNat 3) (within 3 (by omega))).toUInt64 <<< 32) |||
+    ((a.uget (i + USize.ofNat 4) (within 4 (by omega))).toUInt64 <<< 24) |||
+    ((a.uget (i + USize.ofNat 5) (within 5 (by omega))).toUInt64 <<< 16) |||
+    ((a.uget (i + USize.ofNat 6) (within 6 (by omega))).toUInt64 <<< 8) |||
+    (a.uget (i + USize.ofNat 7) (within 7 h)).toUInt64
+  else 0
+
+/-- What a word of 32 bits adds to the sum a checksum is made of: its two halves. -/
+@[inline] def halves (w : UInt32) : UInt64 := (w >>> 16).toUInt64 + (w &&& 0xffff).toUInt64
 
 /-- The sum the Internet checksum is made of, over the bytes from `i` to `stop`: eight at a time while
 there are eight, as two halves so that nothing is lost off the top, then two at a time. -/
@@ -461,9 +473,16 @@ def emit (cfg : @& Tuning) (tx : ByteArray) (macHigh : UInt16) (macLow rip : UIn
   let tx := if length == 0 then tx else payload.copySlice start.toNat tx (t + 20 + options).toNat length.toNat
   let tx :=
     if cfg.checksums then
-      let tx := wr16 tx (ip + 10) (fold (sum16 tx ip (ip + 20) 0))
-      let pseudo := (sum16 tx (ip + 12) (ip + 20) 0) + 6 + segment.toUInt64
-      wr16 tx (t + 16) (fold (sum16 tx t (t + segment) pseudo))
+      -- The sums are made from the values that were written, which is the same as reading them back and
+      -- costs a third of it; only the payload is read, from where it came.
+      let addresses := halves cfg.localIp + halves rip
+      let tx := wr16 tx (ip + 10) (fold (0x4500 + (20 + segment).toUInt64 + 0x4000 + 0x4006 + addresses))
+      let first : UInt64 := if mssOption then (if scaleOption then 0x7000 else 0x6000) else 0x5000
+      let opening : UInt64 := if mssOption then 0x0204 + cfg.mss.toUInt64 + (if scaleOption then 0x0103 + 0x0300 else 0) else 0
+      let header := cfg.localPort.toUInt64 + rport.toUInt64 + halves seq + halves ack + (first ||| flags.toUInt64) +
+        cfg.window.toUInt64 + opening
+      let body := if length == 0 then 0 else sum16 payload start (start + length) 0
+      wr16 tx (t + 16) (fold (addresses + 6 + segment.toUInt64 + header + body))
     else tx
   st64 tx 0 (at_ + 2 + total).toUInt64
 
@@ -524,9 +543,10 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   let header := ((rd8 rx (f + 46)) >>> 4).toUSize <<< 2
   if header < 20 || ipLength < 20 + header || 14 + ipLength > n then loop cfg answers respond now rx next stop (bump t 32) tx
   else
+  let addresses := halves (rd32 rx (f + 26)) + halves (rd32 rx (f + 30))
   let sound := !cfg.checksums ||
-    (fold (sum16 rx (f + 14) (f + 34) 0) == 0 &&
-     fold (sum16 rx (f + 34) (f + 14 + ipLength) (sum16 rx (f + 26) (f + 34) 0 + 6 + (ipLength - 20).toUInt64)) == 0)
+    (fold (halves (rd32 rx (f + 14)) + halves (rd32 rx (f + 18)) + halves (rd32 rx (f + 22)) + addresses) == 0 &&
+     fold (sum16 rx (f + 34) (f + 14 + ipLength) (addresses + 6 + (ipLength - 20).toUInt64)) == 0)
   if !sound then loop cfg answers respond now rx next stop (bump t 32) tx
   else
   let macHigh := rd16 rx (f + 6)

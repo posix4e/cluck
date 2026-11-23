@@ -54,6 +54,13 @@ exposes, and what stands in the way:
   which the host can bring about anyway by carrying nothing. So that an honest card and the driver
   cannot each miss the other, `silo_hw_store16` ends with a full barrier (`__sync_synchronize`): the
   position written is seen by the card before the driver reads the card's word.
+- `silo_hw_store32` writes four bytes of the memory shared with a device in one go, checked as the
+  other stores are; the driver's copies to and from that memory are made by `rep movsb` in
+  `boot/efi/hw.c` and not by the runtime's `memcpy`. Neither reads anything.
+- `silo_hw_ticks` reads the processor's time-stamp counter, for a program to see where its own time
+  goes (`flat-os` prints it). It takes nothing from the host; in a trust domain the counter is kept by
+  the TDX module. A program that put secrets and such timings side by side would have to think about
+  what the timings say; nothing here does.
 - The card may be carried on the host by a program of its own in place of the kernel (vhost-user,
   `SILO_NET_VHOST_USER` in `scripts/run-efi`; used for measuring only). Nothing changes for the guest:
   it is the same card, the same queues in the same host-visible memory, and the host was already

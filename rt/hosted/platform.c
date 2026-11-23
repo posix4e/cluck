@@ -119,6 +119,8 @@ uint32_t silo_hw_read(uint64_t address, uint8_t width) { (void)address; (void)wi
 lean_obj_res silo_hw_write(uint64_t address, uint8_t width, uint32_t value) { (void)address; (void)width; (void)value; no_hardware(); }
 lean_obj_res silo_hw_load_into(uint64_t address, lean_obj_arg bytes, size_t at, size_t size) { (void)address; (void)bytes; (void)at; (void)size; no_hardware(); }
 lean_obj_res silo_hw_store_from(uint64_t address, b_lean_obj_arg bytes, size_t at, size_t size) { (void)address; (void)bytes; (void)at; (void)size; no_hardware(); }
+uint64_t silo_hw_ticks(void) { no_hardware(); }
+lean_obj_res silo_hw_store32(uint64_t address, uint32_t value) { (void)address; (void)value; no_hardware(); }
 uint16_t silo_hw_load16(uint64_t address) { (void)address; no_hardware(); }
 lean_obj_res silo_hw_store16(uint64_t address, uint16_t value) { (void)address; (void)value; no_hardware(); }
 lean_obj_res silo_hw_command_line(void) { return lean_alloc_sarray(1, 0, 0); }

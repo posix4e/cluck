@@ -322,14 +322,69 @@ sweep over the table; what can be tuned is one record, `Tuning`.
       a million opened, one pair): the generator never sends anything again
       and never slows, which no real crowd of clients does, and this has not
       been tried with clients that do.
-    - Not known: which is the limit now, the server, the generator or the
-      poller; what a second queue or a second poller core would give; whether
+    - Not known: what a second queue would give; whether
       the memory QEMU hands the poller in a trust domain is only what the
       guest has made host-visible (it should be, and the guest gives the host
       nothing else, but this was not looked at from the host's side). 29 of
       DPDK's 230 small packages did not come down (the mirror was slow); none
       of them is one `testpmd` loads here. Those fetched outside `apt` were
       checked against the index's SHA-512.
+  - **Which of the three was the limit there, and what it is now: 800,000 a
+    second for one trust domain, 6.5 million for eight** (2026-11-23, later).
+    The table above is as it stood. Each guest now counts its turns and those
+    with nothing to do, and `flat-os` times its four parts by the processor's
+    counter (`Hw.ticks`, new). At 590,000 the generator was idle most turns, a
+    second core for the poller changed nothing (`--poll-cores 2`), and the
+    server was never idle: the server, then. Of its time, 53% was the TCP, 26%
+    giving frames to the card and 17% taking them. What was found and done:
+    - **The driver's two loops made several small objects a frame.** They
+      were a `for` and a `while` with variables, which Lean carries from turn
+      to turn in objects it makes; they are now functions that call themselves
+      with plain numbers, as the TCP's always were, and the length of a frame
+      is written with one call (`Hw.store32`) where it took two. Giving fell
+      from 26% to 4%, taking from 17% to 12%.
+    - **A third of the checksumming was reading back what had just been
+      written.** The sums of the headers are made from the values now; only
+      the payload is read. In memory 865,000 connections a second became
+      920,000; `tcpdump` finds all 20,000 checksums of a capture right.
+    - **The generator opened a millisecond's worth of connections at once**,
+      600 SYNs in one burst at 600,000 a second, which no ring holds; it opens
+      by the processor's counter now, a few a turn. Most of what looked like
+      the server falling apart past its most was this.
+    - **Writing a line to the console takes a guest about a millisecond**, and
+      both wrote one a second: each line lost some hundreds of connections.
+      They keep what they have to say until the run is quiet.
+    - The server now lets SYNs go when two batches running found a quarter of
+      the ring in use and an eighth of the second is SYNs.
+
+    The third second at each rate, with `--backend dpdk`:
+
+    | pairs | opened a second | answered | under 1 ms |
+    |---|---|---|---|
+    | 1 | 500,000 | 500,000 | 493,051 |
+    | 1 | 800,000 | 798,756 | 749,610 |
+    | 1 | 1,000,000 | 807,205 | 616,331 |
+    | 1 | 1,500,000 | 852,548 | 634,532 |
+    | 8 | 4,800,000 | 4,799,640 | 4,676,792 |
+    | 8 | 5,600,000 | 5,586,593 | 5,220,162 |
+    | 8 | 6,400,000 | 6,282,681 | 5,198,889 |
+    | 8 | 12,000,000 | 5,872,225 | 4,046,150 |
+
+    None took longer than 2 ms up to 800,000 for one pair. Of 21 million
+    connections in the one-pair run the server sent 1,037 segments again. At
+    its most the server spends 83% of its time in the TCP, 12% taking frames
+    and 4% giving them. On the kernel's path the most is now 332,000 (it was
+    280,000), where the vhost thread is still the limit.
+    - Not done: the copy the runtime gives Lean's arrays is still a loop a
+      byte at a time (`rt/bare/libc.c`), which a megabyte answer goes through;
+      it was left alone because changing it changes the builder's measured
+      image. The driver's own copies use the processor's instruction for it.
+      The Nitro target's `rt/bare/hw.c` has none of `load16`, `store16`,
+      `store32` or `ticks`; nothing there uses them.
+    - Not known: what limits eight pairs at 6.5 million (they are every core
+      but eight, and the pollers share sockets with the guests); how the TCP's
+      83% divides, beyond what the hosted profile says (45% the per-frame
+      logic, 29% checksums before this, 15% writing frames, 9% hashing).
   - **Asked for more than that, it now falls off slowly and not at once.**
     `Tuning.busy` stops SYNs being answered while more than so many connections
     are open (1,024 in `flat-os`), so that what has begun is finished first.

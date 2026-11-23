@@ -1514,6 +1514,18 @@ times, and the block from the relay. Six stages:
     - Still 0.17 s a round outside the guest's work at the median. Not looked into: QEMU's own
       network, which the builder's guest is still behind (the trial TCP was measured on the
       kernel's and on a poller); how often the guest tells the host of a frame it sends.
+  - **What is in the builder's image, counted** (2026-11-23; `scripts/image-inventory` reads the
+    linker's map). Of 7.2 MB of code and data in image `9cba036e…533321d7`: 2.6 MB is the linker's
+    tables for moving the image; 1.5 MB is Jaune, which this project did not write; 1.4 MB is this
+    package's Lean, 1.4 MB Lean's own library, 0.19 MB the OS's Lean. C is 29,661 bytes, 0.4% of
+    the image, from 4,064 lines: 2,875 of Lean's runtime (the parts printed out and kept) and
+    1,189 of this project's (`rt/object.c` 184, `boot/efi/platform.c` 260, `boot/efi/hw.c` 246,
+    `rt/apply.c` 134, and six smaller). Not in the count, and in the trusted part all the same: the
+    firmware the image runs on, which is not this project's and is far larger than the image; the
+    processor's TDX module; inline assembly, which is counted with the C file it is in.
+    - Jaune's interpreter and its transaction rules are still in the image (`MessageOp.step`,
+      `PlainOp.runCore`, `processTransaction`), though blocks are built with the engine written
+      here: what still calls them, and whether it can go, has not been looked at.
   - Not done: a bid can still be answered after its slot
     has begun when the parent comes very late (one in 1,432 at the real relays); the builders
     that win go on to the slot's start or past it, and ours stops half a second short on purpose;

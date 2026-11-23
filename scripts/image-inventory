@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""What is in an EFI image, by where it came from: the bytes of code and constant data the linker kept,
+read from its map, and the lines of C behind those that are C.
+
+    scripts/image-inventory [OBJ-DIRECTORY]       from the OS's directory, or from evm/
+
+OBJ-DIRECTORY is where scripts/build-efi left its objects and `image.map`
+(.lake/build/efi/tdx/obj for the OS's image, .lake/build/efi/tdx/evm-os/obj for the builder's, which is
+what is taken when none is named and this is run from evm/). The image must have been built there.
+
+Counted: sections of code and of data that is in the file. Not counted: memory that is only set aside
+(the heap, stacks), which is nothing but zeros. What the linker makes itself (tables for moving the image
+to where it is loaded) is a line of its own. A Lean function is put down to the package whose name it
+carries; C to the file it was compiled from.
+"""
+import collections, glob, os, re, sys
+
+here = os.getcwd()
+in_evm = os.path.basename(here) == "evm" and os.path.exists(os.path.join(here, "..", "rt", "object.c"))
+os_root = os.path.dirname(here) if in_evm else here
+obj = sys.argv[1] if len(sys.argv) > 1 else (".lake/build/efi/tdx/evm-os/obj" if in_evm else ".lake/build/efi/tdx/obj")
+if not os.path.exists(os.path.join(obj, "image.map")):
+    sys.exit(f"image-inventory: no image.map in {obj}; build the image first")
+
+# The numbered objects are the C files in the order build-efi compiles them; the rest come by name.
+sources = sorted(glob.glob(os_root + "/rt/*.c")) + sorted(glob.glob(obj + "/printed/*.c"))
+if in_evm:
+    sources += sorted(glob.glob(here + "/rt/*.c")) + sorted(glob.glob(here + "/boot/*.c"))
+sources += [os_root + "/rt/bare/libc.c", os_root + "/rt/bare/platform.c", os_root + "/boot/efi/platform.c", os_root + "/boot/efi/hw.c"]
+
+sizes, by_file = collections.Counter(), collections.defaultdict(collections.Counter)
+entry = re.compile(r"^\s*[0-9a-f]+\s+[0-9a-f]+\s+([0-9a-f]+)\s+\d+\s+(\S+?):\((\.[^)]*)\)")
+for text in open(os.path.join(obj, "image.map"), errors="replace"):
+    found = entry.match(text)
+    if not found:
+        continue
+    size, where, section = int(found.group(1), 16), found.group(2), found.group(3)
+    if size == 0 or section.startswith((".bss", ".tbss", ".comment", ".note", ".debug")):
+        continue
+    symbol = section.split(".", 2)[2] if section.count(".") >= 2 else ""
+    numbered = re.search(r"/(\d+)\.o$", where)
+    source = sources[int(numbered.group(1))] if numbered and int(numbered.group(1)) < len(sources) else where
+    package = re.match(r"(?:_init_)?lp_([a-zA-Z0-9]+(?:_x2d[a-zA-Z0-9]+)*)_", symbol)
+    if where == "<internal>":
+        origin = "the linker's own tables"
+    elif package:
+        origin = "Lean, package " + package.group(1).replace("_x2d", "-")
+    elif re.match(r"(_init_)?l_|initialize_|_init_", symbol) or re.search(r"lib(Init|Std|Lean)\.a", where):
+        origin = "Lean, its own library (Init, Std)"
+    elif "/printed/" in source:
+        origin = "C, Lean's runtime: the parts printed out and kept"
+    elif source.endswith(".c") and "/.lake/" not in source:
+        origin = "C, this project: " + os.path.relpath(source, os_root)
+    else:
+        origin = "Lean, start-up and constants of compiled modules"
+    sizes[origin] += size
+    by_file[origin][source] += size
+
+total = sum(sizes.values())
+def lines(path):
+    try:
+        return sum(1 for _ in open(path, errors="replace"))
+    except OSError:
+        return 0
+print(f"{obj}: {total:,} bytes of code and data in the image")
+c_bytes = c_lines = 0
+for origin, size in sorted(sizes.items(), key=lambda kv: (not kv[0].startswith("C"), -kv[1])):
+    extra = ""
+    if origin.startswith("C"):
+        count = sum(lines(path) for path in by_file[origin])
+        c_bytes += size; c_lines += count
+        extra = f"   {count:,} lines"
+    print(f"  {size:10,}  {100 * size / total:5.1f}%  {origin}{extra}")
+print(f"  C in all: {c_bytes:,} bytes, {100 * c_bytes / total:.1f}% of the image, from {c_lines:,} lines")

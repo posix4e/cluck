@@ -48,7 +48,8 @@ Laid out:
             eight bytes each: 0 live, 8 accepted, 16 closed, 24 SYNs, 32 dropped, 40 out of order,
             48 resets taken, 56 no room, 64 where the sweep has got to, 72 sent again, 80 timed out,
             88 resets sent, 96 sent again on repeated acknowledgements, 104 times an answer was held
-            back for want of room to write frames
+            back for want of room to write frames, 112 SYNs not answered because too many
+            connections were open
     entry   0 state (0 free, 1 open, 2 answering and closing, 3 waiting out its end)
             1 flags (1: the peer has closed; 2: there is no answer, only the end)
             2 times sent again without an acknowledgement   3 acknowledgements repeated
@@ -95,6 +96,11 @@ structure Tuning where
   linger : UInt32 := 0
   /-- Milliseconds in which the whole table is looked over for entries whose time has come. -/
   sweepMs : UInt32 := 256
+  /-- With more connections open than this, a SYN is not answered: the connections there are are finished
+  before more are begun. Without it, asked for more than the path can carry, this end goes on answering
+  every SYN while what it has begun cannot finish, and gets less done the more it is asked. 0 for no
+  such limit. -/
+  busy : UInt64 := 0
   /-- Whether a segment that belongs to no connection is answered with a reset, as a TCP should, or with
   nothing, which costs less under a flood. -/
   resetStrays : Bool := true
@@ -465,6 +471,7 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
     -- A SYN is answered from the cookie and nothing is kept. (One for a connection that is open is too:
     -- its answer will not fit that connection and the peer will see so.)
     if flags &&& 0x10 != 0 then loop cfg answers respond now rx next stop (bump t 32) tx
+    else if cfg.busy != 0 && ld64 t 0 > cfg.busy then loop cfg answers respond now rx next stop (bump t 112) tx
     else
       let theirs := offered rx (f + 54) (f + 34 + header)
       let ours := cookie cfg k seq (now >>> 16) ||| indexOf (if theirs < cfg.mss then theirs else cfg.mss)

@@ -249,8 +249,19 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   sent, and the connections it has cannot finish. Against 403 connections a
   second on the firmware's driver and QEMU's network, and 1,656 on the
   firmware's driver and the same tap.
-  - Not known: which of the three is the limit at 280,000 (the guest, the
-    kernel's thread for its card, the bridge between the two); the same outside
+  - At the most, both guests' vhost threads in the host's kernel are at 100% of
+    a processor each (`top`), so the limit at 280,000 is at least the host's
+    side; the guests never idle, so whether they have room left cannot be seen
+    from outside.
+  - **Asked for more than that, it now falls off slowly and not at once.**
+    `Tuning.busy` stops SYNs being answered while more than so many connections
+    are open (1,024 in `flat-os`), so that what has begun is finished first.
+    Opened at 400,000, 500,000 and 600,000 a second it answers 255,000, 210,000
+    and 183,000, where without the limit it answered 257,000, 145,000 and
+    21,000; and almost none now takes over 128 ms. At 800,000 and beyond it
+    still answers few (45,000): the SYNs alone fill the host's path, and what
+    is lost there is lost before the guest sees it.
+  - Not known: the same outside
     a trust domain, for which there is no profile but the emulator; how often
     the guest has to call the host a frame, which `perf` would say and needs
     root here. The times are in whole milliseconds, by a clock that is the

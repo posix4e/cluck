@@ -458,10 +458,18 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     million without, from 1.24). In a trust domain one run answered 232,000
     at the most where earlier runs answered 262,000 to 280,000, and 200,000 a
     second still all answered: so the guest's own work is part of that limit,
-    not only the host's thread. With frames lost it is slower than it was at
-    moving a megabyte (60 of them with 2% lost: 5.6 s, was 3.1), which is the
-    price of no longer opening the window fast after every loss; keeping
-    segments that come out of order is what would win that back.
+    not only the host's thread. With frames lost it was at first slower than
+    before at moving a megabyte (60 of them with 2% lost: 5.6 s, was 3.1), the
+    price of no longer opening the window fast after every loss.
+  - **Several lost out of one window no longer cost a timer** (RFC 6582).
+    Once a segment is seen lost, an acknowledgement that moves but stops
+    short of what had been sent by then names the next lost one, and it is
+    sent again at once. The same 60 megabytes with 2% lost: 1.5 s, and the
+    timer fired 23 times where it had 92. With 10% lost each way 30 megabytes
+    still all arrive, in 27 s. (An earlier line here said keeping segments
+    that come out of order would win the speed back. That is for what this
+    end receives; for what it sends, this was the thing.) Still without
+    selective acknowledgements, which would say all the holes at once.
   - Not run against anything but Linux; not run with a peer that does not
     offer to scale (the generator guest is one, and it is answered).
 

@@ -28,7 +28,10 @@ What it does: the handshake by cookie; data in, in order; an answer of any lengt
 peer's largest segment and kept within the peer's window, scaled as the peer said, and a window of its
 own: one segment more for every acknowledgement until a segment is first lost, half of that when one is
 seen to be lost, one segment when a timer fires, and from then on a segment more a round trip once it
-is back to half of where it was (Reno, as RFC 5681 has it, without the inflating); sending again on a timer, and at once when the same acknowledgement has come `repeats` times
+is back to half of where it was (Reno, as RFC 5681 has it, without the inflating); and when a segment
+has been seen to be lost, every acknowledgement that moves without reaching what had been sent by then
+shows the next one lost, which is sent again at once (RFC 6582), so that several lost out of one
+window cost no timer; sending again on a timer, and at once when the same acknowledgement has come `repeats` times
 (after a timer everything from the oldest unacknowledged byte is taken for lost and sent again as the
 window reopens, so a run of lost segments costs one timer and not one each);
 both orders of closing; a reset for a segment that belongs to nothing.
@@ -57,7 +60,7 @@ Laid out:
             connections were open, 120 round trips measured
     entry   0 state (0 free, 1 open, 2 answering and closing, 3 waiting out its end)
             1 flags (1: the peer has closed; 2: there is no answer, only the end; 4: a byte is being
-              timed)
+              timed; 8: lost segments are being made good)
             2 times sent again without an acknowledgement   3 acknowledgements repeated
             4 the time by which something must happen
             8 the key: remote address, remote port, local port
@@ -69,7 +72,8 @@ Laid out:
             sixteen of four times how far it strays, in milliseconds; nothing until one is measured
             56 which answer is being sent   60 the application's own number
             64 the byte being timed   68 where this end's window stops opening a segment an
-            acknowledgement   72 how many places the peer's window is shifted   the rest is not used
+            acknowledgement   72 how many places the peer's window is shifted
+            76 how far had been sent when a segment was seen to be lost   the rest is not used
     out     eight bytes saying where the next frame goes, then frames -/
 
 namespace Kernel.Net.Flat
@@ -627,7 +631,7 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   if seq != expected then
     -- Not the next byte of the stream: kept is nothing, and the peer is told which byte is wanted.
     let t := st32 t (off + 20) unacked
-    let t := if moved then wr8 (wr8 t (off + 1) (rd8 t (off + 1) &&& 0xfb)) (off + 2) 0 else t
+    let t := if moved then wr8 (wr8 t (off + 1) (rd8 t (off + 1) &&& 0xf3)) (off + 2) 0 else t
     if length == 0 && !fin then loop cfg answers respond now rx next stop t tx
     else loop cfg answers respond now rx next stop (bump t 40) (emit cfg tx macHigh macLow rip rport 0x10 sent expected false ByteArray.empty 0 0)
   else
@@ -658,8 +662,16 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   -- one more a window's worth of acknowledgements.
   let own := ld32 t (off + 48)
   let limit := if begins then cfg.mostWindow * mss else ld32 t (off + 68)
+  -- Making good what was lost: begun when a segment is seen to be lost, over when everything sent by
+  -- then is acknowledged. An acknowledgement that moves but stops short of that says the segment it
+  -- stops at was lost too.
+  let mending := marks &&& 8 != 0 && !begins
+  let mark := ld32 t (off + 76)
+  let reached := mark == unacked || mark - unacked ≥ 0x80000000
+  let part := mending && moved && !reached
+  let mending := mending && !(moved && reached)
   let own := if begins then cfg.firstWindow * mss
-    else if moved && own != 0 && own < cfg.mostWindow * mss then
+    else if moved && !part && own != 0 && own < cfg.mostWindow * mss then
       (if own < limit then own + mss else own + (if mss * mss / own == 0 then 1 else mss * mss / own))
     else own
   let window := (rd16 rx (f + 48)).toUInt32 <<< ((rd8 t (off + 72)).toUInt32 &&& 15)
@@ -668,16 +680,18 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   let repeated := state == 2 && !begins && !moved && length == 0 && !fin && acked == was && sent != was
   let count := rd8 t (off + 3)
   let count : UInt8 := if moved || begins then 0 else if repeated && count < 255 then count + 1 else count
-  let again := repeated && cfg.repeats != 0 && count == cfg.repeats
+  let again := repeated && cfg.repeats != 0 && count == cfg.repeats && !mending
   let half := if own / 2 < 2 * mss then 2 * mss else own / 2
   let limit := if again then half else limit
   let own := if again then half else own
   let tx :=
-    if again then
+    if again || part then
       let one := reach unacked unacked first size mss mss
       segments cfg answer tx macHigh macLow rip rport expected first size mss unacked (if one - unacked ≤ sent - unacked then one else sent)
     else tx
-  let t := if again then bump t 96 else t
+  let t := if again || part then bump t 96 else t
+  let t := if again then st32 t (off + 76) top else t
+  let mending := mending || again
   let wanted := if state == 2 then reach sent unacked first size window own else sent
   -- No further than there is room to write: what is held back goes when an acknowledgement or the sweep
   -- comes round to this connection again, and is not taken for sent.
@@ -692,8 +706,8 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   let passed := cfg.measures && timing && moved && unacked - was > timed - was
   let kept := if passed then measure kept (now.toUInt16 - rd16 t (off + 46)).toUInt32 else kept
   let t := if passed then bump t 120 else t
-  let timing := timing && !passed && !again
-  let starts := !timing && !again && to != sent && sent == top
+  let timing := timing && !passed && !again && !part
+  let starts := !timing && !mending && to != sent && sent == top
   let timed := if starts then sent else timed
   let t := if starts then wr16 t (off + 46) now.toUInt16 else t
   let timing := timing || starts
@@ -714,7 +728,7 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
     -- Something is owed an acknowledgement, or there is more to send that was held back: looked at
     -- again soon. Otherwise the connection has `idle` to say something.
     let due := now + (if unacked != to || (state == 2 && to != first + size + 1) then wait else cfg.idle)
-    let t := wr8 (wr8 t off state) (off + 1) ((if peerClosed then 1 else 0) ||| (if bare then 2 else 0) ||| (if timing then 4 else 0))
+    let t := wr8 (wr8 t off state) (off + 1) ((if peerClosed then 1 else 0) ||| (if bare then 2 else 0) ||| (if timing then 4 else 0) ||| (if mending then 8 else 0))
     let t := if moved then wr8 t (off + 2) 0 else t
     let t := wr8 t (off + 3) count
     let t := st32 t (off + 4) due
@@ -785,7 +799,7 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
       let wait := waitOf cfg (ld32 t (off + 52)) (tries + 1)
       -- Sending goes on from the end of what was just sent again: the rest of what was on its way is
       -- taken for lost with it, and follows as acknowledgements open the window.
-      let t := st32 (wr8 (wr8 t (off + 1) (rd8 t (off + 1) &&& 0xfb)) (off + 2) (tries + 1)) (off + 4) (now + wait)
+      let t := st32 (wr8 (wr8 t (off + 1) (rd8 t (off + 1) &&& 0xf3)) (off + 2) (tries + 1)) (off + 4) (now + wait)
       let own := ld32 t (off + 48)
       let t := st32 t (off + 68) (if own / 2 < 2 * mss then 2 * mss else own / 2)
       let t := st32 (st32 t (off + 16) to) (off + 48) mss

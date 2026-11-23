@@ -6,9 +6,12 @@ and must get the whole answer and the end of the stream.
 
     scripts/flat-linux-test [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES] [--request BYTES]
     scripts/flat-linux-test --http [--connections N] [--at-once K] [--loss PERCENT] [--answer BYTES-OF-/big]
+                            [--delay MS] [--fixed-wait]
 
 With --http the stack is run as its small web server and asked for pages by Python's own HTTP client, and
-by curl if there is one: /, /big and a page that is not there, in turn.
+by curl if there is one: /, /big and a page that is not there, in turn. --delay holds every frame from
+Linux back so many milliseconds, which is then the round trip; --fixed-wait has the stack not measure
+round trips, to see what measuring them is worth.
 
     scripts/flat-linux-test --guest dev|tdx [--connections N] [--at-once K]
 
@@ -70,8 +73,10 @@ else:
     for command in ("ip addr add 10.0.0.1/24 dev tap0", "ip link set tap0 up", "ip link set lo up",
                     "ip neigh replace 10.0.0.2 lladdr 02:00:00:00:00:02 dev tap0 nud permanent"):
         subprocess.run(command.split(), check=True)
+    if "--delay" in sys.argv:
+        subprocess.run(f"tc qdisc add dev tap0 root netem delay {option('--delay', 0)}ms limit 100000".split(), check=True)
 
-    server = subprocess.Popen([os.path.join(here, ".lake/build/bin/net-flat-serve")] + (["http", str(answer_bytes)] if web else [str(request_bytes), str(answer_bytes)]),
+    server = subprocess.Popen([os.path.join(here, ".lake/build/bin/net-flat-serve")] + (["http", str(answer_bytes), "0" if "--fixed-wait" in sys.argv else "1"] if web else [str(request_bytes), str(answer_bytes)]),
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
     to_server = threading.Lock()
 

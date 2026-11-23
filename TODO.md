@@ -110,8 +110,7 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   agrees on the checksums.
 - What it does not do: there is no network card under it, and getting frames
   from one fast in a trust domain is the hard part; segments out of order are
-  asked for again, not kept; the round trip is not measured (the wait before
-  sending again is a setting); a window shut to nothing is not probed; no options but the largest segment
+  asked for again, not kept; a window shut to nothing is not probed; no options but the largest segment
   (no window scaling, so no window past 64 KB; no timestamps; no selective
   acknowledgement); IPv4 with no options only; one core; and the application
   is one fixed answer. It is slow at moving much data (2 MB took 1.7 s on one
@@ -292,6 +291,27 @@ sweep over the table; what can be tuned is one record, `Tuning`.
     The runs against Linux before that had the fault too and mostly did not
     show it; some hundreds of errors Linux counted in one early run of 3,000
     requests, which no checksum explained, were very likely this.
+
+- **The round trip is measured** (2026-11-23), as RFC 6298 has it, and the wait
+  before sending again follows it between `Tuning.waitLeast` and `waitMost`.
+  One byte at a time is timed, the first of something sent for the first time,
+  and nothing is taken from a byte that was sent twice. It fits in the 64 bytes
+  a connection has: eight of them, found by keeping the wait as what it is
+  worked out from and the number of the answer in sixteen bits.
+  `scripts/flat-linux-test --http --delay 300` puts 300 ms between Linux and
+  the stack. Twelve requests, four of them for a megabyte: with the wait fixed
+  at 200 ms (`--fixed-wait`) segments were sent again 34 times on the timer
+  and 28 on repeated acknowledgements, every one of them for nothing; measured,
+  5 and 4. In memory a connection costs about 6% more (914,000 a second on one
+  core against 973,000, while other work ran on the machine).
+  - What is left of the needless sending is each connection's first flight:
+    nothing is measured until its first acknowledgement, and the handshake,
+    which a TCP with a table would time, is answered from a cookie here. A few
+    bits of the clock in the cookie would give it back; not done.
+  - A megabyte over that path still takes 5.4 s, and that is the window: 64 KB
+    a round trip is all a TCP without window scaling can have on its way.
+  - The byte being timed is kept as sixteen bits of its number, which is right
+    only while windows are sixteen bits; it wants widening with them.
 
 ## Ethereum block import, as a service (`evm/`)
 

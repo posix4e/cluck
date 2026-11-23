@@ -17,6 +17,8 @@ What is different from the system's, and why each thing is so:
   looks at a part of the table each time it is called, so that the whole is looked at once every
   `sweepMs`, and acts on entries whose time has come: what was sent and not acknowledged is sent again,
   with the wait doubled, and a connection that has said nothing for too long is reset and forgotten.
+  How long is waited is worked out from how long acknowledgements have been taking (`measure`,
+  `waitOf`), between `waitLeast` and `waitMost`.
   Timers are therefore late by up to `sweepMs`, and cost the same whether one connection is open or a
   million.
 * **What can be tuned is in one place**, `Tuning`.
@@ -30,7 +32,7 @@ window reopens, so a run of lost segments costs one timer and not one each);
 both orders of closing; a reset for a segment that belongs to nothing.
 
 What it does not do, and a TCP must or should: keep segments that come out of order (it asks again for
-the next byte); measure the round trip (the wait before sending again is a setting); probe a window that has shut to nothing; any option but the largest segment
+the next byte); probe a window that has shut to nothing; any option but the largest segment
 (so no window scaling, timestamps or selective acknowledgement); IPv6; IP options or fragments.
 
 **The application** is a function and a list of answers. What a connection sends is always one whole
@@ -49,16 +51,21 @@ Laid out:
             48 resets taken, 56 no room, 64 where the sweep has got to, 72 sent again, 80 timed out,
             88 resets sent, 96 sent again on repeated acknowledgements, 104 times an answer was held
             back for want of room to write frames, 112 SYNs not answered because too many
-            connections were open
+            connections were open, 120 round trips measured
     entry   0 state (0 free, 1 open, 2 answering and closing, 3 waiting out its end)
-            1 flags (1: the peer has closed; 2: there is no answer, only the end)
+            1 flags (1: the peer has closed; 2: there is no answer, only the end; 4: a byte is being
+              timed)
             2 times sent again without an acknowledgement   3 acknowledgements repeated
             4 the time by which something must happen
             8 the key: remote address, remote port, local port
             16 next to send   20 oldest unacknowledged   24 next expected   28 where the answer began
             32 the furthest ever sent   36 the peer's window   38 the peer's largest segment
-            40 the peer's Ethernet address   48 this end's window of its own   52 the wait before sending again
-            56 which answer is being sent   60 the application's own number
+            40 the peer's Ethernet address   46 when the byte being timed was sent (sixteen bits of
+            the clock)   48 this end's window of its own
+            52 the round trip as measured: sixteen bits of eight times its smoothed length, then
+            sixteen of four times how far it strays, in milliseconds; nothing until one is measured
+            56 which answer is being sent (sixteen bits), then sixteen bits of the number of the byte
+            being timed   60 the application's own number
     out     eight bytes saying where the next frame goes, then frames -/
 
 namespace Kernel.Net.Flat
@@ -82,10 +89,15 @@ structure Tuning where
   most that may ever be. One more is allowed for each acknowledgement that takes something off. -/
   firstWindow : UInt32 := 10
   mostWindow : UInt32 := 64
-  /-- Milliseconds before what was sent and not acknowledged is sent again; doubled each time, up to
-  `waitMost`; after `tries` times the connection is reset. -/
+  /-- Milliseconds before what was sent and not acknowledged is sent again, while no round trip has been
+  measured on the connection. Once one has, the wait is the smoothed round trip and four times how far
+  it strays, and no less than `waitLeast`. Either is doubled each time it runs out, up to `waitMost`;
+  after `tries` times the connection is reset. -/
   wait : UInt32 := 200
+  waitLeast : UInt32 := 200
   waitMost : UInt32 := 3000
+  /-- Whether round trips are measured. When not, the wait is always `wait`, doubled as it runs out. -/
+  measures : Bool := true
   tries : UInt8 := 5
   /-- How many times the same acknowledgement must come, with something still unacknowledged, before
   the segment after it is taken for lost and sent again without waiting for the timer. 0 for never. -/
@@ -311,6 +323,37 @@ partial def offered (rx : @& ByteArray) (i stop : USize) : UInt16 :=
     else if kind == 2 && size == 4 then rd16 rx (i + 2)
     else offered rx (i + size) stop
 
+/-- What is kept of the round trip, with one more of `sample` milliseconds taken in: as RFC 6298 has it,
+an eighth of the way towards the new one, and how far it strays a quarter of the way towards how far this
+one was off. The low sixteen bits are eight times the smoothed round trip and are never nothing once one
+is measured; the high sixteen are four times the straying. -/
+@[inline] def measure (kept sample : UInt32) : UInt32 :=
+  let sample := if sample > 8000 then 8000 else sample
+  let smooth := kept &&& 0xffff
+  let stray := kept >>> 16
+  if smooth == 0 then
+    let smooth := sample <<< 3
+    ((sample <<< 1) <<< 16) ||| (if smooth == 0 then 1 else smooth)
+  else
+    let was := smooth >>> 3
+    let off := if sample > was then sample - was else was - sample
+    let stray := stray - (stray >>> 2) + off
+    let smooth := smooth - (smooth >>> 3) + sample
+    ((if stray > 0xffff then 0xffff else stray) <<< 16) ||| (if smooth > 0xffff then 0xffff else if smooth == 0 then 1 else smooth)
+
+/-- The wait before sending again, from what is kept of the round trip and how many times the wait has
+run out already. -/
+@[inline] def waitOf (cfg : @& Tuning) (kept : UInt32) (tries : UInt8) : UInt32 :=
+  let smooth := kept &&& 0xffff
+  let stray := kept >>> 16
+  let once :=
+    if smooth == 0 then cfg.wait
+    else
+      let w := (smooth >>> 3) + (if stray == 0 then 1 else stray)
+      if w < cfg.waitLeast then cfg.waitLeast else w
+  let w := once <<< (if tries > 6 then 6 else tries).toUInt32
+  if w > cfg.waitMost then cfg.waitMost else w
+
 /-- Where the entry at place `i` begins in the table, and the place of the entry that begins at `off`. -/
 @[inline] def place (i : USize) : USize := (i <<< 6) + 128
 @[inline] def placeOf (off : USize) : USize := (off - 128) >>> 6
@@ -506,7 +549,7 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
       let t := st32 (st32 (st32 t (off + 24) seq) (off + 28) 0) (off + 32) acked
       let t := wr16 (wr16 t (off + 36) (rd16 rx (f + 48))) (off + 38) (segmentOf ((acked - 1) &&& 3))
       let t := wr32 (wr16 t (off + 40) macHigh) (off + 42) macLow
-      let t := st32 (st32 t (off + 48) 0) (off + 52) cfg.wait
+      let t := st32 (st32 t (off + 48) 0) (off + 52) 0
       let t := st64 t (off + 56) 0
       bump (bump t 0) 8
   let state := rd8 t off
@@ -525,6 +568,7 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   if seq != expected then
     -- Not the next byte of the stream: kept is nothing, and the peer is told which byte is wanted.
     let t := st32 t (off + 20) unacked
+    let t := if moved then wr8 (wr8 t (off + 1) (rd8 t (off + 1) &&& 0xfb)) (off + 2) 0 else t
     if length == 0 && !fin then loop cfg answers respond now rx next stop t tx
     else loop cfg answers respond now rx next stop (bump t 40) (emit cfg tx macHigh macLow rip rport 0x10 sent expected false ByteArray.empty 0 0)
   else
@@ -540,14 +584,15 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   let said := if state == 1 && length != 0 then respond rx (f + 34 + header) length.toUSize (ld32 t (off + 60))
     else more (ld32 t (off + 60))
   let number := (said >>> 32).toUInt32
-  let named := state == 1 && length != 0 && said.toUInt32.toNat < answers.size
+  let named := state == 1 && length != 0 && said.toUInt32.toNat < answers.size && said.toUInt32 < 0x10000
   let ends := state == 1 && !named && fin
   let begins := named || ends
   let state : UInt8 := if begins then 2 else state
   let bare := if ends then true else marks &&& 2 != 0
   let first := if begins then sent else ld32 t (off + 28)
   let top := if begins then sent else top
-  let which := if named then said.toUInt32 else ld32 t (off + 56)
+  let both := ld32 t (off + 56)
+  let which := if named then said.toUInt32 else both &&& 0xffff
   let answer := answers.getD which.toNat ByteArray.empty
   let size : UInt32 := if bare then 0 else answer.size.toUInt32
   -- This end's own window: so many segments to begin with, one more for each acknowledgement that moves.
@@ -573,6 +618,22 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   -- comes round to this connection again, and is not taken for sent.
   let to := fitting tx sent wanted mss
   let t := if to != wanted then bump t 104 else t
+  -- The round trip. One byte at a time is timed: the first of something sent for the first time. When an
+  -- acknowledgement passes it, how long that took is taken in; if anything is sent again meanwhile the
+  -- timing is dropped, since which sending was acknowledged cannot then be told. The byte's number is
+  -- kept as sixteen bits, which is enough while it is less than 65,536 past what is acknowledged: always,
+  -- while the peer's window is sixteen bits itself.
+  let kept := ld32 t (off + 52)
+  let timing := marks &&& 4 != 0 && !begins
+  let timed := (both >>> 16).toUInt16
+  let passed := cfg.measures && timing && moved && unacked - was > (timed - was.toUInt16).toUInt32
+  let kept := if passed then measure kept (now.toUInt16 - rd16 t (off + 46)).toUInt32 else kept
+  let t := if passed then bump t 120 else t
+  let timing := timing && !passed && !again
+  let starts := !timing && !again && to != sent && sent == top && sent - unacked < 0x10000
+  let timed := if starts then sent.toUInt16 else timed
+  let t := if starts then wr16 t (off + 46) now.toUInt16 else t
+  let timing := timing || starts
   let top := if to - unacked > top - unacked then to else top
   let tx :=
     if to != sent then segments cfg answer tx macHigh macLow rip rport expected first size mss sent to
@@ -586,19 +647,19 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
       let t := st32 (st32 (st32 t (off + 16) to) (off + 20) unacked) (off + 24) expected
       loop cfg answers respond now rx next stop (bump t 16) tx
   else
-    let wait := if moved then cfg.wait else ld32 t (off + 52)
+    let wait := waitOf cfg kept (if moved then 0 else rd8 t (off + 2))
     -- Something is owed an acknowledgement, or there is more to send that was held back: looked at
     -- again soon. Otherwise the connection has `idle` to say something.
     let due := now + (if unacked != to || (state == 2 && to != first + size + 1) then wait else cfg.idle)
-    let t := wr8 (wr8 t off state) (off + 1) ((if peerClosed then 1 else 0) ||| (if bare then 2 else 0))
+    let t := wr8 (wr8 t off state) (off + 1) ((if peerClosed then 1 else 0) ||| (if bare then 2 else 0) ||| (if timing then 4 else 0))
     let t := if moved then wr8 t (off + 2) 0 else t
     let t := wr8 t (off + 3) count
     let t := st32 t (off + 4) due
     let t := st32 (st32 t (off + 16) to) (off + 20) unacked
     let t := st32 (st32 (st32 t (off + 24) expected) (off + 28) first) (off + 32) top
     let t := wr16 t (off + 36) window.toUInt16
-    let t := st32 (st32 t (off + 48) own) (off + 52) wait
-    let t := st32 (st32 t (off + 56) which) (off + 60) number
+    let t := st32 (st32 t (off + 48) own) (off + 52) kept
+    let t := st32 (st32 t (off + 56) (which ||| (timed.toUInt32 <<< 16))) (off + 60) number
     loop cfg answers respond now rx next stop t tx
 
 /-- The frames in the first `length` bytes of `rx` taken in, the table changed, and the answers written
@@ -630,7 +691,7 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
     let expected := ld32 t (off + 24)
     let tries := rd8 t (off + 2)
     let first := ld32 t (off + 28)
-    let answer := answers.getD (ld32 t (off + 56)).toNat ByteArray.empty
+    let answer := answers.getD (ld32 t (off + 56) &&& 0xffff).toNat ByteArray.empty
     let size : UInt32 := if rd8 t (off + 1) &&& 2 != 0 then 0 else answer.size.toUInt32
     let mss := (rd16 t (off + 38)).toUInt32
     if state == 2 && unacked == sent && sent != first + size + 1 then
@@ -640,7 +701,7 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
       let to := fitting tx sent wanted mss
       let tx := if to != sent then segments cfg answer tx macHigh macLow rip rport expected first size mss sent to else tx
       let top := ld32 t (off + 32)
-      let t := st32 (st32 t (off + 16) to) (off + 4) (now + cfg.wait)
+      let t := st32 (st32 t (off + 16) to) (off + 4) (now + waitOf cfg (ld32 t (off + 52)) 0)
       let t := if to - unacked > top - unacked then st32 t (off + 32) to else t
       sweep cfg answers now mask onward (left - 1) t tx
     else if unacked == sent || tries ≥ cfg.tries then
@@ -649,16 +710,16 @@ partial def sweep (cfg : @& Tuning) (answers : @& Array ByteArray) (now : UInt32
       sweep cfg answers now mask i (left - 1) (bump (bump (forget cfg t mask off) 80) 88) tx
     else
       -- What was sent and not acknowledged is sent again, one segment of it, the wait doubled, and this
-      -- end's own window shut to one segment.
+      -- end's own window shut to one segment. Nothing is timed any more: an acknowledgement now could be
+      -- of either sending.
       let to := reach unacked unacked first size mss mss
       let to := if to - unacked ≤ sent - unacked then to else sent
       let tx := segments cfg answer tx macHigh macLow rip rport expected first size mss unacked to
-      let wait := ld32 t (off + 52) * 2
-      let wait := if wait > cfg.waitMost then cfg.waitMost else wait
+      let wait := waitOf cfg (ld32 t (off + 52)) (tries + 1)
       -- Sending goes on from the end of what was just sent again: the rest of what was on its way is
       -- taken for lost with it, and follows as acknowledgements open the window.
-      let t := st32 (wr8 t (off + 2) (tries + 1)) (off + 4) (now + wait)
-      let t := st32 (st32 (st32 t (off + 16) to) (off + 48) mss) (off + 52) wait
+      let t := st32 (wr8 (wr8 t (off + 1) (rd8 t (off + 1) &&& 0xfb)) (off + 2) (tries + 1)) (off + 4) (now + wait)
+      let t := st32 (st32 t (off + 16) to) (off + 48) mss
       sweep cfg answers now mask onward (left - 1) (bump t 72) tx
 
 /-- Time passing. `elapsed` is the milliseconds since this was last called: so much of the table is looked

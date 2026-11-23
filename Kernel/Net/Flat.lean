@@ -10,9 +10,10 @@ What is different from the system's, and why each thing is so:
   one flat table, found by a keyed hash of its addresses and changed in place. Lean changes an array in
   place when nothing else holds it, and everything here is written to keep it so.
 * **A connection costs nothing until it is real.** The answer to a SYN is worked out from a keyed hash of
-  the addresses and a clock (a SYN cookie), with the peer's largest segment in its two lowest bits, and
+  the addresses and a clock (a SYN cookie), with the peer's largest segment in its two lowest bits and
+  the clock in steps of 16 ms in the six above them, and
   nothing is kept; the table gets an entry only when the third packet of the handshake comes back with
-  that number in it.
+  that number in it, and how long it took to come back is the connection's first round trip.
 * **Time is a sweep.** Every entry carries the time by which something must have happened to it. `tick`
   looks at a part of the table each time it is called, so that the whole is looked at once every
   `sweepMs`, and acts on entries whose time has come: what was sent and not acknowledged is sent again,
@@ -298,11 +299,13 @@ def outbox (bytes : Nat) : ByteArray := st64 (zeros (8 + bytes)) 0 8
 @[inline] def home (cfg : @& Tuning) (k : UInt64) : USize :=
   (sip cfg.key0 cfg.key1 k 0).toUSize &&& (((1 : USize) <<< cfg.slotBits) - 1)
 
-/-- The number that answers a SYN, but for its two lowest bits: nothing is kept, and the same number is
+/-- The number that answers a SYN, but for its eight lowest bits: nothing is kept, and the same number is
 worked out again when the third packet comes. `tick` moves on every minute or so, and the one before is
-still taken. -/
-@[inline] def cookie (cfg : @& Tuning) (k : UInt64) (theirs tick : UInt32) : UInt32 :=
-  (sip cfg.key1 cfg.key0 k ((theirs.toUInt64 <<< 32) ||| tick.toUInt64)).toUInt32 &&& 0xfffffffc
+still taken. `step` is the six bits of the clock that go below it in the open, hashed with the rest so
+that they cannot be changed on the way. That leaves 24 bits to be guessed by someone who would open a
+connection from an address that is not theirs, which is what Linux's cookies leave. -/
+@[inline] def cookie (cfg : @& Tuning) (k : UInt64) (theirs tick step : UInt32) : UInt32 :=
+  (sip cfg.key1 cfg.key0 k ((theirs.toUInt64 <<< 32) ||| (tick.toUInt64 <<< 8) ||| step.toUInt64)).toUInt32 &&& 0xffffff00
 
 /-- The largest segments a cookie can remember, by its two lowest bits: the four Linux uses. -/
 @[inline] def segmentOf (index : UInt32) : UInt16 :=
@@ -517,7 +520,8 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
     else if cfg.busy != 0 && ld64 t 0 > cfg.busy then loop cfg answers respond now rx next stop (bump t 112) tx
     else
       let theirs := offered rx (f + 54) (f + 34 + header)
-      let ours := cookie cfg k seq (now >>> 16) ||| indexOf (if theirs < cfg.mss then theirs else cfg.mss)
+      let step := (now >>> 4) &&& 63
+      let ours := cookie cfg k seq (now >>> 16) step ||| (step <<< 2) ||| indexOf (if theirs < cfg.mss then theirs else cfg.mss)
       loop cfg answers respond now rx next stop (bump t 24) (emit cfg tx macHigh macLow rip rport 0x12 ours (seq + 1) true ByteArray.empty 0 0)
   else
   let h := home cfg k
@@ -530,8 +534,9 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
   else
   -- The third packet of a handshake makes the entry, if its number is the cookie's and there is room.
   let tick := now >>> 16
-  let theirs := (acked - 1) &&& 0xfffffffc
-  let fresh := known == 0 && (theirs == cookie cfg k (seq - 1) tick || theirs == cookie cfg k (seq - 1) (tick - 1))
+  let theirs := (acked - 1) &&& 0xffffff00
+  let step := ((acked - 1) >>> 2) &&& 63
+  let fresh := known == 0 && (theirs == cookie cfg k (seq - 1) tick step || theirs == cookie cfg k (seq - 1) (tick - 1) step)
   let room := ld64 t 0 < ((1 : USize) <<< (cfg.slotBits - 1)).toUInt64
   if known == 0 && !fresh then
     -- It belongs to nothing here: said so, unless told to keep quiet.
@@ -549,8 +554,13 @@ partial def segments (cfg : @& Tuning) (answer : @& ByteArray) (tx : ByteArray) 
       let t := st32 (st32 (st32 t (off + 24) seq) (off + 28) 0) (off + 32) acked
       let t := wr16 (wr16 t (off + 36) (rd16 rx (f + 48))) (off + 38) (segmentOf ((acked - 1) &&& 3))
       let t := wr32 (wr16 t (off + 40) macHigh) (off + 42) macLow
-      let t := st32 (st32 t (off + 48) 0) (off + 52) 0
+      -- How long the handshake took, from the cookie, in steps of 16 ms and at most 63 of them: the first
+      -- round trip, when it is a step or more. Less than that says nothing a setting does not say better.
+      let steps := ((now >>> 4) - step) &&& 63
+      let timed := cfg.measures && steps != 0
+      let t := st32 (st32 t (off + 48) 0) (off + 52) (if timed then measure 0 (steps <<< 4) else 0)
       let t := st64 t (off + 56) 0
+      let t := if timed then bump t 120 else t
       bump (bump t 0) 8
   let state := rd8 t off
   let sent := ld32 t (off + 16)

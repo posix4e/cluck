@@ -304,10 +304,15 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   and 28 on repeated acknowledgements, every one of them for nothing; measured,
   5 and 4. In memory a connection costs about 6% more (914,000 a second on one
   core against 973,000, while other work ran on the machine).
-  - What is left of the needless sending is each connection's first flight:
-    nothing is measured until its first acknowledgement, and the handshake,
-    which a TCP with a table would time, is answered from a cookie here. A few
-    bits of the clock in the cookie would give it back; not done.
+  - **The handshake is timed too, with nothing kept.** A TCP with a table times
+    its SYN-ACK; this one answers a SYN from a cookie and keeps nothing. So six
+    bits of the clock, in steps of 16 ms, now go in the cookie beside the two
+    for the segment size, hashed with the rest; when the cookie comes back, how
+    long it took is the connection's first round trip (when it is a step or
+    more). Over the same 300 ms path nothing at all is then sent again for
+    nothing: 0 and 0, against 42 and 35 with the wait fixed. The cookie's hash
+    is 24 bits where it was 30, as Linux's is: one guess in eight million opens
+    a connection from an address that is not the guesser's.
   - A megabyte over that path still takes 5.4 s, and that is the window: 64 KB
     a round trip is all a TCP without window scaling can have on its way.
   - The byte being timed is kept as sixteen bits of its number, which is right

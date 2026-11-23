@@ -541,6 +541,27 @@ sweep over the table; what can be tuned is one record, `Tuning`.
   - Not run against anything but Linux; not run with a peer that does not
     offer to scale (the generator guest is one, and it is answered).
 
+## On Google Cloud's trust domains
+
+What this is for: the builder is to run where others run theirs, on Compute Engine's TDX machines (the
+C3 series), as well as on the machine it was made on. There the firmware is Google's and stays; the
+card is Google's own (gVNIC), for which there is no driver here yet; and a quote has to be asked for
+by the guest itself.
+
+- **The OS's EFI image starts in a trust domain there** (2026-11-23). `scripts/gce-image` puts an EFI
+  application on a disk image of the kind Compute Engine takes (a gibibyte, a GPT, one FAT32 partition,
+  the application at `EFI/BOOT/BOOTX64.EFI`; the same bytes for the same application). The probe built
+  for the virtio card (`pci-probe`, TDX profile), as such an image on a `c3-standard-4` with TDX in
+  us-central1, Secure Boot off: Google's firmware loaded it from the NVMe disk, it said it was in a
+  trust domain, and listed five PCI devices before stopping for want of a virtio card, as it would:
+  8086:1237, 8086:7110, 8086:7113, **1ae0:0042** (class 020000, the network card) and **1ae0:001f**
+  (class 010802, the NVMe disk). So the firmware's console reaches the serial port, its PCI protocol
+  answers, and the TDX check passes there. The machine was up three minutes and deleted.
+  - Not known yet, and `gcp-probe` is written to say: whether Google's firmware has a network driver
+    of its own this target could use to begin with; where the firmware and the application show in
+    the measurements; what the card's registers look like once claimed.
+  - Spent so far on Compute Engine for this: a few cents (of 100 dollars agreed).
+
 ## Ethereum block import, as a service (`evm/`)
 
 An experiment: whether someone else's Lean, written for proofs and for Lean's own runtime, can be the service

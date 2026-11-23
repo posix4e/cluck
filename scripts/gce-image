@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# A disk image Google Compute Engine will take, holding one EFI application as the thing to boot:
+#
+#   scripts/gce-image BOOTX64.EFI OUT.tar.gz
+#
+# The disk is one gibibyte, nearly all of it nothing, with a GPT and one EFI system partition of 64 MiB in
+# FAT32, and the application at EFI/BOOT/BOOTX64.EFI, where firmware looks when nothing tells it where to
+# look. Compute Engine wants it as a file named disk.raw inside a gzipped tar of the old GNU kind. Nothing
+# is installed and no root is needed: sgdisk, mkfs.vfat and mtools do it on ordinary files.
+#
+# The image is the same bytes for the same application: the times and the numbers that would differ from
+# one run to the next are set (the volume's number, the partition's and disk's identifiers, file times).
+#
+# To make an image of it there (this script does not, and nothing here spends anything):
+#   gcloud storage cp OUT.tar.gz gs://BUCKET/NAME.tar.gz
+#   gcloud compute images create NAME --source-uri gs://BUCKET/NAME.tar.gz \
+#     --guest-os-features UEFI_COMPATIBLE,GVNIC,TDX_CAPABLE
+set -euo pipefail
+[[ $# -eq 2 && -r "$1" ]] || { echo "usage: scripts/gce-image BOOTX64.EFI OUT.tar.gz" >&2; exit 2; }
+app="$(realpath "$1")"
+out="$(realpath -m "$2")"
+work="$(mktemp -d "${TMPDIR:-/tmp}/gce-image.XXXXXXXX")"
+trap 'rm -rf -- "$work"' EXIT
+export SOURCE_DATE_EPOCH=0 MTOOLS_SKIP_CHECK=1 TZ=UTC
+cd "$work"
+# The partition, as a file of its own: 64 MiB of FAT32.
+truncate -s 64M esp.img
+mkfs.vfat -F 32 -n SILO -i 51104F5E --invariant esp.img > /dev/null
+cp "$app" BOOTX64.EFI
+touch -d '1980-01-01 00:00:00' BOOTX64.EFI
+mmd -i esp.img ::EFI ::EFI/BOOT
+mcopy -i esp.img -m BOOTX64.EFI ::EFI/BOOT/BOOTX64.EFI
+# The disk: a table saying where the partition is, and the partition put there (from the first mebibyte).
+truncate -s 1G disk.raw
+sgdisk --clear --disk-guid=5110f5e0-0000-4000-8000-000000000001 \
+  --new=1:2048:+64M --typecode=1:ef00 --change-name=1:EFI \
+  --partition-guid=1:5110f5e0-0000-4000-8000-000000000002 disk.raw > /dev/null
+dd if=esp.img of=disk.raw bs=1M seek=1 conv=notrunc status=none
+touch -d @0 disk.raw
+tar --format=oldgnu --sparse --owner=0 --group=0 --numeric-owner --mtime=@0 -cf - disk.raw | gzip -n > "$out"
+echo "$out"

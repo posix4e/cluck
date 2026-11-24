@@ -850,6 +850,29 @@ by the guest itself.
     Not shown: the same with compilers or mathlib modules built from source. Both machines
     downloaded the same release of Lean, whose own clang and linker do all the compiling,
     and the same modules from mathlib's cache.
+  - **What Intel says of the platform is now asked** (2026-11-24). `scripts/tdx-standing QUOTE`
+    fetches Intel's levels for the processor family in the quote's platform certificate, its
+    identity for the TD quoting enclave, and the two lists of revoked certificates; checks
+    Intel's signatures on them (by a certificate named "Intel SGX TCB Signing" directly under the
+    root key that `evm/demo/verify.js` holds) and their dates; has openssl check the platform's
+    certificate chain against the lists; and places the platform, its TDX module and the quoting
+    enclave among the levels by the rule in Intel's API documentation ("Get TDX TCB Info V4").
+    `scripts/gce-check` runs it as its second question, so it now asks five.
+    - The guest on Google Cloud (family 00806f050000, microcode count 10, TDX module 1.15,
+      quoting enclave 6): all three "UpToDate", nothing withdrawn. A quote from this machine
+      (family b0c06f000000, TDX module 1.12, quoting enclave 8): the same.
+    - `verify/test-tdx-standing`, in CI: Intel's answers of that day kept in
+      `verify/vectors/intel/` with the guest's quote, and 21 ways of making one thing wrong,
+      each of which has to fail at its own line or lower its own standing: an answer altered,
+      signed by nobody, by the platform's certificate, by a certificate made up; out of date
+      either way; a list missing, swapped or altered; older microcode, module, enclave; a
+      module or enclave somebody else signed. The first writing of the rule compared the
+      module's version with the platform's levels, which Intel's rule does not; a case holds
+      that now.
+    - Not done: a comparison with Intel's own verification library, which is not installed
+      here. Not possible here: a test with a certificate Intel has really revoked. Not in the
+      page: a browser cannot ask Intel (the page says so). "Up to date" is Intel's word on the
+      day asked, and the answers are good for thirty days.
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
     A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone

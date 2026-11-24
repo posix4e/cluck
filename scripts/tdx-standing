@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""What Intel says today of the platform a TDX quote came from.
+
+    scripts/tdx-standing QUOTE [--keep DIR | --kept DIR] [--at SECONDS]
+
+A quote that verifies says a real TDX platform made it. It does not say the platform's firmware is
+current, or that the certificates it was signed under still stand. Intel publishes both, and this asks:
+
+  the levels      https://api.trustedservices.intel.com/tdx/certification/v4/tcb?fmspc=…
+                  for the processor family named in the quote's platform certificate: which versions
+                  of microcode, of the TDX module and of the provisioning enclave Intel calls up to
+                  date, and which it calls out of date and for which advisories;
+  the enclave     …/tdx/certification/v4/qe/identity: which TD quoting enclave is Intel's, and which
+                  version of it is up to date;
+  the withdrawn   …/sgx/certification/v4/pckcrl and Intel's root's own list: certificates Intel has
+                  revoked.
+
+and checks, in this order: that the levels and the enclave's identity are signed by a key certified by
+Intel's SGX root (the key written below, the same one evm/demo/verify.js holds), are in date, and that
+their signing certificate is not revoked; that neither the platform's certificate nor the one above it
+is revoked; where the platform's versions (from its certificate and from the quote) fall among the
+levels; that the TDX module is one Intel signed and where its version falls; and that the quoting
+enclave is the one identified and where its version falls. Signatures and revocation are checked by
+`openssl`, which must be installed.
+
+It does not check the quote's own signatures: evm/demo/check-quote.mjs does that, and scripts/gce-check
+runs both. And "up to date" is Intel's word on the day asked, about versions: it is not a claim that
+nothing is wrong with them.
+
+--keep DIR saves what Intel answered; --kept DIR reads it from there instead of asking, and --at
+judges dates as of that time (seconds since 1970), for looking again at an old answer.
+
+Exit status 0 when every check holds and every standing is "UpToDate", 1 when not, 2 when it
+could not be tried (no network, no openssl).
+"""
+import calendar, json, os, re, struct, subprocess, sys, tempfile, time, urllib.error, urllib.parse, urllib.request
+
+# "Intel SGX Root CA"'s public key, as SubjectPublicKeyInfo: the one thing here taken on trust.
+INTEL_ROOT_KEY = ("3059301306072a8648ce3d020106082a8648ce3d030107034200040ba9c4c0c0c86193a3fe23d6b02cda10a8bbd4e88e48"
+                  "b4458561a36e705525f567918e2edc88e40d860bd0cc4ee26aacc988e505a953558c453f6b0904ae7394")
+API = "https://api.trustedservices.intel.com"
+ROOT_CRL = "https://certificates.trustedservices.intel.com/IntelSGXRootCA.der"
+SGX = "1.2.840.113741.1.13.1"
+
+def could_not(why):
+    print(f"tdx-standing: {why}", file=sys.stderr)
+    sys.exit(2)
+
+def fetch(url, header=None):
+    """The body, and the named header of the answer with its percent-encoding undone."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "tdx-standing"}), timeout=30) as answer:
+            body = answer.read(1 << 22)
+            return body, urllib.parse.unquote(answer.headers.get(header, "")).encode() if header else b""
+    except Exception as error:
+        could_not(f"{url}: {error}")
+
+def element(b, i):
+    """One DER element at i: its tag, its contents, and where the next begins."""
+    tag, size, i = b[i], b[i + 1], i + 2
+    if size & 0x80:
+        count = size & 0x7f
+        size, i = int.from_bytes(b[i:i + count], "big"), i + count
+    if i + size > len(b): raise ValueError("an element cut short")
+    return tag, b[i:i + size], i + size
+
+def elements(b):
+    found, i = [], 0
+    while i < len(b):
+        tag, value, i = element(b, i)
+        found.append((tag, value))
+    return found
+
+def dotted(value):
+    parts, n = [value[0] // 40, value[0] % 40], 0
+    for c in value[1:]:
+        n = n << 7 | c & 0x7f
+        if c < 0x80: parts.append(n); n = 0
+    return ".".join(map(str, parts))
+
+def platform_fields(der):
+    """Intel's extension in a platform certificate: each field's contents by its object identifier."""
+    at = der.index(bytes.fromhex("06092a864886f84d010d01"))
+    _, _, after = element(der, at)
+    tag, wrapped, _ = element(der, after)
+    if tag != 4: raise ValueError("Intel's extension is not where it should be")
+    _, inside, _ = element(wrapped, 0)
+    found = {}
+    def walk(b):
+        for _, item in elements(b):
+            (_, name), (tag, value) = elements(item)[:2]
+            if tag == 0x30: walk(value)
+            else: found[dotted(name)] = value
+    walk(inside)
+    return found
+
+def signed_part(body, name):
+    """The bytes of the member `name` of Intel's answer exactly as served, which is what is signed, and
+    the signature beside it."""
+    start, marker = b'{"' + name.encode() + b'":', b',"signature":"'
+    end = body.rindex(marker)
+    if not body.startswith(start) or not body.rstrip().endswith(b'"}'): raise ValueError("not the shape expected")
+    return body[len(start):end], bytes.fromhex(body.rstrip()[end + len(marker):-2].decode())
+
+def der_signature(raw):
+    def number(b):
+        b = b.lstrip(b"\0") or b"\0"
+        if b[0] & 0x80: b = b"\0" + b
+        return b"\x02" + bytes([len(b)]) + b
+    both = number(raw[:32]) + number(raw[32:])
+    return b"\x30" + bytes([len(both)]) + both
+
+def when(text):
+    return calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ"))
+
+def main():
+    args = sys.argv[1:]
+    def named(flag):
+        if flag not in args: return None
+        at = args.index(flag)
+        if at + 1 >= len(args): sys.exit(__doc__)
+        value = args[at + 1]
+        del args[at:at + 2]
+        return value
+    keep, kept, at_time = named("--keep"), named("--kept"), named("--at")
+    if len(args) != 1 or (keep and kept): sys.exit(__doc__)
+    now = int(at_time) if at_time else int(time.time())
+    quote = open(args[0], "rb").read()
+    if len(quote) < 48 + 584 + 4 or quote[:2] != b"\x04\x00": could_not("not a version 4 quote")
+    try:
+        body = quote[48:48 + 584]
+        versions, module_signer, module_attributes = list(body[:16]), body[64:112], body[112:120]
+        p = 48 + 584 + 4 + 128
+        kind, _ = struct.unpack_from("<HI", quote, p); p += 6
+        if kind != 6: raise ValueError("no quoting enclave's report in the quote")
+        enclave = quote[p:p + 384]; p += 384 + 64
+        p += 2 + struct.unpack_from("<H", quote, p)[0]
+        kind, size = struct.unpack_from("<HI", quote, p); p += 6
+        if kind != 5: raise ValueError("no certificate chain in the quote")
+        chain = re.findall(rb"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", quote[p:p + size], re.S)
+        if len(chain) != 3: raise ValueError("the quote's certificate chain is not of three")
+    except (ValueError, struct.error) as error:
+        could_not(f"the quote cannot be read: {error}")
+
+    with tempfile.TemporaryDirectory() as scratch:
+        def put(name, data):
+            path = os.path.join(scratch, name)
+            with open(path, "wb") as f: f.write(data)
+            return path
+        def openssl(*command, data=None):
+            try:
+                return subprocess.run(["openssl", *command], input=data, capture_output=True)
+            except FileNotFoundError:
+                could_not("openssl is not installed")
+        platform, above, root = (put(name, pem + b"\n") for name, pem in zip(("platform.pem", "above.pem", "root.pem"), chain))
+        key_of = lambda pem: openssl("pkey", "-pubin", "-outform", "DER", data=openssl("x509", "-in", pem, "-noout", "-pubkey").stdout).stdout
+        if key_of(root).hex() != INTEL_ROOT_KEY:
+            print("tdx-standing: the root in the quote's chain is NOT Intel's")
+            sys.exit(1)
+        try:
+            fields = platform_fields(openssl("x509", "-in", platform, "-outform", "DER").stdout)
+            family, provisioner = fields[SGX + ".4"].hex(), fields[SGX + ".3"].hex()
+            parts = [int.from_bytes(fields[f"{SGX}.2.{i}"], "big") for i in range(1, 17)]
+            provisioning = int.from_bytes(fields[SGX + ".2.17"], "big")
+        except (ValueError, KeyError, IndexError) as error:
+            print(f"tdx-standing: the platform's certificate cannot be read: {error!r}")
+            sys.exit(1)
+        which = "platform" if b"Platform CA" in openssl("x509", "-in", platform, "-noout", "-issuer").stdout else "processor"
+
+        asked = {
+            "levels": (f"{API}/tdx/certification/v4/tcb?fmspc={family}", "TCB-Info-Issuer-Chain"),
+            "enclave": (f"{API}/tdx/certification/v4/qe/identity", "SGX-Enclave-Identity-Issuer-Chain"),
+            "withdrawn": (f"{API}/sgx/certification/v4/pckcrl?ca={which}&encoding=der", None),
+            "withdrawn-root": (ROOT_CRL, None),
+        }
+        got = {}
+        for name, (url, header) in asked.items():
+            if kept:
+                try:
+                    got[name] = (open(os.path.join(kept, name), "rb").read(),
+                                 open(os.path.join(kept, name + ".chain"), "rb").read() if header else b"")
+                except OSError as error:
+                    could_not(f"{error}")
+            else:
+                got[name] = fetch(url, header)
+                if keep:
+                    os.makedirs(keep, exist_ok=True)
+                    with open(os.path.join(keep, name), "wb") as f: f.write(got[name][0])
+                    if header:
+                        with open(os.path.join(keep, name + ".chain"), "wb") as f: f.write(got[name][1])
+
+        # The two lists of the withdrawn, as one file openssl reads. A list that is not a list fails below.
+        lists = put("lists.pem", b"".join(openssl("crl", "-inform", "DER", "-outform", "PEM", data=got[name][0]).stdout
+                                          for name in ("withdrawn", "withdrawn-root")))
+        def stands(certificate, between=None):
+            """Whether the certificate chains to the root in date, with nothing in the chain on a list of the
+            withdrawn that is itself signed and in date."""
+            command = ["verify", "-attime", str(now), "-x509_strict", "-crl_check_all", "-CAfile", root, "-CRLfile", lists]
+            if between: command += ["-untrusted", between]
+            result = openssl(*command, certificate)
+            return result.returncode == 0, (result.stderr or result.stdout).decode(errors="replace").strip().split("\n")[0]
+
+        checks = []
+        def check(holds, what, detail=""):
+            checks.append(bool(holds))
+            print(f"  {'holds' if holds else 'FAILS'}  {what}" + (f": {detail}" if detail else ""))
+
+        print(f"  The platform: processor family {family}, its parts at versions {parts[:8]}, provisioning enclave {provisioning};")
+        print(f"                TDX module {versions[1]}.{versions[0]}, and in the quote's own count {versions[:3]}")
+        good, said = stands(platform, above)
+        check(good, "The platform's certificate and the one above it are in date and not withdrawn", "" if good else said)
+
+        answers = {}
+        for name, member, title in (("levels", "tcbInfo", "Intel's levels for this family"),
+                                    ("enclave", "enclaveIdentity", "Intel's identity for the quoting enclave")):
+            body, issuers = got[name]
+            try:
+                signed, signature = signed_part(body, member)
+                answer = json.loads(signed)
+                signers = re.findall(rb"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", issuers, re.S)
+                signer = put(name + ".signer.pem", signers[0] + b"\n")
+                issued, until = when(answer["issueDate"]), when(answer["nextUpdate"])
+            except (ValueError, KeyError, IndexError) as error:
+                check(False, f"{title} can be read", repr(error))
+                continue
+            good, said = stands(signer)
+            # Directly under the root, and the certificate Intel signs these answers with, not another of its.
+            if good and b"CN=Intel SGX TCB Signing," not in openssl("x509", "-in", signer, "-noout", "-subject", "-nameopt", "RFC2253").stdout.strip() + b",":
+                good, said = False, "the signer is not Intel's certificate for signing these"
+            key = put(name + ".key.pem", openssl("x509", "-in", signer, "-noout", "-pubkey").stdout)
+            right = openssl("dgst", "-sha256", "-verify", key, "-signature", put(name + ".signature", der_signature(signature)),
+                            put(name + ".signed", signed)).returncode == 0
+            check(right and good, f"{title} are signed by a key Intel's root certifies, not withdrawn" if name == "levels"
+                  else f"{title} is signed the same way", "" if right and good else (said if right else "the signature is wrong"))
+            check(issued <= now <= until, f"  and in date", f"issued {answer['issueDate'][:10]}, good until {answer['nextUpdate'][:10]}")
+            answers[name] = answer
+
+        standings = []
+        levels = answers.get("levels")
+        if levels:
+            try:
+                check(levels.get("id") == "TDX" and levels["fmspc"].lower() == family and levels["pceId"].lower() == provisioner,
+                      "The levels are for TDX and for this family")
+                # Intel's rule ("Get TDX TCB Info V4" in its API's documentation): the first level, in the order
+                # given, that the platform is at or above in every part. Of the quote's own count the first two
+                # are the TDX module's version when the second is not zero, and are then judged apart, below.
+                first = 2 if versions[1] else 0
+                standing = None
+                for level in levels["tcbLevels"]:
+                    tcb = level["tcb"]
+                    if (all(have >= want["svn"] for have, want in zip(parts, tcb["sgxtcbcomponents"])) and provisioning >= tcb["pcesvn"]
+                            and all(have >= want["svn"] for have, want in list(zip(versions, tcb["tdxtcbcomponents"]))[first:])):
+                        standing = level
+                        break
+                if standing is None:
+                    check(False, "The platform is at one of Intel's levels", "it is below all of them")
+                else:
+                    advisories = standing.get("advisoryIDs") or []
+                    print(f"  The platform's standing: {standing['tcbStatus']} (the level of {standing['tcbDate'][:10]})"
+                          + (f"; advisories {', '.join(advisories)}" if advisories else ""))
+                    standings.append(standing["tcbStatus"])
+                # The TDX module: Intel's, by who signed it, and where its version falls.
+                module = next((m for m in levels.get("tdxModuleIdentities", []) if m["id"] == f"TDX_{versions[1]:02d}"), None) \
+                    if versions[1] else dict(levels["tdxModule"], tcbLevels=None)
+                if module is None:
+                    check(False, f"Intel lists a TDX module of major version {versions[1]}")
+                else:
+                    mask = bytes.fromhex(module["attributesMask"])
+                    masked = bytes(a & m for a, m in zip(module_attributes, mask))
+                    check(module_signer == bytes.fromhex(module["mrsigner"]) and masked == bytes.fromhex(module["attributes"]),
+                          "The TDX module is one Intel signed, with the attributes Intel gives")
+                    if module["tcbLevels"] is not None:
+                        at_level = next((l for l in module["tcbLevels"] if versions[0] >= l["tcb"]["isvsvn"]), None)
+                        if at_level is None:
+                            check(False, "The TDX module is at one of Intel's levels", "it is below all of them")
+                        else:
+                            print(f"  The TDX module's standing: {at_level['tcbStatus']} (version {versions[1]}.{versions[0]}; "
+                                  f"up to date from {versions[1]}.{module['tcbLevels'][0]['tcb']['isvsvn']})")
+                            standings.append(at_level["tcbStatus"])
+            except (ValueError, KeyError, IndexError, TypeError) as error:
+                check(False, "The levels can be read", repr(error))
+        identity = answers.get("enclave")
+        if identity:
+            try:
+                masked = lambda value, mask: bytes(a & m for a, m in zip(value, bytes.fromhex(mask)))
+                version = struct.unpack_from("<H", enclave, 258)[0]
+                check(identity.get("id") == "TD_QE" and enclave[128:160] == bytes.fromhex(identity["mrsigner"])
+                      and struct.unpack_from("<H", enclave, 256)[0] == identity["isvprodid"]
+                      and masked(enclave[16:20], identity["miscselectMask"]) == bytes.fromhex(identity["miscselect"])
+                      and masked(enclave[48:64], identity["attributesMask"]) == bytes.fromhex(identity["attributes"]),
+                      "The quoting enclave is the one Intel identifies: signer, product and attributes")
+                at_level = next((l for l in identity["tcbLevels"] if version >= l["tcb"]["isvsvn"]), None)
+                if at_level is None:
+                    check(False, "The quoting enclave is at one of Intel's levels", "it is below all of them")
+                else:
+                    print(f"  The quoting enclave's standing: {at_level['tcbStatus']} (version {version}; "
+                          f"up to date from {identity['tcbLevels'][0]['tcb']['isvsvn']})")
+                    standings.append(at_level["tcbStatus"])
+            except (ValueError, KeyError, IndexError, TypeError, struct.error) as error:
+                check(False, "The enclave's identity can be read", repr(error))
+
+    asked_on = time.strftime("%Y-%m-%d", time.gmtime(now))
+    # Three standings, or two for a TDX module of the first kind, whose version is among the platform's.
+    if all(checks) and len(standings) == (3 if versions[1] else 2) and all(s == "UpToDate" for s in standings):
+        print(f"as of {asked_on} Intel calls the platform, its TDX module and its quoting enclave up to date, and has withdrawn nothing in the chain")
+        sys.exit(0)
+    print(f"NOT shown: that Intel, as of {asked_on}, calls all of this up to date and standing")
+    sys.exit(1)
+
+if __name__ == "__main__":
+    main()

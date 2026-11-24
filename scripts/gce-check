@@ -3,25 +3,30 @@
 #
 #   scripts/gce-check BOOTX64.EFI QUOTE [BUILDER-KEY CHALLENGE]
 #
-# Three questions, each answered by the tool that answers it, and all must come out right:
+# Four questions, each answered by the tool that answers it, and all must come out right:
 #   is the quote a real one (evm/demo/check-quote.mjs: its signatures up to Intel's root, by the same
 #     code the page uses; needs node),
+#   does Intel stand by the platform today (scripts/tdx-standing: Intel's published levels for the
+#     processor's microcode, the TDX module and the quoting enclave, and its lists of withdrawn
+#     certificates, fetched from Intel and their signatures checked; needs openssl and the network),
 #   is it a quote of this program (scripts/gce-measure: RTMR1 worked out from the file), and
 #   is the firmware it was started by one Google signed for (scripts/gce-firmware: Google's statement
-#     for the quote's MRTD, fetched from Google and its signatures checked; needs openssl and the network).
+#     for the quote's MRTD, fetched from Google and its signatures checked; openssl and the network).
 # With a builder's public key and a challenge (both in hexadecimal, as builder/shadow writes them beside
-# its log), a fourth: is it this machine's answer, to that challenge, that its key for bids is that one.
+# its log), a fifth: is it this machine's answer, to that challenge, that its key for bids is that one.
 # The quote's 64 bytes of report data must then be SHA-256 of the challenge and the question ("JKEY1"),
 # and SHA-256 of the key (evm/Evm/Attest.lean). The key is the one relays list beside each bid they were
 # sent; the challenge is the hash of a block of the chain, so the quote is no older than that block.
 # What none of them answers is said by each, and comes to: what Google's firmware does, which is Google's
-# to vouch for; RTMR0, the machine's configuration as that firmware measured it; whether Intel or Google
-# has since withdrawn anything.
+# to vouch for; RTMR0, the machine's configuration as that firmware measured it; whether Google has
+# since withdrawn its statement.
 set -euo pipefail
 [[ ( $# -eq 2 || $# -eq 4 ) && -r "$1" && -r "$2" ]] || { echo "usage: scripts/gce-check BOOTX64.EFI QUOTE [BUILDER-KEY CHALLENGE]" >&2; exit 2; }
 here="$(cd "$(dirname "$0")" && pwd)"
 echo "Is it a real quote?"
 node "$here/../evm/demo/check-quote.mjs" "$2"
+echo "Does Intel stand by the platform today?"
+python3 -I "$here/tdx-standing" "$2"
 echo "Is it a quote of this program?"
 "$here/gce-measure" "$1" "$2" | tail -n 1
 echo "Is the firmware one Google signed for?"
@@ -45,7 +50,7 @@ if said != hashlib.sha256(challenge + b"JKEY1").digest() + hashlib.sha256(key).d
     sys.exit(1)
 print(f"the quote is of the answer {key.hex()[:16]}… to the question of the builder's key, asked with that challenge")
 PY
-  echo "All four hold: a trust domain started by Google's firmware and running this file made the quote, and bids under that key are its own."
+  echo "All five hold: a trust domain started by Google's firmware and running this file made the quote, and bids under that key are its own."
 else
-  echo "All three hold: a trust domain started by Google's firmware and running this file made the quote."
+  echo "All four hold: a trust domain started by Google's firmware and running this file made the quote."
 fi

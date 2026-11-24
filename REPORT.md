@@ -161,12 +161,14 @@ the key is its own. So a bid can be followed back to source with nothing from us
    quoted by the machine it runs on. <https://posix4e.github.io/cluck/live.html> checks it in a browser,
    as far as a page can: it takes the image's measurement from a file of ours.
 3. **The guest is this program, on Google's firmware.** Build the image and run the command in
-   `docs/live/builder.txt`. `scripts/gce-check` asks four things: that the quote's signatures lead to
-   Intel's root; that RTMR1 in it is what Google's firmware measures for that image file; that Google
-   signed for the firmware in MRTD; and that the quote is of that key.
+   `docs/live/builder.txt`. `scripts/gce-check` asks five things: that the quote's signatures lead to
+   Intel's root; that Intel, asked today, calls the platform's microcode, TDX module and quoting
+   enclave up to date and has withdrawn none of the certificates; that RTMR1 in the quote is what
+   Google's firmware measures for that image file; that Google signed for the firmware in MRTD; and
+   that the quote is of that key.
 4. **The program is this source.** The image's SHA-256 is in `docs/live/builder.txt`. Built from
    nothing on a machine of GitHub's, from the commit named there, it is the same file byte for byte,
-   and the guest's quote passes the four questions against the file built there: the workflow is
+   and the guest's quote passes those questions against the file built there: the workflow is
    [`image.yml`](.github/workflows/image.yml). Anyone can see [its runs][image-runs] and whether
    each passed; GitHub shows a run's log, with the hashes in it, to whoever is signed in. It runs
    again whenever the record changes.
@@ -176,8 +178,10 @@ Where this is thinner than it looks:
 - The image has been built on two machines, ours and GitHub's (Ubuntu 26.04 and 24.04), with the
   same release of Lean, whose compilers do all the compiling, and the same ready-made modules of
   mathlib, fetched from mathlib's cache. Nobody here has built either of those from source.
-- The quote's check does not look at Intel's verdict on the platform's firmware level (TCB status) or
-  at the quoting enclave's version, and nothing looks for a quote or a statement since withdrawn.
+- Intel's verdict on the platform (its TCB status, and the lists of revoked certificates) is asked
+  by `scripts/tdx-standing`, written here and tested against Intel's answers of one day; it has not
+  been compared with Intel's own verification library. The page in the browser does not ask at all.
+  Nothing looks for a statement of Google's since withdrawn.
 - RTMR0, the machine's configuration as the firmware measured it, was the same on every start seen
   and is not worked out from anything.
 - The guest's port is open to the feeding machine alone, so you cannot ask it for a fresh quote

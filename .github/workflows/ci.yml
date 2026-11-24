@@ -100,6 +100,10 @@ jobs:
           python3 -m venv verifier-python
           verifier-python/bin/pip install -q -r verify/requirements.txt
           verifier-python/bin/python verify/test-verify-attestation
+      # The program that asks Intel where a TDX platform stands, against what Intel answered one day for the
+      # builder's guest on Google Cloud, and against the same made wrong one way at a time. Fetches nothing.
+      - name: Intel's standing for a TDX platform
+        run: verify/test-tdx-standing
       # What the live code needs from a runtime, next to the list in the repository (taken on a Mac, where
       # the C start-up symbols differ). Printed, not enforced.
       - name: Runtime symbols the demo service keeps live

@@ -15,3 +15,19 @@ with `ask attest`. The instance is long gone; its identifier is in the documents
 The certificate that signs a document is good for about three hours, so the test checks both as of
 1794770000 (seconds since 1970), a moment inside that time for each. Checked as of today they are refused,
 as they should be.
+
+## What Intel answered about a TDX platform (`intel/`)
+
+For `verify/test-tdx-standing`, which tests `scripts/tdx-standing`. Fetched on 2026-11-24 at about 23:25 UTC
+with `scripts/tdx-standing QUOTE --keep`, and checked in the test as of 1795564800 (the midnight after).
+
+| File | What it is |
+|---|---|
+| `quote` | The quote of the builder's guest on Google Cloud (`docs/live/builder.quote` as it was that day). |
+| `levels`, `levels.chain` | Intel's TDX levels for processor family 00806f050000, and the certificates of who signed them (from the answer's `TCB-Info-Issuer-Chain` heading). |
+| `enclave`, `enclave.chain` | Intel's identity for the TD quoting enclave, and the same for it. |
+| `withdrawn` | The list of platform certificates Intel's "SGX PCK Platform CA" has revoked. |
+| `withdrawn-root` | The list of what Intel's SGX root has revoked. |
+
+The levels, the identity and the first list say they are good until 2026-12-24. Checked as of a later day
+they are refused, as they should be, which is one of the test's cases.

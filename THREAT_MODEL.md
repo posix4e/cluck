@@ -489,7 +489,10 @@ in the visitor's browser: the signatures from the quote up to Intel's SGX root k
 the signer of the quoting enclave. It does not fetch Intel's TCB information or revocation lists, so it
 accepts a quote from a processor whose firmware Intel no longer considers current, and it is served by the
 same host it is checking; a visitor who doubts the host reads the file or uses a verifier of their own on
-the quote the page offers for download.
+the quote the page offers for download. From a command line `scripts/tdx-standing` does fetch both, checks
+Intel's signatures on them, and says where the platform, its TDX module and the quoting enclave stand
+among Intel's levels; `scripts/gce-check` runs it. It is this repository's reading of Intel's rules, tested
+against Intel's answers of one day (`verify/test-tdx-standing`), and not Intel's own library.
 
 The same server has a second page, `demo/built.html`, for blocks the builder built: for each, the request
 the guest was sent, its reply, the quote made of its report, and a file of what the operator says about it

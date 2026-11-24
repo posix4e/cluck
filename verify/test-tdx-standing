@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""Tests scripts/tdx-standing against what Intel answered on 2026-11-24 (vectors/intel/), and against
+the same made wrong in one way at a time.
+
+    test-tdx-standing
+
+The quote is the builder's guest's on Google Cloud; the answers are Intel's for its processor family,
+its quoting enclave, and the two lists of withdrawn certificates. As they are, and judged as of the day
+after, every check must hold and all three standings be "UpToDate". Each other case changes one thing
+and names the line that must then fail, or the standing that must then be something else. Nothing is
+fetched. tdx-standing does not check the quote's own signatures, which is what lets the cases that
+lower a version in the quote be made at all.
+
+What is not tested, because it cannot be made here: a certificate that Intel has in fact withdrawn.
+The lists are Intel's and signed, and the platform's certificate is not on them; that openssl is really
+consulting them is shown by the cases that take a list away or put the wrong one in its place.
+"""
+import os, re, subprocess, sys, tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TOOL = os.path.join(HERE, "..", "scripts", "tdx-standing")
+VECTORS = os.path.join(HERE, "vectors", "intel")
+NOW = 1795564800   # 2026-11-25 00:00 UTC: after each answer was issued, before any runs out
+DAY = 86400
+
+def swap(old, new):
+    def change(data):
+        assert data.count(old) >= 1, old
+        return data.replace(old, new, 1)
+    return change
+
+# The platform's own certificate, the first in the quote: one Intel's root does certify, but not for this.
+PLATFORM = re.search(rb"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+                     open(os.path.join(VECTORS, "quote"), "rb").read(), re.S).group(0) + b"\n"
+
+def made_here():
+    """A certificate nobody certifies, with a name like Intel's signer's."""
+    with tempfile.TemporaryDirectory() as scratch:
+        out = os.path.join(scratch, "c.pem")
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1", "-nodes",
+                        "-keyout", os.path.join(scratch, "k.pem"), "-out", out, "-days", "3650",
+                        "-subj", "/CN=Intel SGX TCB Signing"], check=True, capture_output=True)
+        return open(out, "rb").read()
+
+def at(offset, value):
+    return lambda data: data[:offset] + bytes([value]) + data[offset + 1:]
+
+# name, {file: change}, time, exit status wanted, text that must be in what is printed
+CASES = [
+    ("as Intel answered", {}, NOW, 0, "calls the platform, its TDX module and its quoting enclave up to date"),
+    ("a level in the levels changed", {"levels": swap(b'"tcbStatus":"OutOfDate"', b'"tcbStatus":"UpToDate" ')}, NOW, 1,
+     "FAILS  Intel's levels for this family are signed"),
+    ("the enclave's identity changed", {"enclave": swap(b'"isvsvn":4', b'"isvsvn":1')}, NOW, 1,
+     "FAILS  Intel's identity for the quoting enclave is signed"),
+    ("the levels with no certificate of who signed them",
+     {"levels.chain": lambda data: b""}, NOW, 1, "FAILS  Intel's levels for this family can be read"),
+    ("the levels with the platform's certificate given as their signer's",
+     {"levels.chain": lambda data: PLATFORM}, NOW, 1, "FAILS  Intel's levels for this family are signed"),
+    ("the enclave's identity with a certificate made here given as its signer's",
+     {"enclave.chain": lambda data: made_here()}, NOW, 1, "FAILS  Intel's identity for the quoting enclave is signed"),
+    ("two months on, when every answer has run out", {}, NOW + 60 * DAY, 1, "FAILS    and in date"),
+    ("the day before the answers were issued", {}, NOW - 2 * DAY, 1, "FAILS    and in date"),
+    ("no list of the withdrawn from the root", {"withdrawn-root": lambda data: b""}, NOW, 1,
+     "FAILS  The platform's certificate and the one above it"),
+    ("the root's list where the platform authority's should be",
+     {"withdrawn": lambda data: open(os.path.join(VECTORS, "withdrawn-root"), "rb").read()}, NOW, 1,
+     "FAILS  The platform's certificate and the one above it"),
+    ("a list of the withdrawn with a byte changed", {"withdrawn": lambda data: data[:-1] + bytes([data[-1] ^ 1])}, NOW, 1,
+     "FAILS  The platform's certificate and the one above it"),
+    # The quote's own count of versions is its first 16 bytes after the 48 of its header: the TDX
+    # module's minor and major version, then the processor's microcode as TDX counts it.
+    ("a quote from older microcode", {"quote": at(48 + 2, 8)}, NOW, 1, "The platform's standing: OutOfDate"),
+    ("a quote from microcode older than any level", {"quote": at(48 + 2, 1)}, NOW, 1, "it is below all of them"),
+    # A module's version below the first number of every level: that number is not the platform's to be
+    # judged by when the module has a major version, so the platform stays where it was.
+    ("a quote from an older TDX module", {"quote": at(48 + 0, 4)}, NOW, 1, "The TDX module's standing: OutOfDate"),
+    ("  and the platform's own standing is not lowered by it", {"quote": at(48 + 0, 4)}, NOW, 1, "The platform's standing: UpToDate"),
+    ("a quote from a TDX module older than any level", {"quote": at(48 + 0, 1)}, NOW, 1,
+     "FAILS  The TDX module is at one of Intel's levels"),
+    ("a quote from a TDX module of the first kind, its version among the platform's", {"quote": at(48 + 1, 0)}, NOW, 0,
+     "The platform's standing: UpToDate"),
+    ("  and that one older than Intel's level for it", {"quote": lambda q: at(48 + 0, 4)(at(48 + 1, 0)(q))}, NOW, 1,
+     "The platform's standing: OutOfDate"),
+    ("a quote from a TDX module of a version Intel does not list", {"quote": at(48 + 1, 9)}, NOW, 1,
+     "FAILS  Intel lists a TDX module of major version 9"),
+    ("a quote from a TDX module somebody else signed", {"quote": at(48 + 64, 1)}, NOW, 1,
+     "FAILS  The TDX module is one Intel signed"),
+    # The quoting enclave's report follows the trust domain's 584 bytes, a length of 4, and 128 of
+    # signature and key, after a heading of 6: its signer is 128 bytes in, its version 258.
+    ("a quoting enclave somebody else signed", {"quote": at(48 + 584 + 4 + 128 + 6 + 128, 0)}, NOW, 1,
+     "FAILS  The quoting enclave is the one Intel identifies"),
+    ("an older quoting enclave", {"quote": at(48 + 584 + 4 + 128 + 6 + 258, 3)}, NOW, 1,
+     "FAILS  The quoting enclave is at one of Intel's levels"),
+]
+
+def main():
+    failed = 0
+    for name, changes, when, wanted, text in CASES:
+        with tempfile.TemporaryDirectory() as scratch:
+            for file in os.listdir(VECTORS):
+                data = open(os.path.join(VECTORS, file), "rb").read()
+                if file in changes: data = changes[file](data)
+                with open(os.path.join(scratch, file), "wb") as f: f.write(data)
+            result = subprocess.run([sys.executable, "-I", TOOL, os.path.join(scratch, "quote"), "--kept", scratch, "--at", str(when)],
+                                    capture_output=True, text=True)
+        good = result.returncode == wanted and text in result.stdout
+        print(f"{'ok  ' if good else 'FAIL'}  {name}")
+        if not good:
+            failed += 1
+            print(f"      wanted exit status {wanted} and the words {text!r}; got {result.returncode} and:")
+            print("      " + (result.stdout + result.stderr).strip().replace("\n", "\n      "))
+    if failed:
+        sys.exit(f"test-tdx-standing: {failed} of {len(CASES)} cases failed")
+    print(f"test-tdx-standing: all {len(CASES)} cases as they should be")
+
+if __name__ == "__main__":
+    main()

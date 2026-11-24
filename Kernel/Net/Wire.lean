@@ -127,8 +127,8 @@ def receive (w : Own) : BaseIO (Own × ByteArray) := do
       let frame := batch.extract 2 (2 + n).toNat
       return (⟨driver, scratch, batch, length, 2 + n, tx⟩, frame)
 
-/-- A card that says it wants to be started over, started over; and a line about it, or no line when it
-wanted nothing, which is nearly always. Only Google's card asks. What it held either way is lost; the
+/-- A card that has started over by itself or says it wants to be, brought up again; and a line about it,
+or no line when nothing had happened, which is nearly always. Only Google's card asks. What it held either way is lost; the
 frames already taken from it stay to be handed on. To be called now and then: asking costs a question
 to the host. -/
 def mend (w : Own) : BaseIO (Own × String) := do
@@ -140,10 +140,10 @@ def mend (w : Own) : BaseIO (Own × String) := do
     match ← Gvnic.restart card with
     | .ok (card, rings, notes) =>
       return (⟨.gvnic card rings, Gvnic.scratchFor card, batch, length, at_, tx⟩,
-              s!"the network card asked to be started over, and was: {notes}")
+              s!"the network card had started over or asked to be, and was brought up again: {notes}")
     | .error why =>
       return (⟨.gvnic card rings, scratch, batch, length, at_, tx⟩,
-              s!"the network card asked to be started over and did not come up: {why}")
+              s!"the network card had started over or asked to be, and did not come up again: {why}")
 
 /-- `frames` from the `i`-th on gathered into `tx`, and given to the card whenever `tx` is full and at the
 end. A frame no Ethernet could carry is left out. -/

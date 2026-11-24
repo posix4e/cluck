@@ -84,9 +84,10 @@ the way:
   served anything until 2026-11-24; now it is in the builder's, under the system's TCP, and has
   carried the builder's requests and its connections to the relays on Compute Engine. It is newer
   and less tried than the other, and can only be tried there: QEMU has no such card. The card
-  can say, by a bit of its status, that it wants to be started over, and is then reset and made
-  ready again in the same memory, when it is being brought up and once a second while it runs.
-  A host that keeps saying so keeps the network down, which it can do by not carrying frames.
+  can start over by itself, or say by a bit of its status that it wants to be started over, and
+  is then reset and made ready again in the same memory: while it is being brought up, for most
+  of a minute if need be, and whenever the machine, asking once a second, finds that it has.
+  A host that keeps doing so keeps the network down, which it can do by not carrying frames.
 - `silo_hw_write_direct` stores to a register of the claimed device by the processor's own
   instruction, at the place the firmware says the device's window is, where every other register
   access asks the firmware. It is checked to lie in a window like the others. It is there because in

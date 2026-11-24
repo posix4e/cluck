@@ -687,15 +687,20 @@ by the guest itself.
     - On this machine the same image, against the stand-in relay: 25 slots, 175 blocks sent,
       all valid and the stand-in's copy the same, seven rounds a slot, a round 0.74 s. The
       1,000 slots on it were begun at 14:01 UTC that day (`/data/eth/shadow/gate1000i/`).
-  - **The card can ask to be started over, and now is.** Of some ten starts of the image on
-    2026-11-24, five ended with a command to the card never answered (once the one that gives
-    it its counts, four times the one that makes the queue for sending) and the machine
-    stopped. Looked at: the card's count of commands done had gone back to nothing and, a
-    second on, its status said it wanted to be started over, which Linux's driver provides for
-    and this one did not. Now the driver starts the card over in the same memory and tries
-    again, up to five times, and the machine asks the card once a second while it runs whether
-    it wants that. The next start on Compute Engine came up at the second try, saying so.
-    - Seen once that way, on one start. Not seen: a card asking while the machine runs.
+  - **The card starts over by itself in a machine's first seconds, and the driver now goes
+    with it.** Of some ten starts of the image on 2026-11-24, five ended with a command to the
+    card never answered and the machine stopped. Looked at closely: with nothing asked of it,
+    a tenth of a second after it had been given its counts and doorbells, the card's count of
+    commands done was back at nothing (the same 289 million ticks in, on two different
+    starts); a second later its status asked for a reset. Once it did so on five tries running.
+    Linux's driver allows for a card that wants a reset, and gets to its card seconds later
+    than this does. Now: the card is left alone and watched for a third of a second before
+    queues are made, a command is given up on as soon as the count has gone back, bring-up is
+    tried again for up to most of a minute, and while it runs the machine asks the card once
+    a second whether it has started over or wants to. Of the last four starts two came up at
+    once, one at the second try and one at the third, each saying so on its console.
+    - Not known: why the card does it. Not seen yet: a card starting over while the machine
+      runs, which is the case the once-a-second look is for.
   - **The guest asks for its own quote** (2026-11-24; `Kernel/Quote.lean`, "JQUO1" in
     `evm/Evm/Attest.lean`). There is no quoting service of ours beside a machine on Compute
     Engine, so the guest hands a report to its host by the call the specification has for it

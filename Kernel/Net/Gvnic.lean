@@ -54,12 +54,10 @@ Who is on the other side: the host. Every length and number of the card's is cut
 it is used, and the memory shared with the card is the only memory any of it can name. A card that lies
 gets frames lost or the machine stopped, as it can anyway.
 
-**The card can ask to be started over**, by a bit of its status, at any time: while it is being made
-ready (seen on about half the starts in Compute Engine's trust domains, where its count of commands
-done went back to nothing after the third or fourth and no more were answered) and, as Linux's driver
-allows for, later. Either way it is reset and made ready again from nothing in the same memory
-(`bringUp`, `restart`); whoever drives it asks now and then whether it wants that (`wantsReset`).
-Frames on their way at that moment are lost, as on any network.
+**The card can start over by itself, or ask to be started over** (`bringUp` says what was seen). Either
+way it is reset and made ready again from nothing in the same memory; whoever drives it asks now and
+then whether that has happened (`wantsReset`, `restart`). Frames on their way at that moment are lost,
+as on any network.
 
 Not done: more than one queue; frames longer than a buffer (they are dropped); checksums or segmenting
 left to the card. -/
@@ -127,6 +125,9 @@ structure Card where
   newer : Bool := false
   txDone : UInt64 := 0
   rxOffer : UInt64 := 0
+  /-- How many commands the card has been given, which is what its count of commands done reads for
+  as long as it has not started over. -/
+  asked : UInt32 := 0
   deriving Inhabited
 
 structure Rings where
@@ -185,6 +186,19 @@ def command (registers queue : UInt64) (count : UInt32) (body : ByteArray) : Bas
   if done != count + 1 then return (0, s!"; command {count} never answered")
   if looked != 0 then how := s!"; command {count} answered late ({looked})"
   return (rd32 (← Hw.load (slot + 4) 4) 0, how)
+
+/-- The card left alone for so many thousand million ticks (four hundred to the second, about), its count
+of commands done looked at meanwhile: nothing when it stayed at `count`, and otherwise how many
+million ticks in it was found changed, and to what. -/
+def quiet (registers : UInt64) (count : UInt32) (ticks : UInt64) : BaseIO (Option (UInt64 × UInt32)) := do
+  let began ← Hw.ticks
+  let mut now := began
+  while now - began < ticks do
+    for _ in [0:2000] do Hw.pause
+    let done ← reg (registers + 24)
+    now ← Hw.ticks
+    if done != count then return some ((now - began) / 1000000, done)
+  return none
 
 /-- `bytes` of the memory shared with the card, from `at_`, made nothing. -/
 def wipe (at_ : UInt64) (bytes : USize) : BaseIO Unit := do
@@ -316,6 +330,10 @@ def bring (ground : Ground) : BaseIO (Ground × Except String (Card × Rings × 
   slow := slow ++ how
   put := put + 1
   if said != 1 then return (ground, .error (s!"the card would not take its counts and doorbells ({said}{slow})"))
+  -- Left alone a moment and watched, before anything is built on it: a card that is going to start
+  -- over by itself (below) has mostly done so by now.
+  if let some (at_, to) ← quiet registers put 1000000000 then
+    return (ground, .error (s!"left alone, the card's count of commands done went from {put} to {to} within {at_} million ticks"))
   let numbers ← Hw.load bells 128
   let mut notes := s!"the {if newer then "newer" else "older"} way; counts {counters}, pages for sending {txCount}, pages in all {most}, interrupt doorbells {rd32 numbers 0} and {rd32 numbers 64}"
   -- What ways of working the card says it has: each option's number, length, what it requires and its first word.
@@ -368,7 +386,8 @@ def bring (ground : Ground) : BaseIO (Ground × Except String (Card × Rings × 
     let card : Card :=
       { ground, registers, doorbells, macHigh, macLow, mtu, txRing, txPages, txSize, txSlots,
         txBell := doorbells + txBell * (4 : UInt64), txCount := 0,
-        rxDesc, rxPages, rxSize, rxBell := doorbells + rxBell * (4 : UInt64), newer := true, txDone, rxOffer }
+        rxDesc, rxPages, rxSize, rxBell := doorbells + rxBell * (4 : UInt64), newer := true, txDone, rxOffer,
+        asked := put + 1 }
     return (ground, .ok (card, { filled := rxSize.toUInt32 - 1 }, notes ++ slow))
   -- The pages frames go through, and the card told of them.
   let txPages := place 2
@@ -423,22 +442,36 @@ def bring (ground : Ground) : BaseIO (Ground × Except String (Card × Rings × 
   let card : Card :=
     { ground, registers, doorbells, macHigh, macLow, mtu, txRing, txPages, txSize, txSlots,
       txBell := doorbells + txBell * (4 : UInt64), txCount := counts + txCounter * (4 : UInt64),
-      rxDesc, rxPages, rxSize, rxBell := doorbells + rxBell * (4 : UInt64) }
+      rxDesc, rxPages, rxSize, rxBell := doorbells + rxBell * (4 : UInt64), asked := put + 1 }
   return (ground, .ok (card, { filled := rxSize.toUInt32 - 1 }, notes ++ slow))
 
-/-- The card brought up, started over when it does not come up: a card can ask to be started over
-part-way through being made ready (its count of commands done goes back to nothing and no more are
-answered), which was seen on about half the starts on Compute Engine's trust domains. Five tries. -/
+/-- The card brought up, and brought up again for as long as it does not stay up, for most of a minute.
+
+**A card can start over by itself.** Seen on Compute Engine's trust domains on more than half the
+starts, in the first seconds of a machine's life: with no command pending, a tenth of a second after
+it had been given its counts and doorbells, its count of commands done was back at nothing, and
+whatever was asked of it next went unanswered; a second later its status asked for a reset. Once it
+did so twice running and came up the third time, once five times in five seconds. An operating system
+gets to its card later than this does, and its driver allows for the same. So: a watched pause before
+the queues are made, every command given up on as soon as the count has gone back, and the whole
+bring-up tried again. -/
 def bringUp (ground : Ground) : BaseIO (Except String (Card × Rings × String)) := do
   let mut ground := ground
-  let mut before := ""
-  for attempt in [0:5] do
+  let mut tries := 0
+  let mut first := ""
+  let mut last := ""
+  let began ← Hw.ticks
+  while tries == 0 || (← Hw.ticks) - began < 150000000000 do
     let (g, got) ← bring ground
     ground := g
     match got with
-    | .ok (card, rings, notes) => return .ok (card, rings, if attempt == 0 then notes else s!"{notes}; after {attempt} tries that ended:{before}")
-    | .error why => before := before ++ s!" [{why}]"
-  return .error s!"five tries, which ended:{before}"
+    | .ok (card, rings, notes) =>
+      return .ok (card, rings, if tries == 0 then notes else s!"{notes}; at try {tries + 1}, the first having ended: {first}")
+    | .error why =>
+      if tries == 0 then first := why
+      last := why
+      tries := tries + 1
+  return .error s!"{tries} tries; the first ended: {first}; the last: {last}"
 
 /-- The card found, taken from the firmware and made ready, or why not; and with the card, in words, what
 it said of itself, for whoever is finding out why one does not work. -/
@@ -447,10 +480,11 @@ def start : BaseIO (Except String (Card × Rings × String)) := do
   | .error why => return .error why
   | .ok ground => bringUp ground
 
-/-- Whether the card says it wants to be started over (its status, bit 1): asked of it now and then by
-whoever drives it. -/
+/-- Whether the card has started over or says it wants to be (its status, bit 1; or its count of
+commands done no longer what it was given): asked of it now and then by whoever drives it. -/
 def wantsReset (card : @& Card) : BaseIO Bool := do
-  return (← reg card.registers) &&& (2 : UInt32) != 0
+  if (← reg card.registers) &&& (2 : UInt32) != 0 then return true
+  return (← reg (card.registers + 24)) != card.asked
 
 /-- The card started over in the memory it had. Whatever was on its way either way is lost, as on any
 network; the rings begin again. -/

@@ -1,0 +1,78 @@
+name: The running builder's image, built again
+# docs/live/builder.json says which program the builder's guest on Google Cloud is running: a commit and
+# the SHA-256 of the image built from it. docs/live/builder.quote is that guest's own quote. This builds
+# the image from that commit on a machine of GitHub's, which has nothing of ours but the repository, and
+# asks two things: is the file the same, byte for byte, and does the quote name it (scripts/gce-check).
+#
+# It runs when the record changes, which is when the guest was started again, and when asked to.
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/live/**
+      - .github/workflows/image.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  image:
+    # Always GitHub's machine, never one of ours: the point is that it is somebody else's.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v5
+      - name: Which commit the record names
+        id: record
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          record = json.load(open("docs/live/builder.json"))
+          for name in ("commit", "image_sha256", "builder", "challenge"):
+              print(f"{name}={record[name]}")
+          PY
+          cat docs/live/builder.txt
+      - name: That commit, beside this one
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.record.outputs.commit }}
+          path: recorded
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      # mathlib's modules as mathlib's own cache serves them; compiling them here would take hours. They
+      # are needed to compile Jaune, and none of mathlib is in the image.
+      - name: mathlib's ready-made modules
+        working-directory: recorded/evm
+        run: |
+          lake exe cache get Mathlib.Data.Nat.Basic Mathlib.Data.List.Lemmas Mathlib.Data.List.TakeDrop \
+            Mathlib.Data.List.TakeWhile Mathlib.Data.UInt Mathlib.Tactic.NormNum Mathlib.Data.List.Chain
+      - name: Build the image
+        working-directory: recorded/evm
+        run: |
+          scripts/build-efi tdx
+          ls -l .lake/build/efi/tdx/evm-os/BOOTX64.EFI
+          sha256sum .lake/build/efi/tdx/evm-os/BOOTX64.EFI
+      - name: The file built here is the file the record names
+        run: |
+          built="$(sha256sum recorded/evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI | cut -d' ' -f1)"
+          echo "built here:   $built"
+          echo "the record's: ${{ steps.record.outputs.image_sha256 }}"
+          test "$built" = "${{ steps.record.outputs.image_sha256 }}"
+      # With this commit's tools, on the file built above: the quote is a real one, it is of this file,
+      # the firmware is one Google signed for, and it is the machine's answer about that key. What the
+      # firmware measures includes the partition table of the disk the file is started from, so the disk
+      # is made here too (scripts/gce-image), which is what the three packages are for.
+      - name: The guest's quote names the file built here
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq dosfstools mtools gdisk
+          node --version
+          scripts/gce-check recorded/evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI docs/live/builder.quote \
+            "${{ steps.record.outputs.builder }}" "${{ steps.record.outputs.challenge }}"
+      - name: Keep the image
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: builder-image
+          path: recorded/evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI
+          if-no-files-found: ignore

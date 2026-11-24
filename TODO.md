@@ -676,6 +676,17 @@ by the guest itself.
       TCP starts slowly again after a connection has been quiet for a second
       (`net.ipv4.tcp_slow_start_after_idle`), and rounds are more than a second apart. Turning
       that off needs root here. Not done.
+  - **A hundred slots more, on the image with the quote and the card's starting over**
+    (2026-11-24, blocks 26485374 to 26485473, nothing posted): 573 blocks, every one valid and
+    signed; six rounds a slot at the median (two to eight); a round 1.04 s at the median and
+    1.53 for one in ten. The request was 132 ms in coming at the median, 275 for one in ten and
+    1.4 s once (a segment lost on the way, most likely, which without selective
+    acknowledgements costs a timer); the guest took 0.45 s over a block, 0.74 for one in ten.
+    One slot's last block came back 0.35 s after the slot had begun: the round before it had
+    been a slow one. Sent for real it would have been a bid too late, which a relay refuses.
+    - On this machine the same image, against the stand-in relay: 25 slots, 175 blocks sent,
+      all valid and the stand-in's copy the same, seven rounds a slot, a round 0.74 s. The
+      1,000 slots on it were begun at 14:01 UTC that day (`/data/eth/shadow/gate1000i/`).
   - **The card can ask to be started over, and now is.** Of some ten starts of the image on
     2026-11-24, five ended with a command to the card never answered (once the one that gives
     it its counts, four times the one that makes the queue for sending) and the machine

@@ -557,10 +557,39 @@ by the guest itself.
   8086:1237, 8086:7110, 8086:7113, **1ae0:0042** (class 020000, the network card) and **1ae0:001f**
   (class 010802, the NVMe disk). So the firmware's console reaches the serial port, its PCI protocol
   answers, and the TDX check passes there. The machine was up three minutes and deleted.
-  - Not known yet, and `gcp-probe` is written to say: whether Google's firmware has a network driver
-    of its own this target could use to begin with; where the firmware and the application show in
-    the measurements; what the card's registers look like once claimed.
-  - Spent so far on Compute Engine for this: a few cents (of 100 dollars agreed).
+- **What a trust domain there gives, as `gcp-probe` found it** (2026-11-24, `c3-standard-4`, TDX).
+  - Google's firmware has no network driver for the machine's card: there is nothing to borrow, and a
+    driver of this project's is needed from the first packet.
+  - The measurements: MRTD `f21e6b48…1731e5d3` is Google's firmware; RTMR0 `48ab35e1…682f9693` and
+    RTMR1 `657ca4a1…7f287454` are filled, and the application the firmware starts is in them; RTMR2 and
+    RTMR3 are nothing. Which events make RTMR1, so that an image can be checked against it, has not
+    been worked out.
+  - The card (1ae0:0042, revision 0) can be claimed from the firmware and its registers read through
+    `Kernel/Hw.lean`; three windows of 4,096, 256 and 1,048,576 bytes; memory can be shared with it.
+- **A driver for Google's card, and the trial TCP on Compute Engine over the Internet** (2026-11-24).
+  `Kernel/Net/Gvnic.lean` drives the card in its older way of working (GQI, with pages told to the
+  card beforehand), looking and never interrupted, with the batches `VirtioNet` has; `FlatGce.lean`
+  (image `flat-gce`) is the small web server on it, and `scripts/gce-try` starts an image on a machine
+  there and prints its console.
+  - On an ordinary machine (`n2-standard-2`, not a trust domain, the emulator's profile of the image):
+    the card came up, sent and received; from this machine over the Internet `GET /` got its page, a
+    page not there got 404, and a megabyte came in 0.29 s, three times, with nothing sent again.
+  - **On the machines that can be trust domains it does not work yet.** The C3 card takes every
+    command, lists this way of working among those it has, makes the queues, and then nothing moves:
+    of twelve frames given to it none was counted done, and nothing arrived. It lists the newer way
+    too (DQO), which Linux and DPDK take there. Tried and no different: its interrupt doorbells told
+    to be quiet, left alone, and opened, before the queues and after; one receiving place fewer handed
+    over; its packet size told to it. The same image's driver works on the older machine, so what is
+    wanting is the newer way of working, which is next.
+  - What was learnt on the way: the card gives 64 pages for sending where 512 was expected, so frames
+    go in places of 2,048 bytes taken in turn and not one a descriptor; told that every receiving
+    place is its own it takes none (one fewer is handed over); it must be told its packet size before
+    queues are made; a command can take longer than a second.
+  - Compute Engine's networks carry packets of 1,460 bytes: `flat-gce` keeps segments to 1,420. Its
+    address is the machine's, given when the machine is made (a subnet 10.0.2.0/24 and the address
+    10.0.2.15); nothing here asks the network for an address.
+  - Opened to this machine's address only, by a firewall rule made for it; nothing of it is public.
+  - Spent so far on Compute Engine for this: under a dollar (of 100 agreed); nothing is left running.
 
 ## Ethereum block import, as a service (`evm/`)
 

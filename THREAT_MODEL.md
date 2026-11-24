@@ -68,6 +68,11 @@ the way:
 - The runtime's `memcpy` and `memset` (`rt/bare/libc.c`) are `rep movsb` and `rep stosb` on x86-64 where
   they were loops; they read and write what they were asked to and decide nothing. Every image changes
   by it.
+- `silo_hw_load32` reads four bytes of the shared memory in one go, for a count the device keeps
+  adding to. And there is a second driver on this interface, for Google's network card
+  (`Kernel/Net/Gvnic.lean`): what it takes from the card (queue lengths, doorbell numbers, lengths of
+  frames) is cut to what it can be before it is used, as in the first, and it is in no image that
+  serves anything yet.
 - `silo_hw_store32` writes four bytes of the memory shared with a device in one go, checked as the
   other stores are; the driver's copies to and from that memory are made by `rep movsb` in
   `boot/efi/hw.c` and not by the runtime's `memcpy`. Neither reads anything.

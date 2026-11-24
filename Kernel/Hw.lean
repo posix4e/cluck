@@ -98,6 +98,11 @@ opaque store16 (address : UInt64) (value : UInt16) : BaseIO Unit
 @[extern "silo_hw_command_line"]
 opaque commandLine : BaseIO ByteArray
 
+/-- Four bytes of device memory at an address that is a multiple of four, least significant first, read
+in one go. -/
+@[extern "silo_hw_load32"]
+opaque load32 (address : UInt64) : BaseIO UInt32
+
 /-- Four bytes of device memory at an address that is a multiple of four, least significant first,
 written in one go. -/
 @[extern "silo_hw_store32"]

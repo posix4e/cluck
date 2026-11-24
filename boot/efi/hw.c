@@ -219,6 +219,13 @@ lean_obj_res silo_hw_store16(uint64_t address, uint16_t value) {
     return lean_box(0);
 }
 
+// Four bytes of device memory read in one go, at an address that is a multiple of four: a count the
+// other side keeps adding to, which read a byte at a time could come out part old and part new.
+uint32_t silo_hw_load32(uint64_t address) {
+    if (address & 3) rt_stop("a driver reached for four bytes of device memory at an address not a multiple of four");
+    return *(volatile uint32_t *)device_memory(address, 4);
+}
+
 // Four bytes of device memory written in one go, at an address that is a multiple of four: a length in
 // a queue's table, say, which the other side must not see half written.
 lean_obj_res silo_hw_store32(uint64_t address, uint32_t value) {

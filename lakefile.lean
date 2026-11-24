@@ -194,6 +194,14 @@ lean_exe «pci-probe» where
   root := `PciProbe
   moreLinkObjs := #[platformHosted, efiHosted]
 
+lean_exe «gcp-probe» where
+  root := `GcpProbe
+  moreLinkObjs := #[platformHosted, efiHosted]
+
+lean_exe «flat-gce» where
+  root := `FlatGce
+  moreLinkObjs := #[platformHosted, efiHosted]
+
 lean_exe «flat-os» where
   root := `FlatMain
   moreLinkObjs := #[platformHosted, efiHosted]

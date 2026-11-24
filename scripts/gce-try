@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# One EFI application started on a TDX machine of Google Compute Engine, and what it says on its console:
+#
+#   SILO_GCE_BUCKET=BUCKET scripts/gce-try NAME BOOTX64.EFI [SECONDS]
+#
+# It packs the application (scripts/gce-image), puts the disk in gs://BUCKET, makes an image and a machine
+# both called NAME in place of any there were, waits SECONDS (45), and prints the serial console. The
+# machine is LEFT RUNNING, and costs money while it is (about 23 cents an hour for the kind below when this
+# was written): `gcloud compute instances delete NAME` when done, and `scripts/gce-try --end NAME` does
+# that and removes the image and the disk file too.
+#
+# What it takes from the surroundings: gcloud, signed in, with a project set; SILO_GCE_ZONE (us-central1-a);
+# SILO_GCE_MACHINE (c3-standard-4); SILO_GCE_NET, what follows --network-interface (nic-type=GVNIC).
+# The image is marked as one firmware may start without Secure Boot, for Google's card, for TDX.
+set -euo pipefail
+zone="${SILO_GCE_ZONE:-us-central1-a}"
+bucket="${SILO_GCE_BUCKET:?scripts/gce-try: set SILO_GCE_BUCKET to a storage bucket to put the disk in}"
+here="$(cd "$(dirname "$0")" && pwd)"
+if [[ "${1:-}" == --end ]]; then
+  name="${2:?usage: scripts/gce-try --end NAME}"
+  gcloud compute instances delete "$name" --zone "$zone" --quiet 2>/dev/null || true
+  gcloud compute images delete "$name" --quiet 2>/dev/null || true
+  gcloud storage rm "gs://$bucket/$name.tar.gz" 2>/dev/null || true
+  exit 0
+fi
+[[ $# -ge 2 && -r "$2" ]] || { echo "usage: SILO_GCE_BUCKET=BUCKET scripts/gce-try NAME BOOTX64.EFI [SECONDS]" >&2; exit 2; }
+name="$1"
+work="$(mktemp -d "${TMPDIR:-/tmp}/gce-try.XXXXXXXX")"
+trap 'rm -rf -- "$work"' EXIT
+"$here/gce-image" "$2" "$work/$name.tar.gz" > /dev/null
+gcloud compute instances delete "$name" --zone "$zone" --quiet 2>/dev/null || true
+gcloud compute images delete "$name" --quiet 2>/dev/null || true
+gcloud storage cp "$work/$name.tar.gz" "gs://$bucket/$name.tar.gz" 2>&1 | tail -1
+gcloud compute images create "$name" --source-uri "gs://$bucket/$name.tar.gz" \
+  --guest-os-features UEFI_COMPATIBLE,GVNIC,TDX_CAPABLE > /dev/null
+# SILO_GCE_PLAIN=1 for a machine that is not a trust domain (for telling a fault of the driver's from one
+# of the kind of machine).
+kind=(--confidential-compute-type TDX --maintenance-policy TERMINATE)
+[[ -n "${SILO_GCE_PLAIN:-}" ]] && kind=()
+gcloud compute instances create "$name" --zone "$zone" --machine-type "${SILO_GCE_MACHINE:-c3-standard-4}" \
+  "${kind[@]}" --image "$name" \
+  --network-interface "${SILO_GCE_NET:-nic-type=GVNIC}" --no-shielded-secure-boot \
+  --format "value(name,networkInterfaces[0].networkIP,networkInterfaces[0].accessConfigs[0].natIP)"
+sleep "${3:-45}"
+gcloud compute instances get-serial-port-output "$name" --zone "$zone" 2>/dev/null | tr -d '\r' | sed 's/\x1b\[[0-9;=?]*[A-Za-z]//g' | grep -a -v '^$' || true

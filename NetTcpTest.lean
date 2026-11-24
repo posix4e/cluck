@@ -33,8 +33,9 @@ private def closed (events : Array Event) : Bool := events.any fun
   | .closed _ => true
   | _ => false
 
-private def establish (mss : UInt16 := 1460) (window : UInt16 := 3000) : Endpoint :=
-  let (half, _) := rx listener { client 0xfffffffd 0 syn with mss := some mss }
+private def establish (mss : UInt16 := 1460) (window : UInt16 := 3000) (on : Endpoint := listener)
+    (scale : Option UInt8 := none) : Endpoint :=
+  let (half, _) := rx on { client 0xfffffffd 0 syn with mss := some mss, scale }
   (rx half { client 0xfffffffe 0xffffffff with window }).1
 
 def main : IO UInt32 := do
@@ -102,11 +103,12 @@ def main : IO UInt32 := do
 
   -- Reassembled IP can deliver a segment larger than an Ethernet frame. Even a segment
   -- straddling both ends of the window may supply only its in-window data and FIN.
-  let big : ByteArray := ⟨Array.replicate (rxWindow.toNat + 150) 77⟩
+  let narrow := establish (on := { listenPort := 5005, window := 8192 })
+  let big : ByteArray := ⟨Array.replicate (8192 + 150) 77⟩
   let start := 0xfffffffe - 100
-  let (wide, part) := rx est (client start 0xffffffff (fin ||| ack) big)
+  let (wide, part) := rx narrow (client start 0xffffffff (fin ||| ack) big)
   check "reassembled TCP is clipped at both receive-window edges"
-    (data part == big.extract 100 (100 + rxWindow.toNat) && wide.conns[0]!.rcv == 0xfffffffe + rxWindow.toUInt32 &&
+    (data part == big.extract 100 (100 + 8192) && wide.conns[0]!.rcv == 0xfffffffe + 8192 &&
      !finished part)
   let (_, rest) := rx wide (client start 0xffffffff (fin ||| ack) big)
   check "remaining TCP bytes and FIN become acceptable as the window advances"
@@ -124,9 +126,12 @@ def main : IO UInt32 := do
     ((packets older)[0]!.data.isEmpty)
   let (partialAck, paused) := rx withFlight { client 0xfffffffe 0 with window := 2 } 12
   check "partial ACK waits for remaining flight" ((packets paused).isEmpty)
-  let (retried, due) := partialAck.tick 1012
+  -- The handshake's round trip was measured (at nothing), so the wait is the floor of 200 ms from the
+  -- last acknowledgement that moved, and twice that after the first time.
+  check "what is on its way waits out the measured timer" ((partialAck.tick 211).2.isEmpty)
+  let (retried, due) := partialAck.tick 212
   check "partial ACK retransmits from its ACK number" ((packets due)[0]!.seq == 0 && (packets due)[0]!.data == bytes [2,3])
-  check "retransmission backs off" ((retried.tick 2012).2.isEmpty)
+  check "retransmission backs off" ((retried.tick 611).2.isEmpty && !(retried.tick 612).2.isEmpty)
   let (withTail, tailSend) := rx retried { client 0xfffffffe 2 with window := 2 } 2013
   check "new window limits next piece" ((packets tailSend)[0]!.seq == 2 && (packets tailSend)[0]!.data == bytes [4,5])
   let (blocked, probe) := rx withTail { client 0xfffffffe 4 with window := 0 } 2014
@@ -188,6 +193,167 @@ def main : IO UInt32 := do
     (fun e i => (rx e { client 11 0 syn with src := (i+1).toUInt16 }).1) listener
   check "connection table remains bounded" (full.conns.size == maxConnections)
   check "idle timeout frees slots" ((full.tick 300000).1.conns.isEmpty)
+
+  -- Window scaling: offered back only to a peer that offered it, and then every later window is shifted.
+  let plain := (packets (rx listener { client 0xfffffffd 0 syn with mss := some 1460 }).2)[0]!
+  check "no scaling is offered to a peer that offered none" (plain.scale.isNone && plain.window == 65535)
+  let (half, said) := rx listener { client 0xfffffffd 0 syn with mss := some 1460, scale := some 9 }
+  check "scaling is offered back to a peer that offered it" ((packets said)[0]!.scale == some 5 && (packets said)[0]!.window == 65535)
+  let (scaled, _) := rx half { client 0xfffffffe 0xffffffff with window := 100 }
+  check "a peer's window is shifted by what it offered" (scaled.conns[0]!.peerWindow == 100 * 512)
+  let (_, far) := rx scaled (client (0xfffffffe + 2000000) 0xffffffff ack (bytes [1]))
+  check "our window is said shifted, and a byte two million ahead is inside it"
+    ((packets far)[0]!.window == 65535 && (rx scaled (client (0xfffffffe + 2000000) 0xffffffff ack (bytes [1]))).1.conns[0]!.early.size == 1)
+  let (calling, asked) := listener.connect 0 20 remote 51003 443
+  check "a connection out offers scaling" ((packets asked)[0]!.scale == some 5)
+  let (calling, _) := rx calling { src := 443, dst := 51003, seq := 100, answer := 21, flags := syn ||| ack, window := 7 }
+  check "a peer that does not answer the offer is not scaled to" (!calling.conns[0]!.scaling && calling.conns[0]!.peerWindow == 7)
+
+  -- Sending: many segments on their way at once. A peer with segments of 100 bytes and a window of
+  -- 64,000; ten go at first, more as they are acknowledged.
+  let wide := establish 100 64000
+  let payload : ByteArray := ⟨(Array.range 6000).map (·.toUInt8)⟩
+  let (flying, first) := wide.send 10 key payload
+  check "ten segments go before anything is acknowledged"
+    ((packets first).size == 10 && (packets first)[9]!.seq == 0xffffffff + 900 && (packets first)[9]!.data == payload.extract 900 1000)
+  let (flying, more) := rx flying (client 0xfffffffe (0xffffffff + 200)) 30
+  check "an acknowledgement of two lets four more go"
+    ((packets more).size == 4 && (packets more)[0]!.seq == 0xffffffff + 1000 && flying.conns[0]!.held == 5800)
+  check "the round trip is measured from the first segment" (flying.conns[0]!.srtt != 0)
+  -- The third segment is lost: the peer repeats its acknowledgement of 200 for each one after.
+  let again := client 0xfffffffe (0xffffffff + 200)
+  let (flying, one) := rx flying again 31
+  let (flying, two) := rx flying again 32
+  check "two repeats send nothing again" ((packets one).all (·.seq != 0xffffffff + 200) && (packets two).all (·.seq != 0xffffffff + 200))
+  let (flying, three) := rx flying again 33
+  check "the third repeat sends the lost segment again, at once"
+    ((packets three)[0]!.seq == 0xffffffff + 200 && (packets three)[0]!.data == payload.extract 200 300 && flying.conns[0]!.fast)
+  let (flying, part) := rx flying (client 0xfffffffe (0xffffffff + 500)) 40
+  check "an acknowledgement short of the rest sends the next gap"
+    ((packets part)[0]!.seq == 0xffffffff + 500 && flying.conns[0]!.fast)
+  let (flying, _) := rx flying (client 0xfffffffe flying.conns[0]!.top) 50
+  check "an acknowledgement of everything sent ends the recovery, with the window halved"
+    (!flying.conns[0]!.fast && flying.conns[0]!.cwnd == flying.conns[0]!.ssthresh && flying.conns[0]!.cwnd < 1000)
+  -- Then nothing is acknowledged: the timer starts over from the first unacknowledged byte, one segment.
+  let unanswered := flying.conns[0]!
+  let (late, sentAgain) := flying.tick (unanswered.due)
+  check "the timer sends one segment again from the first unacknowledged byte"
+    (unanswered.due != 0 && (flying.tick (unanswered.due - 1)).2.isEmpty &&
+     (packets sentAgain).size == 1 && (packets sentAgain)[0]!.seq == unanswered.una && late.conns[0]!.cwnd == 100)
+  let (late, onward) := rx late (client 0xfffffffe unanswered.top) (unanswered.due + 5)
+  check "an acknowledgement of more than was sent again carries on from there"
+    (late.conns[0]!.una == unanswered.top && (packets onward)[0]!.seq == unanswered.top)
+  check "repeats after the timer do not start a recovery of what was already sent"
+    ((List.range 5).foldl (fun e _ => (rx e (client 0xfffffffe unanswered.top) (unanswered.due + 6)).1) late
+      |>.conns[0]!.fast == false || late.conns[0]!.recover == unanswered.top)
+  -- An acknowledgement of bytes never sent, however far in flight we are, moves nothing.
+  check "an acknowledgement beyond what was sent releases nothing"
+    ((rx late (client 0xfffffffe (late.conns[0]!.top + 1)) (unanswered.due + 7)).1.conns[0]!.una == late.conns[0]!.una)
+
+  -- Taking in: segments ahead of a gap are kept in order and given over when the gap closes.
+  let piece (i : Nat) : ByteArray := ⟨Array.replicate 10 i.toUInt8⟩
+  let at_ (i : Nat) : UInt32 := 0xfffffffe + (10 * i).toUInt32
+  let gapped := [3, 1, 4, 2, 1].foldl (fun e i => (rx e (client (at_ i) 0xffffffff ack (piece i))).1) (establish)
+  check "segments ahead of a gap are kept once each, in order"
+    (gapped.conns[0]!.early.size == 4 && gapped.conns[0]!.earlyBytes == 40 &&
+     (gapped.conns[0]!.early.map (·.seq)) == #[at_ 1, at_ 2, at_ 3, at_ 4])
+  let (filled, given) := rx gapped (client (at_ 0) 0xffffffff ack (piece 0))
+  check "closing the gap gives everything over in order"
+    (data given == (List.range 5).foldl (fun b i => b ++ piece i) .empty && filled.conns[0]!.early.isEmpty &&
+     filled.conns[0]!.earlyBytes == 0 && (packets given)[0]!.answer == at_ 5)
+  let crowded := (List.range (maxEarly + 50)).foldl
+    (fun e i => (rx e (client (0xfffffffe + 1 + 2 * i.toUInt32) 0xffffffff ack (bytes [1]))).1) (establish)
+  check "what is kept from ahead of a gap is bounded" (crowded.conns[0]!.early.size == maxEarly)
+
+  -- Two endpoints with a path between them that loses, repeats and delays: whatever happens to the
+  -- segments, each side must be given exactly what the other sent, and both must finish.
+  let there : Peer := ⟨bytes [2,0,0,0,0,2], bytes [10,0,2,15]⟩
+  let mut worst := 0
+  for seed in [1, 2, 3, 4, 5, 6] do
+    let lossy := seed > 1
+    let mut a : Endpoint := { listenPort := 1 }
+    let mut b : Endpoint := { listenPort := 5005, mss := 1000 }
+    let up : ByteArray := ⟨(Array.range 300000).map fun i => (i * 7 + seed).toUInt8⟩
+    let down : ByteArray := ⟨(Array.range 200000).map fun i => (i * 13 + seed).toUInt8⟩
+    let mut state := seed * 2654435761 + 12345
+    -- Segments on the path: when each arrives, which side it is for, and its bytes.
+    let mut path : Array (Nat × Bool × ByteArray) := #[]
+    let mut gotA := ByteArray.empty
+    let mut gotB := ByteArray.empty
+    let mut upAt := 0
+    let mut downAt := 0
+    let mut keyA : Option Key := none
+    let mut keyB : Option Key := none
+    let mut doneA := false
+    let mut doneB := false
+    let mut endedB := false
+    let mut now := 1000
+    let (a0, first) := a.connect now 77 there 40000 5005
+    a := a0
+    let mut pending : Array (Bool × Event) := first.map ((true, ·))
+    while now < 400000 && !(doneA && doneB) do
+      -- What either side said goes onto the path, or is lost, or goes twice.
+      let mut next : Array (Bool × Event) := #[]
+      for (fromA, event) in pending do
+        match event with
+        | .emit _ raw =>
+          state := (state * 6364136223846793005 + 1442695040888963407) % 18446744073709551616
+          let dice := (state >>> 33) % 1000
+          let delay := 10 + (state >>> 45) % (if lossy then 12 else 1)
+          if lossy && dice < 30 then pure ()
+          else
+            path := path.push (now + delay, !fromA, raw)
+            if lossy && dice < 50 then path := path.push (now + delay + 3, !fromA, raw)
+        | .opened k => if fromA then keyA := some k else keyB := some k
+        | .data _ part => if fromA then gotA := gotA ++ part else gotB := gotB ++ part
+        | .finished _ => if !fromA then endedB := true
+        | .closed _ => if fromA then doneA := true else doneB := true
+      pending := next
+      if !pending.isEmpty then continue
+      -- Each side hands over what it has room for; A closes when it has sent everything.
+      if let some k := keyA then
+        if let some c := a.conns.find? (·.key == k) then
+          if upAt < up.size && c.held < 60000 then
+            let (e, more) := a.send now k (up.extract upAt (upAt + 50000))
+            a := e; upAt := min up.size (upAt + 50000); pending := pending ++ more.map ((true, ·))
+          else if upAt == up.size && !c.closing then
+            let (e, more) := a.close now k
+            a := e; pending := pending ++ more.map ((true, ·))
+      if let some k := keyB then
+        if let some c := b.conns.find? (·.key == k) then
+          if downAt < down.size && c.held < 60000 then
+            let (e, more) := b.send now k (down.extract downAt (downAt + 50000))
+            b := e; downAt := min down.size (downAt + 50000); pending := pending ++ more.map ((false, ·))
+          else if downAt == down.size && endedB && !c.closing then
+            let (e, more) := b.close now k
+            b := e; pending := pending ++ more.map ((false, ·))
+      if !pending.isEmpty then continue
+      -- Then the earliest arrival, or a millisecond passes.
+      let due := path.filter (·.1 ≤ now)
+      if due.isEmpty then
+        now := now + 1
+        let (e, more) := a.tick now
+        a := e; pending := pending ++ more.map ((true, ·))
+        let (e, more) := b.tick now
+        b := e; pending := pending ++ more.map ((false, ·))
+      else
+        path := path.filter (·.1 > now)
+        for (_, toA, raw) in due do
+          if toA then
+            let (e, more) := a.receive now 5 there raw
+            a := e; pending := pending ++ more.map ((true, ·))
+          else
+            let (e, more) := b.receive now (90 + seed.toUInt32) remote raw
+            b := e; pending := pending ++ more.map ((false, ·))
+    if !(gotB == up && gotA == down && doneA && doneB) then
+      IO.eprintln s!"  seed {seed}: B got {gotB.size} of {up.size}, A got {gotA.size} of {down.size}, done {doneA} {doneB}, at {now}"
+    check s!"over a path that {if lossy then "loses and repeats" else "only delays"} (seed {seed}), both sides are given what was sent and finish"
+      (gotB == up && gotA == down && doneA && doneB)
+    if !lossy then
+      -- 300,000 bytes one way and 200,000 the other over 20 ms there and back: a few tens of round trips.
+      check s!"with nothing lost it takes few round trips ({(now - 1000) / 20})" (now - 1000 < 600)
+    worst := max worst (now - 1000)
+  IO.println s!"net-tcp-test: the slowest lossy path took {worst} ms of its clock"
 
   let failed ← failures.get
   if failed != 0 then return 1

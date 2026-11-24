@@ -22,12 +22,29 @@ For each request it prints the time from the first byte sent to the answer, and 
 says it spent on the request; the rest is the request on its way in.
 
 SILO_HOST_PORT is the loopback port the guest's port 5005 is forwarded to (default 5015).
+
+    scripts/run-fixtures dev|tdx --tap [--delay MS] [--limits] [--key] [--from DIR] [name...]
+
+With `--tap` the guest is not behind the emulator's own network, which ends every TCP connection beside
+the guest and so hides what the guest's TCP does over a distance. It gets a tap device in a network of
+this program's own making (a user and network namespace: no root), with the kernel's vhost-net behind
+it, and the requests go from Linux's TCP straight to the guest's at 10.0.2.15. `--delay` holds every
+frame from Linux back so many milliseconds, which is then the round trip.
 """
 import glob, os, re, shutil, signal, socket, struct, subprocess, sys, time
 
 if len(sys.argv) < 2 or sys.argv[1] not in ("dev", "tdx"):
     sys.exit(__doc__)
 mode, names = sys.argv[1], sys.argv[2:]
+tap = names[:1] == ["--tap"]
+delay = 0
+if tap:
+    names = names[1:]
+    if names[:1] == ["--delay"] and len(names) > 1:
+        delay, names = int(names[1]), names[2:]
+    if os.environ.get("FIXTURES_INSIDE") != "1":
+        os.execvpe("unshare", ["unshare", "-Urn", sys.executable, os.path.abspath(__file__)] + sys.argv[1:],
+                   dict(os.environ, FIXTURES_INSIDE="1"))
 here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 system = os.path.dirname(here)
 fixtures = os.path.join(here, "fixtures")
@@ -51,15 +68,26 @@ shutil.copyfile(image, os.path.join(slot, "BOOTX64.EFI"))
 port = int(os.environ.get("SILO_HOST_PORT", "5015"))
 log = os.path.join(here, ".lake/build/efi", mode, "evm-os/serial.log")
 guest = subprocess.Popen([os.path.join(system, "scripts/run-efi"), mode, "evm-os"], cwd=system,
-                         env=dict(os.environ, SILO_HOST_PORT=str(port)),
+                         env=dict(os.environ, SILO_HOST_PORT=str(port), **({"SILO_NET_TAP": "tap0"} if tap else {})),
                          stdout=open(log, "wb"), stderr=subprocess.STDOUT, start_new_session=True)
+where = ("10.0.2.15", 5005) if tap else ("127.0.0.1", port)
+if tap:
+    # QEMU makes the device; this end gives it the address the guest takes for its gateway.
+    for _ in range(200):
+        if subprocess.run(["ip", "link", "show", "tap0"], capture_output=True).returncode == 0:
+            break
+        time.sleep(0.1)
+    for command in ("ip addr add 10.0.2.2/24 dev tap0", "ip link set tap0 up", "ip link set lo up"):
+        subprocess.run(command.split(), check=True)
+    if delay:
+        subprocess.run(f"tc qdisc add dev tap0 root netem delay {delay}ms limit 100000".split(), check=True)
 
 def serial():
     with open(log, "rb") as f:
         return f.read().decode("utf-8", "replace")
 
 def exchange(request, patience):
-    with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
+    with socket.create_connection(where, timeout=10) as s:
         s.settimeout(patience)
         s.sendall(struct.pack(">I", len(request)) + request)
         # One frame back: four bytes of length, then that many. A verdict is 69 bytes; a block that was
@@ -110,12 +138,12 @@ try:
 
         def partial(megabytes):
             """A client part way through a request of 32 MiB less one byte."""
-            s = socket.create_connection(("127.0.0.1", port), timeout=10)
+            s = socket.create_connection(where, timeout=10)
             s.settimeout(600)
             s.sendall(struct.pack(">I", 32 * 1024 * 1024 - 1) + bytes(megabytes * 1024 * 1024))
             return s
 
-        with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
+        with socket.create_connection(where, timeout=10) as s:
             s.sendall(struct.pack(">I", 32 * 1024 * 1024 + 1) + bytes(64))
             ok = closed(s)
         failed += not ok

@@ -99,7 +99,16 @@ ARP and Neighbor Discovery establish reachability. Neither authenticates a peer.
 serves cleartext TCP and UDP, and exposes its framing and transport state to remote clients.
 The guest bounds TCP connections, buffered stream data, fragment assemblies and their lifetimes.
 An attacker can still occupy those limits, withhold acknowledgments, exhaust CPU time or
-prevent the firmware or virtual NIC from making progress. No secret should be exchanged on
+prevent the firmware or virtual NIC from making progress. The system's TCP (`Kernel/Net/Tcp.lean`)
+now offers a peer a window of two megabytes, where it offered 8 KB, and keeps what comes ahead of a
+gap: up to 2,048 segments a connection and 4 MiB over all connections (`maxEarly`,
+`maxEarlyBytes`), where it kept one segment. That is memory a peer can make it hold for as long as
+its connection lives, on top of the 128 KB a connection may have waiting to be sent, and the walk
+through what is kept is in the order of its length for each segment that comes out of place. How
+fast it sends is now steered by the peer's acknowledgements: a peer that acknowledges early or
+never can make it send faster or slower to that peer, within what was already handed over to be
+sent, and can make it send a segment again; it cannot make it send what was not meant for that
+connection, and an acknowledgement of bytes never sent is refused as before. No secret should be exchanged on
 the strength of a TCP connection or checksum.
 
 The EFI image and its firmware are separate inputs to measurement. A TDREPORT binds the 64

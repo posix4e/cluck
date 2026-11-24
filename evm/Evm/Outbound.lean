@@ -121,8 +121,7 @@ def flush (c : Call) (now : Nat) (w : Wire) : Call × Wire × Array ByteArray :=
     match w.tcp.conns.find? (·.key == key) with
     | none => (c, w, #[])
     | some conn =>
-      let held := conn.queued.size - conn.queuedAt + (conn.flight.map (·.segment.data.size)).getD 0
-      let size := min c.outbox.size (Tcp.maxQueued - min Tcp.maxQueued held)
+      let size := min c.outbox.size (Tcp.maxQueued - min Tcp.maxQueued conn.held)
       if size == 0 || conn.phase != .established then (c, w, #[]) else
       let (tcp, events) := w.tcp.send now key (c.outbox.extract 0 size)
       ({ c with outbox := c.outbox.extract size c.outbox.size }, { w with tcp }, frames w events)

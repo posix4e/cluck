@@ -619,6 +619,32 @@ by the guest itself.
   30 KB back with 12 ms there and back: **4.2 s** a request (Linux to Linux over the real path:
   0.064 s). 1 KB up and 130 KB back with 40 ms: 3.7 s. With no delay: 0.22 s. These are the
   numbers the work on it has to bring down before the builder can be fed over the internet.
+- **The system's TCP made fit for such a path** (2026-11-24). It offers a window of 2 MB with
+  the scaling option, keeps what comes ahead of a gap, has as many segments on their way as the
+  peer's window and one of its own allow (ten at first, RFC 6928), measures the round trip for
+  its timer (floor 200 ms) and sends a lost segment again on three repeated acknowledgements
+  (NewReno). Measured:
+
+  | | before | after |
+  |---|---|---|
+  | the builder's guest in a trust domain, a request of 2.7 MB of mainnet coming in over 12 ms (`evm/scripts/run-fixtures tdx --tap --delay 12`), new connection | 4,401 ms | **100 ms** |
+  | as a process against Linux, 1 KB in and 130 KB out over 40 ms, connection kept (`scripts/tcp-linux-test`) | 3,674 ms | **60 ms** (175 the first time, while its window opens) |
+  | as a process, 2.5 MB in over 12 ms | 4,233 ms | 183 ms, of which some 160 are the test's own carrying of frames |
+
+  With frames lost each way the same requests come whole: at 0.5% lost, 2.5 MB in takes 1.7 s
+  and 130 KB out 0.29 s; at 2%, 3.8 s and 0.58 s. Taking in under loss is slow because the
+  sender has to find each lost segment a round trip at a time: selective acknowledgements
+  (SACK) are **not done**, neither said nor read. The real path lost nothing in the
+  measurements above, so this is left until it shows. Also not done: acknowledging every
+  second segment instead of every one; restarting slowly after a connection has been idle.
+  - Run on it: `net-tcp-test` (now with scaling, many segments on their way, recovery by
+    repeats and by timer, the store of what came early and its bound, and two endpoints
+    talking through a path that loses, repeats and reorders, six seeds); fixtures, limits and
+    the key check in a trust domain, behind the emulator's network and over the tap with
+    12 ms; `scripts/test-efi` dev and tdx.
+  - Not run on it yet: a slot of the builder against the stand-in relay, the 1,000 slots,
+    `check-secret-code`, connections out over a real distance (they are tried on Compute
+    Engine, there being no such path to a guest here without root).
   - Not done there: the builder (its guest needs this driver under the system's TCP, an address of
     its own choosing and a quote it asks for itself); anything measured from a machine near it (800
     requests a second from here is this machine's distance, not the guest's speed); a look at how

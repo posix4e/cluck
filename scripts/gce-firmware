@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Whether the firmware a TDX quote from Google Compute Engine names is one Google has signed for.
+
+    scripts/gce-firmware QUOTE-OR-REPORT [--statement FILE] [--root FILE]
+
+MRTD in a quote is the measurement of the firmware the trust domain was started by. On Compute Engine
+that firmware is Google's, and Google publishes a signed statement for each build of it, named by the
+measurement:
+
+    https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/tdx/MRTD-IN-HEX.binarypb
+
+This fetches the statement for the quote's MRTD (or reads the one given), and checks three things: that
+the statement's signature is by the key in the certificate it carries (RSA-PSS with SHA-256); that that
+certificate is signed by Google's root for this, "GCE-cc-tcb-root", fetched from
+https://pki.goog/cloud_integrity/GCE-cc-tcb-root_1.crt (or the file given) and held to the SHA-256
+written below; and that the quote's MRTD is among the measurements the statement lists for TDX. The
+signatures are checked by `openssl`, which must be installed; the statement, a protocol buffer of a few
+fields, is taken apart here.
+
+What this says when it passes: Google signed for a firmware with this measurement. Not what that
+firmware does, which only Google can say: it is theirs, nobody else builds it, and it is trusted. Nor
+that the statement is still the one Google would give today; it carries no end date and nothing here
+looks for a withdrawal.
+
+Exit status 0 when all three hold, 1 when one does not or Google has no statement under that name, 2
+when it could not be tried (no network, no openssl).
+"""
+import hashlib, os, subprocess, sys, tempfile, urllib.error, urllib.request
+
+# SHA-256 of GCE-cc-tcb-root_1.crt as pki.goog served it on 2026-11-24: the one thing here taken on trust.
+ROOT_SHA256 = "e876bc6978bf4f3da445f98a0a82363c8c0bae5a1fc033c6df65846a6cb0f18c"
+ROOT_URL = "https://pki.goog/cloud_integrity/GCE-cc-tcb-root_1.crt"
+STATEMENTS = "https://storage.googleapis.com/gce_tcb_integrity/ovmf_x64_csm/tdx/"
+
+def could_not(why):
+    print(f"gce-firmware: {why}", file=sys.stderr)
+    sys.exit(2)
+
+def fields(b):
+    """The fields of a protocol buffer message, by number: each a list of numbers or byte strings. Raises
+    ValueError for anything that is not one."""
+    def number(i):
+        value = shift = 0
+        while True:
+            if i >= len(b) or shift > 63: raise ValueError("a number cut short")
+            c = b[i]; i += 1
+            value |= (c & 0x7f) << shift; shift += 7
+            if c < 0x80: return value, i
+    found, i = {}, 0
+    while i < len(b):
+        key, i = number(i)
+        kind = key & 7
+        if kind == 0: value, i = number(i)
+        elif kind == 2:
+            size, i = number(i)
+            if i + size > len(b): raise ValueError("a field cut short")
+            value, i = b[i:i + size], i + size
+        elif kind == 1: value, i = b[i:i + 8], i + 8
+        elif kind == 5: value, i = b[i:i + 4], i + 4
+        else: raise ValueError("a kind of field this does not read")
+        found.setdefault(key >> 3, []).append(value)
+    return found
+
+def fetch(url, absent=None):
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "gce-firmware"}), timeout=30) as answer:
+            return answer.read(1 << 20)
+    except urllib.error.HTTPError as error:
+        if error.code == 404 and absent:
+            print(absent)
+            sys.exit(1)
+        could_not(f"{url}: {error}")
+    except Exception as error:
+        could_not(f"{url}: {error}")
+
+def main():
+    args = sys.argv[1:]
+    def named(flag):
+        if flag not in args: return None
+        at = args.index(flag)
+        if at + 1 >= len(args): sys.exit(__doc__)
+        value = args[at + 1]
+        del args[at:at + 2]
+        return value
+    statement_file, root_file = named("--statement"), named("--root")
+    if len(args) != 1: sys.exit(__doc__)
+    quoted = open(args[0], "rb").read()
+    # As scripts/gce-measure finds it: 16 bytes into the trust domain's part of a report, 136 into a quote's.
+    if len(quoted) == 1024 and quoted[:1] == b"\x81": at = 512 + 16
+    elif len(quoted) >= 48 + 584 and quoted[:2] == b"\x04\x00": at = 48 + 136
+    else: could_not("neither a report of 1,024 bytes nor a version 4 quote")
+    mrtd = quoted[at:at + 48]
+
+    statement = open(statement_file, "rb").read() if statement_file else fetch(STATEMENTS + mrtd.hex() + ".binarypb",
+        f"  MRTD in the quote: {mrtd.hex()}\nNOT shown: Google publishes no statement under that measurement, so this is not a firmware it has signed for")
+    root = open(root_file, "rb").read() if root_file else fetch(ROOT_URL)
+    if hashlib.sha256(root).hexdigest() != ROOT_SHA256:
+        print(f"gce-firmware: the root certificate is not the one this knows (SHA-256 {hashlib.sha256(root).hexdigest()})")
+        sys.exit(1)
+    try:
+        outer = fields(statement)
+        golden, signature = outer[1][0], outer[2][0]
+        inner = fields(golden)
+        certificate = inner[4][0]
+        tdx = fields(inner[8][0])
+        listed = [fields(m).get(3, [b""])[0] for m in tdx.get(2, [])]
+        made = fields(inner[1][0]).get(1, [0])[0] if 1 in inner else 0
+        firmware = inner.get(5, [b""])[0]
+    except (ValueError, KeyError, IndexError, TypeError) as error:
+        print(f"gce-firmware: the statement cannot be read: {error!r}")
+        sys.exit(1)
+
+    with tempfile.TemporaryDirectory() as scratch:
+        def put(name, data):
+            path = os.path.join(scratch, name)
+            with open(path, "wb") as f: f.write(data)
+            return path
+        def openssl(*command, data=None):
+            try:
+                return subprocess.run(["openssl", *command], input=data, capture_output=True)
+            except FileNotFoundError:
+                could_not("openssl is not installed")
+        pem = lambda der, name: put(name, openssl("x509", "-inform", "DER", "-outform", "PEM", data=der).stdout)
+        root_pem = put("root.pem", root) if root.lstrip().startswith(b"-----BEGIN") else pem(root, "root.pem")
+        signer_pem = pem(certificate, "signer.pem")
+        chained = openssl("verify", "-CAfile", root_pem, signer_pem).returncode == 0
+        key = put("key.pem", openssl("x509", "-in", signer_pem, "-noout", "-pubkey").stdout)
+        signed = openssl("dgst", "-sha256", "-sigopt", "rsa_padding_mode:pss", "-sigopt", "rsa_pss_saltlen:32",
+                         "-verify", key, "-signature", put("signature", signature), put("golden", golden)).returncode == 0
+        who = openssl("x509", "-in", signer_pem, "-noout", "-subject", "-enddate").stdout.decode(errors="replace").split("\n")
+
+    there = mrtd in listed
+    said = lambda holds: "holds" if holds else "FAILS"
+    print(f"  MRTD in the quote: {mrtd.hex()}")
+    print(f"  {said(signed)}  The statement is signed by the key in the certificate it carries ({who[0].strip()})")
+    print(f"  {said(chained)}  That certificate is signed by Google's root for this, GCE-cc-tcb-root (SHA-256 {ROOT_SHA256[:16]}…)")
+    print(f"  {said(there)}  The statement lists that MRTD for TDX ({len(listed)} listed)")
+    if made:
+        import datetime
+        print(f"  The statement is of {datetime.datetime.fromtimestamp(made, datetime.timezone.utc):%Y-%m-%d}; the firmware's file has SHA-384 {firmware.hex()[:24]}…")
+    if signed and chained and there:
+        print("the firmware is one Google signed for")
+        sys.exit(0)
+    print("NOT shown: that the firmware is one Google signed for")
+    sys.exit(1)
+
+if __name__ == "__main__":
+    main()

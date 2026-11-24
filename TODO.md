@@ -721,14 +721,23 @@ by the guest itself.
     in the quotes of its keys. RTMR2 and RTMR3 are nothing, as expected of a program that
     never leaves the firmware. MRTD there, f21e6b48…1731e5d3, is the firmware's, and Google
     keeps a signed statement under that very name
-    (`gs://gce_tcb_integrity/ovmf_x64_csm/tdx/`); that statement's signature is **not checked
-    here yet**, nor is RTMR0 (the machine's configuration as the firmware measured it)
-    worked out.
+    (`gs://gce_tcb_integrity/ovmf_x64_csm/tdx/`). RTMR0 (the machine's configuration as the
+    firmware measured it) is not worked out.
+    - **Google's statement for the firmware is checked** (2026-11-24; `scripts/gce-firmware
+      QUOTE`). It fetches the statement for the quote's MRTD and has `openssl` check that it
+      is signed by the key in the certificate it carries (RSA-PSS, SHA-256), that the
+      certificate is signed by Google's root for this (`GCE-cc-tcb-root`, fetched from
+      pki.goog and held to a SHA-256 written in the script), and reads the statement itself
+      (a protocol buffer of a few fields) for the MRTD. For the quote of the guest running
+      there all three hold; the statement is of 2026-07-31. With one byte of the statement
+      changed it fails; for a quote made on this machine, whose firmware was built here,
+      Google has no statement and it says so and fails. Taken on trust: the root's hash, which
+      is what pki.goog served that day.
     - So a quote can now be checked against an image by anyone with the image's file, in one
       command: `scripts/gce-check BOOTX64.EFI QUOTE` runs the page's own check of the quote's
-      signatures up to Intel (`evm/demo/check-quote.mjs`, under node) and then
-      `scripts/gce-measure`, and fails if either does; given the quote of the guest running
-      there and another image's file, it fails. RTMR0 was the same on every start looked at
+      signatures up to Intel (`evm/demo/check-quote.mjs`, under node), then
+      `scripts/gce-measure`, then `scripts/gce-firmware`, and fails if any does; given the
+      quote of the guest running there and another image's file, it fails. RTMR0 was the same on every start looked at
       (48ab35e1…682f9693, a `c3-standard-4` in us-central1), which is seen and not derived.
       Not done: a page that does it for someone without the repository; building the image
       twice and getting the same file, which nobody has tried on another machine.

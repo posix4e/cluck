@@ -9,10 +9,12 @@
 # of them, asked for anew each hour. After each hour one line says what the hour was: slots, blocks,
 # what our node made of them, what the relays answered.
 #
-# It stops by itself, leaving DIR/STOPPED saying why, when more than one in twenty of an hour's answers
-# from relays were refusals: something is wrong then that a person should look at before another bid goes
-# out. A guest that cannot be reached is tried again every minute. A block of ours that becomes the
-# chain's head ends that hour's run early, as builder/shadow does, and the next begins.
+# It stops by itself, leaving DIR/STOPPED saying why, when something is wrong that a person should look at
+# before another bid goes out: more than one in twenty of the answers from relays were refusals, or more
+# than one in twenty of the blocks sent were not judged valid by the node here. That is looked at once a
+# minute over the last fifty slots, and over the whole hour at its end. A guest that cannot be reached is
+# tried again every minute. A block of ours that becomes the chain's head ends that hour's run early, as
+# builder/shadow does, and the next begins.
 #
 # Requests that were slow are kept whole by builder/shadow (DIR/slow), megabytes each: those older than a
 # day are removed here.
@@ -26,6 +28,49 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 relays=https://boost-relay.flashbots.net,https://relay-builders-us.ultrasound.money,https://aestus.live,https://us-global.titanrelay.xyz
 mkdir -p "$dir"
 cd "$here"
+# What a record says so far. `hour` prints the line for a finished hour and judges all of it; `watch` judges
+# the last fifty slots and says nothing unless it stops the feed. Fails when the feed should stop.
+look() {
+  python3 -I - "$@" <<'PY'
+import collections, json, statistics, sys
+log, stopped, how = sys.argv[1:4]
+rows = []
+for line in open(log):
+    try:
+        rows.append(json.loads(line))
+    except ValueError:
+        pass                                    # the line being written
+if not rows:
+    sys.exit(0)
+judging = rows if how == "hour" else rows[-50:]
+def account(rows):
+    rounds = [x for r in rows for x in r.get("rounds") or []]
+    judged = collections.Counter(str(x.get("judged"))[:40] for x in rounds if x.get("judged") is not None)
+    answers = collections.Counter()
+    for x in rounds:
+        for status, text in x.get("relay") or []:
+            answers["took it" if status in (200, 202) else "no answer" if status == "no answer" else f"refused ({status}): {text.strip()[:60]}"] += 1
+    return rounds, judged, answers
+rounds, judged, answers = account(rows)
+if how == "hour":
+    print(f"feed: {len(rows)} slots from block {rows[0]['number']}, {len(rounds)} blocks ({statistics.median(len(r.get('rounds') or []) for r in rows)} a slot), "
+          f"judged here {dict(judged)}; relays: {dict(answers) or 'none asked'}; guest replaced {max((r.get('guest_replaced') or 0) for r in rows)} times; "
+          f"landed {[r['number'] for r in rows if r.get('landed')]}", flush=True)
+rounds, judged, answers = account(judging)
+total, refused = sum(answers.values()), sum(n for what, n in answers.items() if what.startswith("refused"))
+looked, wrong = sum(judged.values()), sum(n for what, n in judged.items() if what != "valid")
+why = ""
+if total >= 40 and refused * 20 > total:
+    why = f"{refused} of {total} answers from relays were refusals: {dict(answers)}"
+elif looked >= 20 and wrong * 20 > looked:
+    why = f"{wrong} of {looked} blocks were not judged valid by the node here: {dict(judged)}"
+if why:
+    with open(stopped, "w") as f:
+        f.write(f"{why}\n(the last {len(judging)} slots of {log})\n")
+    print(f"feed: stopping: {why}", flush=True)
+    sys.exit(1)
+PY
+}
 while true; do
   if [[ -e "$dir/STOPPED" ]]; then
     echo "feed: stopped earlier, and $dir/STOPPED says why; remove it to go on"
@@ -34,8 +79,25 @@ while true; do
   log="$dir/$(date -u +%Y%m%d-%H%M%S).jsonl"
   # shellcheck disable=SC2086
   python3 -I builder/shadow --guest "$address" --live --guest-sends $hold --rebid --ready 0.7 --finishing 0.25 \
-    --relay-wait 1500 --relays "$relays" --slots 300 --log "$log" > /dev/null 2> "$log.err"
+    --relay-wait 1500 --relays "$relays" --slots 300 --log "$log" > /dev/null 2> "$log.err" &
+  child=$!
+  trap 'kill "$child" 2>/dev/null' EXIT
+  waited=0
+  while kill -0 "$child" 2>/dev/null; do
+    sleep 2
+    waited=$((waited + 2))
+    if [[ $waited -ge 60 ]]; then
+      waited=0
+      if [[ -s "$log" ]] && ! look "$log" "$dir/STOPPED" watch; then
+        kill "$child" 2>/dev/null
+        wait "$child" 2>/dev/null
+        exit 0
+      fi
+    fi
+  done
+  wait "$child"
   status=$?
+  trap - EXIT
   if [[ ! -s "$log" ]]; then
     echo "feed: nothing came of a run against $address (exit $status): $(tail -n 1 "$log.err" 2>/dev/null | cut -c1-200)"
     rm -f "$log" "$log.err"
@@ -43,24 +105,6 @@ while true; do
     continue
   fi
   [[ -s "$log.err" ]] || rm -f "$log.err"
-  python3 -I - "$log" "$dir/STOPPED" <<'PY' || exit 0
-import collections, json, statistics, sys
-rows = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
-rounds = [x for r in rows for x in r.get("rounds") or []]
-judged = collections.Counter(str(x.get("judged"))[:40] for x in rounds)
-answers = collections.Counter()
-for x in rounds:
-    for status, text in x.get("relay") or []:
-        answers["took it" if status in (200, 202) else "no answer" if status == "no answer" else f"refused ({status}): {text.strip()[:60]}"] += 1
-total, refused = sum(answers.values()), sum(n for what, n in answers.items() if what.startswith("refused"))
-print(f"feed: {len(rows)} slots from block {rows[0]['number']}, {len(rounds)} blocks ({statistics.median(len(r.get('rounds') or []) for r in rows)} a slot), "
-      f"judged here {dict(judged)}; relays: {dict(answers) or 'none asked'}; guest replaced {max((r.get('guest_replaced') or 0) for r in rows)} times; "
-      f"landed {[r['number'] for r in rows if r.get('landed')]}", flush=True)
-if total >= 40 and refused * 20 > total:
-    with open(sys.argv[2], "w") as f:
-        f.write(f"{refused} of {total} answers from relays in {sys.argv[1]} were refusals: {dict(answers)}\n")
-    print("feed: too many refusals; stopping", flush=True)
-    sys.exit(1)
-PY
+  look "$log" "$dir/STOPPED" hour || exit 0
   find "$dir/slow" -type f -mmin +1440 -delete 2>/dev/null
 done

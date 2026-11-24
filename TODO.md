@@ -642,9 +642,9 @@ by the guest itself.
     talking through a path that loses, repeats and reorders, six seeds); fixtures, limits and
     the key check in a trust domain, behind the emulator's network and over the tap with
     12 ms; `scripts/test-efi` dev and tdx.
-  - Not run on it yet: a slot of the builder against the stand-in relay, the 1,000 slots,
-    `check-secret-code`, connections out over a real distance (they are tried on Compute
-    Engine, there being no such path to a guest here without root).
+  - Run since, on the image as it ended up: slots against the stand-in relay, 25 and then
+    1,000, and connections out over a real distance on Compute Engine (all below);
+    `evm/scripts/check-secret-code tdx`.
 - **The builder's image runs in a trust domain there** (2026-11-24). `Kernel/Net/Wire.lean` now
   drives either card and says what is around the one it finds, so the image is the same one that
   runs here: on a `c3-standard-4` with TDX it brought Google's card up, took 10.0.2.15, and served
@@ -685,8 +685,7 @@ by the guest itself.
     One slot's last block came back 0.35 s after the slot had begun: the round before it had
     been a slow one. Sent for real it would have been a bid too late, which a relay refuses.
     - On this machine the same image, against the stand-in relay: 25 slots, 175 blocks sent,
-      all valid and the stand-in's copy the same, seven rounds a slot, a round 0.74 s. The
-      1,000 slots on it were begun at 14:01 UTC that day (`/data/eth/shadow/gate1000i/`).
+      all valid and the stand-in's copy the same, seven rounds a slot, a round 0.74 s.
   - **Half the starts failed, and it was this driver's doing.** Of some ten starts of the image
     on 2026-11-24, five ended with a command to the card never answered and the machine
     stopped; with retries added, one start failed five tries running, and another came up
@@ -733,7 +732,32 @@ by the guest itself.
       (48ab35e1…682f9693, a `c3-standard-4` in us-central1), which is seen and not derived.
       Not done: a page that does it for someone without the repository; building the image
       twice and getting the same file, which nobody has tried on another machine.
-  - Not done there: a bid sent; a look at how often the guest leaves the trust domain there.
+  - **1,000 slots on this machine on the image that then went there** (2026-11-24, 15:06 to
+    18:25 UTC, blocks 26485801 to 26486799, in TDX against the stand-in relay;
+    `builder/shadow --guest-sends --rebid --ready 0.7 --finishing 0.25 --relay-wait 1500 --slots
+    1000`; the image `9ca65883…a5ddbd31`, the stand-in's `a55c66db…a8a712e9`; the record
+    `/data/eth/shadow/gate1000i/`, which says the tree had changes not committed: they were
+    committed a minute after it began, as `b680bf5`). This is the first long run on the new TCP,
+    on `Wire` and with the look at the card once a second.
+    - 999 slots had a block sent. The one without was the first: the run began 12.3 s into
+      it, and its one block was not sent for being too late.
+    - 6,573 rounds; 6,566 built a block and 6,415 were sent (143 kept for paying no more than
+      one already sent, 7 ended too long after their time, 1 that paid the proposer nothing).
+      **Every block sent was judged valid by the node, was the same at the stand-in, and had
+      a good signature**; none was ready after its slot began; the stand-in answered 200 to
+      every one, and no post went unanswered (two had in the run before, one in the 25 slots
+      above).
+    - Seven rounds built nothing for want of a node of the state's tree when the block was
+      ended (status 6; six of them a slot's first round, one a last), where the run before
+      had one in 7,782. `build-why` on the kept requests (with the 69 bytes before "JBLD1" taken off, which it does
+      not do itself) says each ran its transactions and fell short at the end. The round
+      after built in each case.
+    - Seven rounds a slot at the median (one to ten), a round 0.81 s; asking the guest took
+      0.57 s at the median for a request of 2.6 MB, of which 0.34 s was the guest's work. The
+      card was never brought up again.
+    - Not run beside it this time: the watcher of the node's pool, so there is no comparison
+      with the blocks proposers took.
+  - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
     A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone
     (`silo-test-from-home`), a few images and their disk files remain, which cost cents a month.

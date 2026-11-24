@@ -20,7 +20,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
+      # The whole history, so that the few characters by which the record names its commit can be made
+      # into the commit's full name.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - name: Which commit the record names
         id: record
         run: |
@@ -30,11 +34,13 @@ jobs:
           for name in ("commit", "image_sha256", "builder", "challenge"):
               print(f"{name}={record[name]}")
           PY
+          commit="$(python3 -c 'import json; print(json.load(open("docs/live/builder.json"))["commit"])')"
+          echo "full=$(git rev-parse --verify "$commit^{commit}")" >> "$GITHUB_OUTPUT"
           cat docs/live/builder.txt
       - name: That commit, beside this one
         uses: actions/checkout@v5
         with:
-          ref: ${{ steps.record.outputs.commit }}
+          ref: ${{ steps.record.outputs.full }}
           path: recorded
       - name: Install elan
         run: |

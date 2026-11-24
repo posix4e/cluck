@@ -164,12 +164,18 @@ the key is its own. So a bid can be followed back to source with nothing from us
    `docs/live/builder.txt`. `scripts/gce-check` asks four things: that the quote's signatures lead to
    Intel's root; that RTMR1 in it is what Google's firmware measures for that image file; that Google
    signed for the firmware in MRTD; and that the quote is of that key.
-4. **The program is this source.** The image built here twice, in different directories and from
-   nothing, is the same file. Its SHA-256 is in `docs/live/builder.txt`.
+4. **The program is this source.** The image's SHA-256 is in `docs/live/builder.txt`. Built from
+   nothing on a machine of GitHub's, from the commit named there, it is the same file byte for byte,
+   and the guest's quote passes the four questions against the file built there: the workflow is
+   [`image.yml`](.github/workflows/image.yml). Anyone can see [its runs][image-runs] and whether
+   each passed; GitHub shows a run's log, with the hashes in it, to whoever is signed in. It runs
+   again whenever the record changes.
 
 Where this is thinner than it looks:
 
-- The image has only been built on one machine. Whether yours gives the same file is untried.
+- The image has been built on two machines, ours and GitHub's (Ubuntu 26.04 and 24.04), with the
+  same release of Lean, whose compilers do all the compiling, and the same ready-made modules of
+  mathlib, fetched from mathlib's cache. Nobody here has built either of those from source.
 - The quote's check does not look at Intel's verdict on the platform's firmware level (TCB status) or
   at the quoting enclave's version, and nothing looks for a quote or a statement since withdrawn.
 - RTMR0, the machine's configuration as the firmware measured it, was the same on every start seen
@@ -220,3 +226,4 @@ To feed it you need a synced reth with the `txpool`, `flashbots` and `debug` API
 
 [bn]: https://buildernet.org/blog/2025/04/28/buildernet-v1.3
 [jaune]: https://github.com/skbaek/jaune
+[image-runs]: https://github.com/posix4e/cluck/actions/workflows/image.yml

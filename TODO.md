@@ -739,8 +739,8 @@ by the guest itself.
       `scripts/gce-measure`, then `scripts/gce-firmware`, and fails if any does; given the
       quote of the guest running there and another image's file, it fails. RTMR0 was the same on every start looked at
       (48ab35e1…682f9693, a `c3-standard-4` in us-central1), which is seen and not derived.
-      Not done: a page that does it for someone without the repository; building the image
-      twice and getting the same file, which nobody has tried on another machine.
+      (Since done, below: a page that does it for someone without the repository; the image
+      built twice, and on another machine, with the same file each time.)
   - **1,000 slots on this machine on the image that then went there** (2026-11-24, 15:06 to
     18:25 UTC, blocks 26485801 to 26486799, in TDX against the stand-in relay;
     `builder/shadow --guest-sends --rebid --ready 0.7 --finishing 0.25 --relay-wait 1500 --slots
@@ -838,8 +838,18 @@ by the guest itself.
     directory, its own build products and Jaune's removed, and `scripts/build-efi tdx evm-os`
     run there: three minutes, and the same SHA-256 as the image built in place
     (`bfd47e1d…e0629dde`). So the file does not depend on where it is built or on what was
-    built before. Not shown: the same on another machine or with another copy of the
-    compilers; mathlib's modules were the ones fetched ready-made in both.
+    built before. mathlib's modules were the ones fetched ready-made in both.
+  - **And the same file on a machine of GitHub's** (2026-11-24, 23:15 UTC, run 45508371373 of
+    `.github/workflows/image.yml`). The workflow reads the commit and the SHA-256 from
+    `docs/live/builder.json`, builds the image from that commit on `ubuntu-24.04` as GitHub
+    provides it (this machine is Ubuntu 26.04), and requires the file to have that SHA-256
+    and `scripts/gce-check` to pass on it with the running guest's quote, key and challenge.
+    Both held: `bfd47e1d…e0629dde`, 4,898,304 bytes, and all four questions. The build took
+    five and a half minutes there. It runs again when `docs/live/` changes and by hand; its
+    first run failed before building, at fetching a commit named by seven characters.
+    Not shown: the same with compilers or mathlib modules built from source. Both machines
+    downloaded the same release of Lean, whose own clang and linker do all the compiling,
+    and the same modules from mathlib's cache.
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
     A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone

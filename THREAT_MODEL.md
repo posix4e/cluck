@@ -400,6 +400,20 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   this request as the shadow image has, and will send to real relays when asked: whether it is asked is
   the host's choice, as sending always was. A block the guest sends has been judged by nobody before
   it leaves: when the host sent, the node's validator saw every block first.
+- *Connections to relays are kept between blocks* (2026-11-24; `Outbound.Line`, `Machine.State.lines`).
+  A block's post leaves its connection to each relay open, and the next block to that relay goes on
+  it, so the certificate is judged when a connection is opened and not again for each block: a
+  certificate that runs out, or a date the host gives differently later, is not looked at again while
+  the connection lasts, which is for as long as blocks keep being sent and the relay keeps it. The
+  session's keys stay in memory that long, where a call's were dropped with it before. It is the same
+  TLS session throughout, so a carrier learns nothing from it that it did not from a connection a
+  block, and loses the sight of a handshake each time. What it adds to what the far end can do: send
+  bytes on a connection nothing was asked on, which are given to TLS, and the connection is closed
+  unless TLS took them in silence (a ticket, which is never used); close it, which is answered in
+  kind; or close it as a block is on its way, after which the block is posted again on a new
+  connection, so a relay, or the host for it, can have one block posted to it twice. At most one
+  is kept a relay, closed after a minute with nothing sent. The questions asked with `JASK1` are
+  still a connection each.
 - *The loop was rewritten for it* (`Evm/Machine.lean`). Requests are run in the order they came on each
   connection, one at a time over all; a client waiting on a relay holds up only itself. While a block is
   built for a bid the network is looked at before each transaction, so frames are now read in the

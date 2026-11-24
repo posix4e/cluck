@@ -16,7 +16,13 @@ has the clock is the caller's business (`Machine.lean`).
 Everything a call learns before TLS has checked the certificate is the word of whoever carries the
 packets: the address for a name, the Ethernet address of the way out, the bytes on the connection. None of
 it is believed; the certificate is what says the far end is the server that was named. So a carrier can
-make a call fail and cannot make it succeed with anyone else. -/
+make a call fail and cannot make it succeed with anyone else.
+
+A call may leave its connection open when it has its answer (`Call.keep`, `Call.line`), and a later call
+to the same server may be begun on it (`Call.onLine`): TLS is up on it and the certificate was checked
+when it was opened, so the later call pays for neither. Such a connection is the same TLS session and
+says nothing a new one would not. A server may end one when it likes, and a call that finds its
+connection gone before any of an answer has come begins again on a connection of its own (`again`). -/
 
 namespace Evm.Outbound
 
@@ -35,6 +41,16 @@ structure Wire where
 inductive Outcome where
   | answered (status : Nat) (body : ByteArray)
   | failed (why : String)
+
+/-- A connection left open by a call that had its answer: TLS is up on it. -/
+structure Line where
+  key : Tcp.Key
+  client : Tls.Client
+  /-- When it was last used, in the machine's milliseconds. -/
+  since : Nat
+
+/-- How long a connection is kept with nothing asked on it, in milliseconds. -/
+def idle : Nat := 60000
 
 inductive Phase where
   /-- The name is being looked up. -/
@@ -75,6 +91,14 @@ structure Call where
   limit : Nat := 1024 * 1024
   /-- What is sent is made up to a whole number of this many bytes inside TLS; 0 for as it is. -/
   bucket : Nat := 0
+  /-- The server's address when it is given and not looked up. -/
+  address : Option ByteArray := none
+  /-- The connection is left open when the answer is had, if the server will have it so, and put in `line`. -/
+  keep : Bool := false
+  /-- The call began on a connection kept from an earlier one, and has not begun again on its own. -/
+  onKept : Bool := false
+  /-- The connection this call has left open, once it is done: whoever takes it out owns it. -/
+  line : Option Line := none
 
 /-- How many random bytes a call needs. -/
 def randomSize : Nat := 70
@@ -105,6 +129,21 @@ def frames (w : Wire) (events : Array Tcp.Event) : Array ByteArray :=
   events.filterMap fun
     | .emit peer segment => Internet.tcpFrame w.cfg peer segment
     | _ => none
+
+/-- Where a call on a connection of its own begins: at looking the name up, or at finding the way when
+the address is given. -/
+def opening (now : Nat) (resolver : ByteArray) (host : String) (address : Option ByteArray) (random : ByteArray) : Phase :=
+  if random.size != randomSize then .done (.failed "no random bytes for the call")
+  else match address with
+  | some ip => .reaching ip
+  | none =>
+    -- The lookup has its own port and number, taken from the same bytes TCP's are: a call makes one
+    -- lookup and then one connection, never both at once.
+    let port := (49152 + (random[68]!.toNat * 256 + random[69]!.toNat) % 16384).toUInt16
+    let id := (random[64]!.toNat * 256 + random[65]!.toNat).toUInt16
+    match Dns.Query.start now resolver port id host .a with
+    | some query => .resolving query
+    | none => .done (.failed "a name that cannot be looked up")
 
 /-- A call that failed: its connection, if it has one, is given up at once. -/
 def fail (c : Call) (w : Wire) (why : String) : Call × Wire × Array ByteArray :=
@@ -156,24 +195,41 @@ def reach (c : Call) (now : Nat) (w : Wire) (ip : ByteArray) : Call × Wire × A
 not looked up; it is still what the certificate must be for. -/
 def Call.start (now : Nat) (resolver : ByteArray) (host : String) (port : UInt16) (address : Option ByteArray)
     (anchors : Array Tls.X509.Anchor) (seconds : Nat) (question random : ByteArray) (allowed : Nat := 10000) : Call :=
-  let begun (phase : Phase) : Call := { host, port, anchors, seconds, question, deadline := now + allowed, random, phase }
-  if random.size != randomSize then begun (.done (.failed "no random bytes for the call"))
-  else match address with
-  | some ip => begun (.reaching ip)
-  | none =>
-    -- The lookup has its own port and number, taken from the same bytes TCP's are: a call makes one
-    -- lookup and then one connection, never both at once.
-    let port := (49152 + (random[68]!.toNat * 256 + random[69]!.toNat) % 16384).toUInt16
-    let id := (random[64]!.toNat * 256 + random[65]!.toNat).toUInt16
-    match Dns.Query.start now resolver port id host .a with
-    | some query => begun (.resolving query)
-    | none => begun (.done (.failed "a name that cannot be looked up"))
+  { host, port, anchors, seconds, question, deadline := now + allowed, random, address,
+    phase := opening now resolver host address random }
+
+/-- A call begun on a connection an earlier call to the same server left open: TLS is up, so the first
+`step` sends the question. The random bytes are for the connection of its own it opens if this one turns
+out to be gone. -/
+def Call.onLine (now : Nat) (line : Line) (host : String) (port : UInt16) (address : Option ByteArray)
+    (anchors : Array Tls.X509.Anchor) (seconds : Nat) (question random : ByteArray) (allowed : Nat := 10000) : Call :=
+  { host, port, anchors, seconds, question, deadline := now + allowed, random, address,
+    phase := .talking line.key line.client, keep := true, onKept := true }
+
+/-- A call whose connection has failed it. One begun on a kept connection, with nothing of an answer had,
+begins again on a connection of its own, with the time it had left: that a server has ended a kept
+connection is found out only by using it. What it sent may have reached the server all the same, so
+this is for questions that may be asked twice. Any other call has failed. -/
+def again (c : Call) (now : Nat) (w : Wire) (why : String) : Call × Wire × Array ByteArray :=
+  if !(c.onKept && c.got.isEmpty) then fail c w why else
+  let (tcp, events) := match c.key? with
+    | some key => w.tcp.abort key
+    | none => (w.tcp, #[])
+  let sent := frames w events
+  let w := { w with tcp }
+  let c := { c with onKept := false, asked := false, outbox := .empty, ended := false,
+                    phase := opening now w.resolver c.host c.address c.random }
+  match c.phase with
+  | .reaching ip =>
+    let (c, w, more) := reach c now w ip
+    (c, w, sent ++ more)
+  | _ => (c, w, sent)
 
 /-- What came out of TLS, looked at: the question sent once the handshake is done, the answer read when it
 is whole, the call failed when TLS refused. -/
 def talk (c : Call) (now : Nat) (w : Wire) (key : Tcp.Key) (client : Tls.Client) : Call × Wire × Array ByteArray :=
   match client.stage with
-  | .failed why => fail c w s!"TLS: {why}"
+  | .failed why => again c now w s!"TLS: {why}"
   | _ =>
     let (client, c) :=
       if client.stage == .ready && !c.asked then
@@ -182,13 +238,21 @@ def talk (c : Call) (now : Nat) (w : Wire) (key : Tcp.Key) (client : Tls.Client)
       else (client, c)
     let ended := c.ended || client.stage == .closed
     match Tls.Http.response c.got ended c.limit with
-    | .broken why => fail c w s!"an answer that cannot be read: {why}"
+    -- With nothing had, this is a connection that ended, which a kept one may.
+    | .broken why => again c now w s!"an answer that cannot be read: {why}"
     | .more =>
-      if ended then fail c w (if c.asked then "the connection ended before the answer did" else "the connection ended before TLS was up")
+      if ended then again c now w (if c.asked then "the connection ended before the answer did" else "the connection ended before TLS was up")
       else flush { c with phase := .talking key client } now w
-    | .whole answer _ =>
-      let (_, bye) := client.close
+    | .whole answer used =>
       let outcome := Outcome.answered answer.status answer.body
+      -- Left open for the next question when that was asked for and nothing stands against it: the
+      -- server has not ended it or said it will, the answer took every byte that came, and all of the
+      -- question went.
+      let last := (answer.header "connection").any fun said => (Tls.Http.find (Tls.lower said) "close".toUTF8 0).isSome
+      if c.keep && !ended && !last && used == c.got.size && c.outbox.isEmpty && client.stage == .ready then
+        ({ c with phase := .done outcome, got := .empty, line := some { key, client, since := now } }, w, #[])
+      else
+      let (_, bye) := client.close
       -- The goodbye, and then this side closes. When the server has closed too the place is freed.
       let (c, w, sent) := flush { c with phase := .leaving key outcome, outbox := c.outbox ++ bye, got := .empty } now w
       let (tcp, events) := w.tcp.close now key
@@ -241,8 +305,9 @@ def Call.step (c : Call) (now : Nat) (w : Wire) (input : Input) : Call × Wire �
     if c.got.size + step.data.size > c.limit + 65536 then fail c w "an answer too long"
     else talk { c with got := c.got ++ step.data, outbox := c.outbox ++ step.send } now w key step.client
   | .talking key client, .tcp (.finished _) => talk { c with ended := true } now w key client
-  | .talking _ _, .tcp (.closed _) => ({ c with phase := .done (.failed "the connection was lost") }, w, #[])
-  | .talking _ _, .tick => flush c now w
+  | .talking _ _, .tcp (.closed _) => again c now w "the connection was lost"
+  -- A call on a kept connection has its question still to send, and sends it here.
+  | .talking key client, .tick => if c.asked then flush c now w else talk c now w key client
   | .leaving key outcome, .tcp (.closed _) =>
     -- Both sides have closed. TCP would keep the connection's place a while longer, against stray
     -- packets of an old connection being taken for a new one's; every call has a port and a first

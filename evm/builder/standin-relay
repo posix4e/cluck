@@ -2,7 +2,7 @@
 """A stand-in for a relay, on this machine: it takes a block and bid posted to it over TLS, takes the SSZ
 apart, and writes down what it found.
 
-    builder/standin-relay --out DIR [--port 5443]        (from evm/)
+    builder/standin-relay --out DIR [--port 5443] [--keep-for N] [--deaf-after N]        (from evm/)
 
 It is `relay.test`: its certificate is signed by the stand-in's root, whose key everyone knows
 (`scripts/standin.py`), and the shadow image (`EfiShadow.lean`) is the only image that believes it. It
@@ -15,6 +15,13 @@ request, which is what `builder/shadow` makes of a block when it puts one togeth
 be laid side by side; the bytes as they came go to DIR/BLOCKHASH.ssz. The answer is 200 with nothing in
 it, as a relay's is. Bytes that are not such a request, or have something left over, get 400 and the
 reason. GET of any path gets `[]`.
+
+A connection is left open after an answer unless the request said to close it, as a relay's is, so a
+builder that keeps its connections can. Two ways a relay may end one are here to be tried against:
+--keep-for N closes a connection after its Nth answer without having said it would, and --deaf-after N
+takes the request after a connection's Nth answer and closes with no answer, which is what a builder
+sees when its request crossed the relay's closing on the way. (STANDIN_KEEP_FOR and STANDIN_DEAF_AFTER
+in the environment say the same, for when something else starts this.)
 
 It checks nothing about the block or the signature: `builder/shadow` has the node's validator do that.
 This is a decoder by the same hand as the encoder it reads (`Evm/Submit.lean`), so it shows the two agree
@@ -94,21 +101,29 @@ def main():
     args = sys.argv[1:]
     out = args[args.index("--out") + 1] if "--out" in args else sys.exit(__doc__)
     port = int(args[args.index("--port") + 1]) if "--port" in args else standin.PORT
+    keep_for = int(args[args.index("--keep-for") + 1] if "--keep-for" in args else os.environ.get("STANDIN_KEEP_FOR", 0))
+    deaf_after = int(args[args.index("--deaf-after") + 1] if "--deaf-after" in args else os.environ.get("STANDIN_DEAF_AFTER", 0))
     os.makedirs(out, exist_ok=True)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        answered = 0
         def answer(self, status, body=b""):
+            self.answered += 1
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Connection", "close")
+            # Said only when the request asked for it; --keep-for closes without a word.
+            if self.close_connection: self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
-            self.close_connection = True
+            if keep_for and self.answered >= keep_for: self.close_connection = True
         def do_GET(self): self.answer(200, b"[]")
         def do_POST(self):
             body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            if deaf_after and self.answered >= deaf_after:
+                self.close_connection = True
+                return
             try:
                 need(self.path.split("?")[0] == "/relay/v1/builder/blocks", "no such path")
                 need(self.headers.get("Content-Type") == "application/octet-stream", "not said to be SSZ")

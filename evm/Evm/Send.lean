@@ -94,11 +94,12 @@ def request? (input : ByteArray) : Option Request :=
   some { relays := number 0 1, seconds := number 1 8, allowed := if allowed == 0 then 3000 else allowed,
          bid := input.extract (magic.size + 13) input.size }
 
-/-- What is sent to a relay: the block and bid, posted. The connection is for this one block. -/
+/-- What is sent to a relay: the block and bid, posted. The connection is left open for the next block if
+the relay will have it so (`Evm/Outbound.lean`). -/
 def question (host : String) (submission : ByteArray) : ByteArray :=
   Tls.Http.request "POST" host.toUTF8 "/relay/v1/builder/blocks"
     #[("Content-Type", "application/octet-stream"), ("Eth-Consensus-Version", "fulu"), ("User-Agent", "builder"),
-      ("Accept", "*/*"), ("Connection", "close")] submission
+      ("Accept", "*/*")] submission
 
 /-- The most that is kept of what a relay said. -/
 def kept : Nat := 300

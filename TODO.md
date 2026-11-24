@@ -766,6 +766,45 @@ by the guest itself.
       card was never brought up again.
     - Not run beside it this time: the watcher of the node's pool, so there is no comparison
       with the blocks proposers took.
+  - **Bidding from there, unpaid, since 2026-11-24 18:30 UTC** (`evm/builder/feed`, run here as a
+    user service; records by the hour in `/data/eth/shadow/gce-live/`). The first hour, 300
+    slots from block 26486824: 1,121 blocks built and 1,088 sent to the four relays, every one
+    sent judged valid by the node here and its signature good. Of 3,468 answers from relays,
+    3,465 were 200 or 202 and three were none: a connection reset, a post whose first timer
+    ran out (a segment lost) and a connection that had not opened in the 1.5 s allowed. No
+    refusal. Two bids were answered after their slot had begun, the later by 0.03 s. Four
+    rounds a slot at the median, a round 1.64 s. The bids are in the relays' public lists under
+    the guest's key (`/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=`).
+    - **Where the round's time went there: a new connection to each relay for each block.**
+      By the guest's console a post took 0.25 s to one relay, 0.45 to 0.5 s to three and 0.7 s
+      to four, nearly in proportion: it is the handshake's arithmetic, on one core that is
+      slower there, more than the round trips.
+    - **Connections to relays are now kept between blocks** (`Outbound.Line`, `Call.onLine`,
+      `again`; `Machine.State.lines`). On this machine a post to the stand-in went from 46 ms
+      to 6 ms at the median. The stand-in relay keeps its connections as a relay does, and can
+      be told to end them in two ways (`--keep-for N`: closed after N answers with no word of
+      it; `--deaf-after N`: the next request taken and the connection closed with no answer):
+      with the first, 41 blocks of 41 were taken, 14 on new connections; with the second, 37
+      of 37, the guest posting again on a new connection each time it was left without an
+      answer (before that was written, 8 of 34 went unanswered). From this machine each of the
+      four relays kept a connection with nothing on it for 50 s (Aestus), 75 s (Ultrasound) or
+      more than 200 s (Flashbots, Titan), and a slot is 12.
+    - 300 slots on it here against the stand-in ending a connection after every 40 answers
+      (blocks 26486933 to 26487232; image `bfd47e1d…e0629dde`, the stand-in's
+      `85087c4a…d9fbf17c`; `/data/eth/shadow/keep300/`): 299 slots with a block sent (the
+      first begun too late), 2,041 blocks sent, all valid, the same at the stand-in and
+      signed, none late, every post answered 200; 52 on new connections and 1,989 on kept
+      ones, so 51 connections were ended by the stand-in and given up in good order, which is
+      more than the 32 the machine can hold at once. A post took 6 ms at the median and 82 at
+      the most; seven rounds a slot, a round 0.75 s. `run-fixtures tdx --limits --key` and
+      `check-secret-code tdx` pass on the image.
+    - Not run: 1,000 slots on this image; kept connections to the real relays, which is next.
+  - **The image built twice is the same file** (2026-11-24). The repository copied to another
+    directory, its own build products and Jaune's removed, and `scripts/build-efi tdx evm-os`
+    run there: three minutes, and the same SHA-256 as the image built in place
+    (`bfd47e1d…e0629dde`). So the file does not depend on where it is built or on what was
+    built before. Not shown: the same on another machine or with another copy of the
+    compilers; mathlib's modules were the ones fetched ready-made in both.
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
     A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone

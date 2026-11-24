@@ -173,6 +173,12 @@ structure State where
   nextIpId : UInt32 := 0
   clients : Array Client := #[]
   jobs : Array Job := #[]
+  /-- Connections to relays left open by the last block sent to each, by the relay's place in the list
+  (`Outbound.Line`): at most one a relay, taken out of here while a call uses it. -/
+  lines : Array (Nat × Outbound.Line) := #[]
+  /-- Connections once kept that are being closed: their place in TCP is given back when the relay has
+  closed too. -/
+  leaving : Array Tcp.Key := #[]
   sendings : Array Sending := #[]
   nextSending : Nat := 0
   finished : Array Finished := #[]
@@ -239,7 +245,39 @@ def stepJob (s : State) (now : Nat) (i : Nat) (input : Outbound.Input) (out : Ar
       | some outcome, false => ({ job with call, told := true }, s.heard job outcome)
       | _, _ => ({ job with call }, s)
     let jobs := if call.over then s.jobs.eraseIdxIfInBounds i else s.jobs.set! i job
-    ({ s with jobs }, out ++ frames)
+    -- A connection the call has left open is kept for the next block to that relay.
+    let lines := match call.over, call.line with
+      | true, some line => s.lines.push (job.place, line)
+      | _, _ => s.lines
+    ({ s with jobs, lines }, out ++ frames)
+
+/-- A kept connection given up in good order: TLS's goodbye, and this side closed. -/
+def leave (s : State) (now : Nat) (line : Outbound.Line) (out : Array ByteArray) : State × Array ByteArray :=
+  if !s.wire.tcp.conns.any (·.key == line.key) then (s, out) else
+  let (_, bye) := line.client.close
+  let (tcp, sent) := s.wire.tcp.send now line.key bye
+  let (tcp, more) := tcp.close now line.key
+  let s := { s with wire := { s.wire with tcp }, leaving := s.leaving.push line.key }
+  (s, out ++ Outbound.frames s.wire (sent ++ more))
+
+/-- Something happened on a kept connection while no call had it. Nothing is expected on one: a relay
+that closes it is answered in kind, and so is one that sends anything TLS does not take in silence. -/
+def onLine (s : State) (now : Nat) (i : Nat) (event : Tcp.Event) (out : Array ByteArray) : State × Array ByteArray :=
+  match s.lines[i]? with
+  | none => (s, out)
+  | some (place, line) =>
+    let s := { s with lines := s.lines.eraseIdxIfInBounds i }
+    match event with
+    | .data _ bytes =>
+      let step := line.client.receive bytes
+      if step.client.stage == .ready && step.data.isEmpty && step.send.isEmpty then
+        ({ s with lines := s.lines.push (place, { line with client := step.client }) }, out)
+      else s.leave now { line with client := step.client } out
+    | .finished _ => s.leave now line out
+    | .closed key =>
+      let (tcp, _) := s.wire.tcp.abort key
+      ({ s with wire := { s.wire with tcp } }, out)
+    | _ => ({ s with lines := s.lines.push (place, line) }, out)
 
 /-- Every call out is told the same thing. -/
 def stepJobs (s : State) (now : Nat) (input : Outbound.Input) (out : Array ByteArray) : State × Array ByteArray :=
@@ -279,6 +317,18 @@ partial def settle (s : State) (now : Nat) (events : List Tcp.Event) (out : Arra
       let (s, out) := s.stepJob now i (.tcp event) out
       settle s now rest out
     | none =>
+      if let some i := s.lines.findIdx? (·.2.key == key) then
+        let (s, out) := s.onLine now i event out
+        settle s now rest out
+      else if s.leaving.contains key then
+        -- Whatever else comes on a connection being closed is dropped; closed on both sides, its place
+        -- is given back at once, as a call's is (`Outbound.Call.step`).
+        match event with
+        | .closed _ =>
+          let (tcp, _) := s.wire.tcp.abort key
+          settle { s with leaving := s.leaving.filter (· != key), wire := { s.wire with tcp } } now rest out
+        | _ => settle s now rest out
+      else
       match event with
       | .opened key => settle { s with clients := s.clients.push { key } } now rest out
       | .closed key => settle (s.removeClient key) now rest out
@@ -320,6 +370,9 @@ def tick (s : State) (now : Nat) : Array ByteArray × State :=
   let (tcp, events) := s.wire.tcp.tick now
   let (s, out) := settle { s with wire := { s.wire with tcp }, fragments := s.fragments.expire now, lastTick := now } now events.toList #[]
   let (s, out) := s.stepJobs now .tick out
+  -- Kept connections nothing has been asked on for a while are closed.
+  let (old, lines) := s.lines.partition fun (_, line) => now ≥ line.since + Outbound.idle
+  let (s, out) := old.foldl (fun (s, out) (_, line) => s.leave now line out) ({ s with lines }, out)
   (out, s)
 
 /-- What there is to do next for the clients. -/
@@ -530,17 +583,27 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) (since
   let anchors := (← get).anchors
   let resolver := (← get).wire.resolver
   let mut calls : Array (Nat × Outbound.Call) := #[]
+  let mut kept := 0
   for place in [0:relays.relays.size] do
     if (r.relays >>> place) % 2 == 1 then
       let some relay := relays.relays[place]? | continue
       let random ← try Platform.random Outbound.randomSize.toUSize catch _ => pure .empty
-      calls := calls.push (place, { Outbound.Call.start now resolver relay.name relay.port relay.address anchors r.seconds
-                                      (Send.question relay.name submission) random r.allowed with
-                             limit := 65536, bucket := Send.bucket })
+      let question := Send.question relay.name submission
+      -- On the connection the last block to this relay left open, if there is one; else on a new one,
+      -- which is left open in its turn.
+      let line ← modifyGet fun (s : State) => match s.lines.findIdx? (·.1 == place) with
+        | some i => (s.lines[i]?.map (·.2), { s with lines := s.lines.eraseIdxIfInBounds i })
+        | none => (none, s)
+      let call := match line with
+        | some line => Outbound.Call.onLine now line relay.name relay.port relay.address anchors r.seconds question random r.allowed
+        | none => { Outbound.Call.start now resolver relay.name relay.port relay.address anchors r.seconds question random r.allowed with
+                    keep := true }
+      if line.isSome then kept := kept + 1
+      calls := calls.push (place, { call with limit := 65536, bucket := Send.bucket })
   if calls.isEmpty then return ← finish bid built.wanted "no relay of this image was named"
   -- How long it is, is said only when the request's sender has the block anyway.
   let size := if built.tried then "a block" else s!"{submission.size} bytes"
-  Platform.write s!"evm: sending {size} to {calls.size} relays\n".toUTF8
+  Platform.write s!"evm: sending {size} to {calls.size} relays, {kept} on connections kept\n".toUTF8
   transmit (← modifyGet (·.beginSending now key asked bid built.wanted calls (built.slot, built.parent, built.value)))
 
 /-- A question for a relay: a call out begun, or the reason there can be none. -/

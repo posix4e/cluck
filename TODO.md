@@ -602,6 +602,8 @@ by the guest itself.
     address is the machine's, given when the machine is made (a subnet 10.0.2.0/24 and the address
     10.0.2.15); nothing here asks the network for an address.
   - Opened to this machine's address only, by a firewall rule made for it; nothing of it is public.
+  - The final driver was run again the older way on an `n2-standard-2` (pages, two megabytes in
+    0.26 and 0.30 s), so both ways are tried as committed.
   - Not done there: the builder (its guest needs this driver under the system's TCP, an address of
     its own choosing and a quote it asks for itself); anything measured from a machine near it (800
     requests a second from here is this machine's distance, not the guest's speed); a look at how

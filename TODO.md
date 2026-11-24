@@ -604,6 +604,16 @@ by the guest itself.
   - Opened to this machine's address only, by a firewall rule made for it; nothing of it is public.
   - The final driver was run again the older way on an `n2-standard-2` (pages, two megabytes in
     0.26 and 0.30 s), so both ways are tried as committed.
+- **The path the builder will have there, measured with Linux at both ends** (2026-11-24, a
+  throwaway `e2-medium` in the same subnet, since deleted). From this machine to it: 12.7 ms there
+  and back, nothing lost in five. A request of 2.5 MB up and 30 KB back took 64 ms at the median
+  on a connection kept open and 135 ms on a new one each time (5 MB: 94 and 151 ms). From it to the
+  four relays, a connection opens in 14 ms (Flashbots), 37 (Ultrasound), 32 (Aestus) and 28 to 31
+  (Titan), and TLS is up 66 to 89 ms after starting. So the line can carry a round's request in
+  about a sixteenth of a second, if the builder's TCP were as good as Linux's and the connection
+  were kept; neither is so yet. The system's TCP has one segment on its way at a time and takes
+  in 8 KB at a time, which the emulator's network on this machine hid, and the host's program
+  opens a connection for every request.
   - Not done there: the builder (its guest needs this driver under the system's TCP, an address of
     its own choosing and a quote it asks for itself); anything measured from a machine near it (800
     requests a second from here is this machine's distance, not the guest's speed); a look at how

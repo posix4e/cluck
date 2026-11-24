@@ -190,6 +190,18 @@ structure Conn where
 /-- Bytes handed to `send` and not yet acknowledged. -/
 def Conn.held (c : Conn) : Nat := c.out.size - c.outAt
 
+/-- How a connection stands, in words, for whoever is finding out why one got nowhere: numbers of this
+connection's own bookkeeping and nothing that went over it. -/
+def Conn.describe (c : Conn) (now : Nat) : String :=
+  let phase := match c.phase with
+    | .synSent => "opening" | .synReceived => "being opened" | .established => "open" | .timeWait => "closed, waited out"
+  s!"{phase}; {c.held} bytes held, {(c.top - c.una).toNat} of them on their way, {(c.snd - c.una).toNat} since the last timer; " ++
+  s!"our window {c.cwnd}, halving from {c.ssthresh}, the peer's {c.peerWindow} of which {(c.snd - c.windowAck).toNat} used; " ++
+  s!"{c.dups} repeats{if c.fast then ", recovering" else ""}; timer {if c.due == 0 then "not set" else if c.due > now then s!"in {c.due - now} ms" else s!"{now - c.due} ms overdue"}, " ++
+  s!"{c.retries} times run out, round trip {c.srtt} ms; " ++
+  s!"{if c.flight.isSome then "a SYN or FIN on its way; " else ""}{if c.closing then "closing; " else ""}{if c.peerFin then "the peer has ended; " else ""}" ++
+  s!"{c.early.size} segments kept from ahead of a gap; last heard from {now - c.touched} ms ago"
+
 structure Endpoint where
   listenPort : UInt16
   /-- How many bytes ahead of what has come a peer may send, and the shift offered for saying so.

@@ -203,7 +203,21 @@ def Call.step (c : Call) (now : Nat) (w : Wire) (input : Input) : Call Ã— Wire Ã
     | .leaving key outcome =>
       let (tcp, events) := w.tcp.abort key
       ({ c with phase := .done outcome }, { w with tcp }, frames w events)
-    | _ => fail c w "no answer in the time allowed"
+    | _ =>
+      -- Said with it, for finding out why: how far the call had got and how its connection stood.
+      let stage := match c.phase with
+        | .resolving _ => "looking the name up"
+        | .reaching _ => "finding the way there"
+        | .connecting _ => "connecting"
+        | .talking _ _ => if c.asked then "the question sent" else "TLS not yet up"
+        | .leaving _ _ => "leaving"
+        | .done _ => "done"
+      let stood := match c.key? with
+        | some key => match w.tcp.conns.find? (fun (conn : Tcp.Conn) => conn.key == key) with
+          | some conn => conn.describe now
+          | none => "the connection gone"
+        | none => "no connection yet"
+      fail c w s!"no answer in the time allowed ({stage}, {c.outbox.size} bytes not yet handed to TCP, {c.got.size} had; {stood})"
   else match c.phase, input with
   | .resolving query, input =>
     let event := match input with | .internet event => some event | _ => none

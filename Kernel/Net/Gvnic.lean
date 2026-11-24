@@ -54,8 +54,15 @@ Who is on the other side: the host. Every length and number of the card's is cut
 it is used, and the memory shared with the card is the only memory any of it can name. A card that lies
 gets frames lost or the machine stopped, as it can anyway.
 
+**The card can ask to be started over**, by a bit of its status, at any time: while it is being made
+ready (seen on about half the starts in Compute Engine's trust domains, where its count of commands
+done went back to nothing after the third or fourth and no more were answered) and, as Linux's driver
+allows for, later. Either way it is reset and made ready again from nothing in the same memory
+(`bringUp`, `restart`); whoever drives it asks now and then whether it wants that (`wantsReset`).
+Frames on their way at that moment are lost, as on any network.
+
 Not done: more than one queue; frames longer than a buffer (they are dropped); checksums or segmenting
-left to the card; noticing that the card wants to be reset. -/
+left to the card. -/
 
 namespace Kernel.Net.Gvnic
 
@@ -78,7 +85,24 @@ open Kernel.Net.Flat
 /-- The most a frame's first descriptor may say, as Linux's driver has it. -/
 def firstMost : USize := 182
 
+/-- What stays the same however often the card is started over: where its registers and doorbells are,
+its revision, and the memory shared with it. `fixed` is three pages taken when the card is claimed (the
+commands, what this driver is, what the card is); `rest` is everything whose size the card's own
+description decides, taken the first time the card has described itself and laid out the same way
+every time after, which `shape` (the sizes, in one number) holds it to. Shared memory is never given
+back, so a card started over must be given the same memory again. -/
+structure Ground where
+  registers : UInt64 := 0
+  doorbells : UInt64 := 0
+  bellRoom : UInt64 := 0
+  revision : UInt32 := 0
+  fixed : UInt64 := 0
+  rest : UInt64 := 0
+  shape : UInt64 := 0
+  deriving Inhabited
+
 structure Card where
+  ground : Ground := {}
   registers : UInt64
   doorbells : UInt64
   macHigh : UInt16
@@ -136,45 +160,49 @@ def commandOf (opcode : UInt32) : ByteArray := wr32 (zeros 64) 0 opcode
 /-- One command put to the card and waited for. `queue` is the page of commands and `count` how many
 were put before this one. What comes back is what the card says of it: 1 is done, 0 that it never
 answered. -/
-def command (registers queue : UInt64) (count : UInt32) (body : ByteArray) : BaseIO UInt32 := do
+def command (registers queue : UInt64) (count : UInt32) (body : ByteArray) : BaseIO (UInt32 × String) := do
   let slot := queue + (count &&& 63).toUInt64 * 64
   Hw.store slot (body.extract 0 64)
   setReg (registers + 20) (count + 1)
   -- Waited for by the processor's own count of time, a hundred and fifty thousand million of its ticks:
   -- most of a minute, where Linux gives a command two seconds. (In a trust domain one has been seen
-  -- to go unanswered for ten.)
+  -- to go unanswered for ten.) A command still unanswered after a second or so has the card looked
+  -- at: one whose count of commands done has gone back, or that says it wants to be started over,
+  -- will answer nothing more, and is not waited for. What was seen is the second part of what comes
+  -- back.
   let began ← Hw.ticks
   let mut done ← reg (registers + 24)
+  let mut looked : UInt64 := 0
+  let mut how := ""
   while done != count + 1 && (← Hw.ticks) - began < 150000000000 do
     for _ in [0:2000] do Hw.pause
     done ← reg (registers + 24)
-  if done != count + 1 then return 0
-  return rd32 (← Hw.load (slot + 4) 4) 0
+    if done != count + 1 && ((← Hw.ticks) - began) / 2500000000 > looked then
+      looked := looked + 1
+      let status ← reg registers
+      if done < count || status &&& (2 : UInt32) != 0 then
+        return (0, s!"; command {count} unanswered, the card's count of them at {done} and its status {status}: it has started over")
+  if done != count + 1 then return (0, s!"; command {count} never answered")
+  if looked != 0 then how := s!"; command {count} answered late ({looked})"
+  return (rd32 (← Hw.load (slot + 4) 4) 0, how)
 
-/-- Memory shared with the card, with nothing in it; 0 when there is no more. -/
-def blank (bytes : USize) : BaseIO UInt64 := do
-  let at_ ← Hw.alloc bytes
-  if at_ != 0 then
-    let mut done : USize := 0
-    let nothing := zeros 65536
-    while done < bytes do
-      let step := if bytes - done < 65536 then bytes - done else 65536
-      Hw.storeFrom (at_ + done.toUInt64) nothing 0 step
-      done := done + step
-  return at_
+/-- `bytes` of the memory shared with the card, from `at_`, made nothing. -/
+def wipe (at_ : UInt64) (bytes : USize) : BaseIO Unit := do
+  let mut done : USize := 0
+  let nothing := zeros 65536
+  while done < bytes do
+    let step := if bytes - done < 65536 then bytes - done else 65536
+    Hw.storeFrom (at_ + done.toUInt64) nothing 0 step
+    done := done + step
 
-/-- The addresses of `pages` pages from `first` on, eight bytes each, in shared memory: what the card is
+/-- The addresses of `pages` pages from `first` on, eight bytes each, written at `at_`: what the card is
 given to be told of them. -/
-def listOf (first : UInt64) (pages : USize) : BaseIO UInt64 := do
-  let at_ ← Hw.alloc (pages * 8)
-  if at_ == 0 then return 0
-  let list := (List.range pages.toNat).foldl (fun out i => wr64 out (i.toUSize * 8) (first + i.toUInt64 * 4096)) (zeros (pages.toNat * 8))
-  Hw.store at_ list
-  return at_
+def listAt (at_ first : UInt64) (pages : USize) : BaseIO Unit :=
+  Hw.store at_ ((List.range pages.toNat).foldl (fun out i => wr64 out (i.toUSize * 8) (first + i.toUInt64 * 4096)) (zeros (pages.toNat * 8)))
 
-/-- The card found, taken from the firmware and made ready, or why not; and with the card, in words, what
-it said of itself, for whoever is finding out why one does not work. -/
-def start : BaseIO (Except String (Card × Rings × String)) := do
+/-- The card found and taken from the firmware, with the memory that does not depend on what it says of
+itself; or why not. -/
+def claim : BaseIO (Except String Ground) := do
   let mut found : Option USize := none
   for i in [0:(← Hw.devices).toNat] do
     if (← Hw.config i.toUSize 0 4) == 0x00421ae0 then found := some i.toUSize
@@ -183,10 +211,20 @@ def start : BaseIO (Except String (Card × Rings × String)) := do
   if !(← Hw.claim index) then return .error "the card could not be claimed from the firmware"
   let windows ← Hw.windows
   if windows.size < 3 then return .error "the card has fewer than three windows"
-  let registers := windows[0]!.base
-  let doorbells := windows[2]!.base
-  let bellRoom : UInt64 := windows[2]!.size
   if windows[0]!.size < 44 || windows[2]!.size < 8 then return .error "the card's windows are too small"
+  let fixed ← Hw.alloc 12288
+  if fixed == 0 then return .error "no shared memory"
+  return .ok { registers := windows[0]!.base, doorbells := windows[2]!.base, bellRoom := windows[2]!.size, revision, fixed }
+
+/-- The card reset and made ready from nothing, in the memory of `ground`; or why not. With either, the
+ground as it now is (the first time through takes the rest of its memory); and with the card, in
+words, what it said of itself, for whoever is finding out why one does not work. -/
+def bring (ground : Ground) : BaseIO (Ground × Except String (Card × Rings × String)) := do
+  let mut ground := ground
+  let registers := ground.registers
+  let doorbells := ground.doorbells
+  let bellRoom := ground.bellRoom
+  let revision := ground.revision
   -- Reset, and wait for it.
   if revision == 0 then setReg (registers + 16) 0 else setReg (registers + 4) 2
   let mut tries := 0
@@ -199,12 +237,12 @@ def start : BaseIO (Except String (Card × Rings × String)) := do
       let status ← reg registers
       still := status &&& (0x10 : UInt32) == 0
     tries := tries + 1
-  if still then return .error "the card did not reset"
+  if still then return (ground, .error ("the card did not reset"))
   -- Who is driving it, a byte at a time, as it is used to being told.
   for byte in "GVE-1.0.0\n".toUTF8 do Hw.write (registers + 31) 1 byte.toUInt32
   -- The page of commands.
-  let queue ← blank 4096
-  if queue == 0 then return .error "no shared memory"
+  let queue := ground.fixed
+  wipe queue 12288
   if revision == 0 then setReg (registers + 16) (queue >>> 12).toUInt32
   else
     Hw.write (registers + 40) 2 (swap16 4096).toUInt32
@@ -212,20 +250,22 @@ def start : BaseIO (Except String (Card × Rings × String)) := do
     setReg (registers + 36) queue.toUInt32
     setReg (registers + 4) 1
   let mut put : UInt32 := 0
+  -- What was seen of commands that were slow to be answered.
+  let mut slow := ""
   -- What this driver is: one that knows the older way with pages told beforehand, and the newer with
   -- addresses as they are.
-  let info ← blank 4096
-  if info == 0 then return .error "no shared memory"
+  let info := ground.fixed + 4096
   Hw.store info (wr64 (wr8 (wr8 (zeros 304) 0 1) 1 1) 16 9)
-  let said ← command registers queue put (wr64 (wr64 (commandOf 0xf) 8 304) 16 info)
+  let (said, how) ← command registers queue put (wr64 (wr64 (commandOf 0xf) 8 304) 16 info)
+  slow := slow ++ how
   put := put + 1
-  if said != 1 && said != 0xfffffffe then return .error s!"the card would not have this driver ({said})"
+  if said != 1 && said != 0xfffffffe then return (ground, .error (s!"the card would not have this driver ({said}{slow})"))
   -- What the card is.
-  let about ← blank 4096
-  if about == 0 then return .error "no shared memory"
-  let said ← command registers queue put (wr32 (wr32 (wr64 (commandOf 1) 8 about) 16 1) 20 4096)
+  let about := ground.fixed + 8192
+  let (said, how) ← command registers queue put (wr32 (wr32 (wr64 (commandOf 1) 8 about) 16 1) 20 4096)
+  slow := slow ++ how
   put := put + 1
-  if said != 1 then return .error s!"the card would not describe itself ({said})"
+  if said != 1 then return (ground, .error (s!"the card would not describe itself ({said}{slow})"))
   let d ← Hw.load about 4096
   let most := (rd32 d 0).toUInt64 <<< 32 ||| (rd32 d 4).toUInt64
   let txSize := (rd16 d 10).toUSize
@@ -237,7 +277,7 @@ def start : BaseIO (Except String (Card × Rings × String)) := do
   let macLow := rd32 d 26
   let power (n : USize) : Bool := n != 0 && n &&& (n - 1) == 0
   if !power txSize || !power rxSize || txSize < 64 || rxSize < 64 || txSize > 4096 || rxSize > 4096 then
-    return .error s!"queues of {txSize} and {rxSize} are not ones this driver takes"
+    return (ground, .error (s!"queues of {txSize} and {rxSize} are not ones this driver takes"))
   -- Which way of working: the newer when the card lists it (option 4, asking nothing this driver has
   -- not), since the cards that list it move nothing the older way though they take its commands.
   let options := (rd16 d 30).toNat
@@ -247,19 +287,35 @@ def start : BaseIO (Except String (Card × Rings × String)) := do
     let size := (rd16 d (option + 2)).toUSize
     if rd16 d option == 4 && size ≥ 8 && rd32 d (option + 4) == 0 then newer := true
     option := option + 8 + size
-  if counters == 0 || counters > 16384 then return .error s!"{counters} counts are not what this driver takes"
-  if !newer && (txCount == 0 || txCount > 4096) then return .error s!"{txCount} pages for sending are not what this driver takes"
-  if !newer && (txCount + rxSize).toUInt64 > most then return .error s!"the card takes {most} pages and {txCount + rxSize} are needed"
+  if counters == 0 || counters > 16384 then return (ground, .error (s!"{counters} counts are not what this driver takes"))
+  if !newer && (txCount == 0 || txCount > 4096) then return (ground, .error (s!"{txCount} pages for sending are not what this driver takes"))
+  if !newer && (txCount + rxSize).toUInt64 > most then return (ground, .error (s!"the card takes {most} pages and {txCount + rxSize} are needed"))
   let txSlots := if newer then (if txSize < 512 then txSize / 2 else 256) else if txCount * 2 < txSize then txCount * 2 else txSize
-  if txSlots < 16 then return .error s!"{txCount} pages for sending are too few"
+  if txSlots < 16 then return (ground, .error (s!"{txCount} pages for sending are too few"))
   -- Its counts, and its interrupt doorbells' numbers: two, which it wants and this never uses.
-  let counts ← blank (counters * 4)
-  let bells ← blank 4096
-  if counts == 0 || bells == 0 then return .error "no shared memory"
+  -- The rest of the memory: so many bytes for each thing, each from a page of its own, in one run that
+  -- is taken once and laid out the same way whenever the card is started over.
+  let sizes : Array USize :=
+    if newer then #[counters * 4, 4096, txSize * 16, txSize * 8, txSlots * 2048, rxSize * 32, rxSize * 32, rxSize * 2048, 4096]
+    else #[counters * 4, 4096, txCount * 4096, rxSize * 4096, txCount * 8, rxSize * 8, txSize * 16, rxSize * 64, rxSize * 8, 4096]
+  let pages (n : USize) : USize := (n + 4095) / 4096 * 4096
+  let total := sizes.foldl (fun sum n => sum + pages n) 0
+  let shape := sizes.foldl (fun mix n => mix * 1000003 + n.toUInt64) (if newer then 2 else 1)
+  if ground.rest == 0 then
+    let rest ← Hw.alloc total
+    if rest == 0 then return (ground, .error (s!"no shared memory for {total} bytes"))
+    ground := { ground with rest, shape }
+  else if ground.shape != shape then
+    return (ground, .error ("the card describes itself otherwise than when its memory was taken"))
+  wipe ground.rest total
+  let place (i : Nat) : UInt64 := ground.rest + ((sizes.extract 0 i).foldl (fun sum n => sum + pages n) 0).toUInt64
+  let counts := place 0
+  let bells := place 1
   let body := wr32 (wr32 (wr32 (wr64 (wr64 (commandOf 2) 8 counts) 16 bells) 24 counters.toUInt32) 28 2) 32 64
-  let said ← command registers queue put (wr8 body 40 (if newer then 3 else 2))
+  let (said, how) ← command registers queue put (wr8 body 40 (if newer then 3 else 2))
+  slow := slow ++ how
   put := put + 1
-  if said != 1 then return .error s!"the card would not take its counts and doorbells ({said})"
+  if said != 1 then return (ground, .error (s!"the card would not take its counts and doorbells ({said}{slow})"))
   let numbers ← Hw.load bells 128
   let mut notes := s!"the {if newer then "newer" else "older"} way; counts {counters}, pages for sending {txCount}, pages in all {most}, interrupt doorbells {rd32 numbers 0} and {rd32 numbers 64}"
   -- What ways of working the card says it has: each option's number, length, what it requires and its first word.
@@ -276,32 +332,32 @@ def start : BaseIO (Except String (Card × Rings × String)) := do
     -- descriptors and a ring the card writes what it has done into, and places of 2,048 bytes of this
     -- driver's own to copy frames to. For receiving, a ring of places offered and a ring the card
     -- writes what has come into, and a buffer of 2,048 bytes a place.
-    let txRing ← blank (txSize * 16)
-    let txDone ← blank (txSize * 8)
-    let txPages ← Hw.alloc (txSlots * 2048)
-    let rxDesc ← blank (rxSize * 32)
-    let rxOffer ← Hw.alloc (rxSize * 32)
-    let rxPages ← Hw.alloc (rxSize * 2048)
-    let about ← blank 4096
-    if txRing == 0 || txDone == 0 || txPages == 0 || rxDesc == 0 || rxOffer == 0 || rxPages == 0 || about == 0 then
-      return .error s!"no shared memory; {notes}"
+    let txRing := place 2
+    let txDone := place 3
+    let txPages := place 4
+    let rxDesc := place 5
+    let rxOffer := place 6
+    let rxPages := place 7
+    let about := place 8
     -- Place `i` is offered with buffer `i`, least significant byte first as everything of this way is.
     Hw.store rxOffer ((List.range rxSize.toNat).foldl (fun out i =>
       st64 (wr8 (wr8 out (i.toUSize * 32) i.toUInt8) (i.toUSize * 32 + 1) (i >>> 8).toUInt8) (i.toUSize * 32 + 8) (rxPages + i.toUInt64 * 2048))
       (zeros (rxSize.toNat * 32)))
     let body := wr64 (wr32 (wr32 (wr64 (wr64 (wr32 (commandOf 5) 8 0) 16 about) 24 txRing) 32 0xffffffff) 36 0) 40 txDone
-    let said ← command registers queue put (wr16 (wr16 body 48 txSize.toUInt16) 50 txSize.toUInt16)
+    let (said, how) ← command registers queue put (wr16 (wr16 body 48 txSize.toUInt16) 50 txSize.toUInt16)
+    slow := slow ++ how
     put := put + 1
-    if said != 1 then return .error s!"the card would not make the queue for sending ({said}); {notes}"
+    if said != 1 then return (ground, .error (s!"the card would not make the queue for sending ({said}{slow}); {notes}"))
     let body := wr64 (wr64 (wr64 (wr32 (wr32 (wr32 (commandOf 6) 8 0) 12 0) 20 1) 24 (about + 64)) 32 rxDesc) 40 rxOffer
     let body := wr16 (wr16 (wr16 (wr32 body 48 0xffffffff) 52 rxSize.toUInt16) 54 2048) 56 rxSize.toUInt16
-    let said ← command registers queue put body
-    if said != 1 then return .error s!"the card would not make the queue for receiving ({said}); {notes}"
+    let (said, how) ← command registers queue put body
+    slow := slow ++ how
+    if said != 1 then return (ground, .error (s!"the card would not make the queue for receiving ({said}{slow}); {notes}"))
     let made ← Hw.load about 128
     let txBell : UInt64 := (rd32 made 0).toUInt64
     let rxBell : UInt64 := (rd32 made 64).toUInt64
     if txBell * (4 : UInt64) + (4 : UInt64) > bellRoom || rxBell * (4 : UInt64) + (4 : UInt64) > bellRoom then
-      return .error s!"the card named doorbells {txBell} and {rxBell}, which are not there; {notes}"
+      return (ground, .error (s!"the card named doorbells {txBell} and {rxBell}, which are not there; {notes}"))
     notes := notes ++ s!"; queue doorbells {txBell} and {rxBell}"
     -- No interrupt is wanted, said the way a driver that only looks says it; and every place for
     -- receiving but one is offered.
@@ -309,48 +365,53 @@ def start : BaseIO (Except String (Card × Rings × String)) := do
       let bell : UInt64 := (rd32 numbers (block.toUSize * 64)).toUInt64
       if bell * (4 : UInt64) + (4 : UInt64) ≤ bellRoom then Hw.writeDirect (doorbells + bell * (4 : UInt64)) 0x40000018
     Hw.writeDirect (doorbells + rxBell * (4 : UInt64)) (rxSize.toUInt32 - 1)
-    return .ok ({ registers, doorbells, macHigh, macLow, mtu, txRing, txPages, txSize, txSlots,
-                  txBell := doorbells + txBell * (4 : UInt64), txCount := 0,
-                  rxDesc, rxPages, rxSize, rxBell := doorbells + rxBell * (4 : UInt64), newer := true, txDone, rxOffer },
-                { filled := rxSize.toUInt32 - 1 }, notes)
+    let card : Card :=
+      { ground, registers, doorbells, macHigh, macLow, mtu, txRing, txPages, txSize, txSlots,
+        txBell := doorbells + txBell * (4 : UInt64), txCount := 0,
+        rxDesc, rxPages, rxSize, rxBell := doorbells + rxBell * (4 : UInt64), newer := true, txDone, rxOffer }
+    return (ground, .ok (card, { filled := rxSize.toUInt32 - 1 }, notes ++ slow))
   -- The pages frames go through, and the card told of them.
-  let txPages ← Hw.alloc (txCount * 4096)
-  let rxPages ← Hw.alloc (rxSize * 4096)
-  if txPages == 0 || rxPages == 0 then return .error s!"no shared memory for {txCount + rxSize} pages"
-  let txList ← listOf txPages txCount
-  let rxList ← listOf rxPages rxSize
-  if txList == 0 || rxList == 0 then return .error "no shared memory"
+  let txPages := place 2
+  let rxPages := place 3
+  let txList := place 4
+  let rxList := place 5
+  listAt txList txPages txCount
+  listAt rxList rxPages rxSize
   let rxId ← reg (registers + 8)
-  let said ← command registers queue put (wr64 (wr64 (wr32 (wr32 (commandOf 3) 8 0) 12 txCount.toUInt32) 16 txList) 24 4096)
+  let (said, how) ← command registers queue put (wr64 (wr64 (wr32 (wr32 (commandOf 3) 8 0) 12 txCount.toUInt32) 16 txList) 24 4096)
+  slow := slow ++ how
   put := put + 1
-  if said != 1 then return .error s!"the card would not take the pages for sending ({said}); {notes}"
-  let said ← command registers queue put (wr64 (wr64 (wr32 (wr32 (commandOf 3) 8 rxId) 12 rxSize.toUInt32) 16 rxList) 24 4096)
+  if said != 1 then return (ground, .error (s!"the card would not take the pages for sending ({said}{slow}); {notes}"))
+  let (said, how) ← command registers queue put (wr64 (wr64 (wr32 (wr32 (commandOf 3) 8 rxId) 12 rxSize.toUInt32) 16 rxList) 24 4096)
+  slow := slow ++ how
   put := put + 1
-  if said != 1 then return .error s!"the card would not take the pages for receiving ({said})"
+  if said != 1 then return (ground, .error (s!"the card would not take the pages for receiving ({said}{slow})"))
   -- How long a packet may be, which the card is told before it will have queues made.
-  let said ← command registers queue put (wr64 (wr32 (commandOf 0xb) 8 1) 16 mtu.toUInt64)
+  let (said, how) ← command registers queue put (wr64 (wr32 (commandOf 0xb) 8 1) 16 mtu.toUInt64)
+  slow := slow ++ how
   put := put + 1
-  if said != 1 then return .error s!"the card would not be told its packet size ({said}); {notes}"
+  if said != 1 then return (ground, .error (s!"the card would not be told its packet size ({said}{slow}); {notes}"))
   -- The queues.
-  let txRing ← blank (txSize * 16)
-  let rxDesc ← blank (rxSize * 64)
-  let rxData ← Hw.alloc (rxSize * 8)
-  let about ← blank 4096
-  if txRing == 0 || rxDesc == 0 || rxData == 0 || about == 0 then return .error "no shared memory"
+  let txRing := place 6
+  let rxDesc := place 7
+  let rxData := place 8
+  let about := place 9
   Hw.store rxData ((List.range rxSize.toNat).foldl (fun out i => wr64 out (i.toUSize * 8) (i.toUInt64 * 4096)) (zeros (rxSize.toNat * 8)))
   let body := wr64 (wr64 (wr32 (commandOf 5) 8 0) 16 about) 24 txRing
-  let said ← command registers queue put (wr16 (wr32 (wr32 body 32 0) 36 0) 48 txSize.toUInt16)
+  let (said, how) ← command registers queue put (wr16 (wr32 (wr32 body 32 0) 36 0) 48 txSize.toUInt16)
+  slow := slow ++ how
   put := put + 1
-  if said != 1 then return .error s!"the card would not make the queue for sending ({said})"
+  if said != 1 then return (ground, .error (s!"the card would not make the queue for sending ({said}{slow})"))
   let body := wr64 (wr64 (wr64 (wr32 (wr32 (wr32 (commandOf 6) 8 0) 12 0) 20 1) 24 (about + 64)) 32 rxDesc) 40 rxData
-  let said ← command registers queue put (wr16 (wr16 (wr32 body 48 rxId) 52 rxSize.toUInt16) 54 2048)
-  if said != 1 then return .error s!"the card would not make the queue for receiving ({said})"
+  let (said, how) ← command registers queue put (wr16 (wr16 (wr32 body 48 rxId) 52 rxSize.toUInt16) 54 2048)
+  slow := slow ++ how
+  if said != 1 then return (ground, .error (s!"the card would not make the queue for receiving ({said}{slow})"))
   let made ← Hw.load about 128
   let txBell : UInt64 := (rd32 made 0).toUInt64
   let txCounter : UInt64 := (rd32 made 4).toUInt64
   let rxBell : UInt64 := (rd32 made 64).toUInt64
   if txBell * (4 : UInt64) + (4 : UInt64) > bellRoom || rxBell * (4 : UInt64) + (4 : UInt64) > bellRoom || txCounter ≥ counters.toUInt64 then
-    return .error s!"the card named doorbells {txBell} and {rxBell} and count {txCounter}, which are not there"
+    return (ground, .error (s!"the card named doorbells {txBell} and {rxBell} and count {txCounter}, which are not there"))
   notes := notes ++ s!"; queue doorbells {txBell} and {rxBell}, count {txCounter}, and the receiving queue's count {rd32 made 68}"
   -- The two interrupt doorbells told that no interrupt is wanted, now that the queues are there.
   for block in [0:2] do
@@ -359,10 +420,41 @@ def start : BaseIO (Except String (Card × Rings × String)) := do
   -- Every place for receiving but one is the card's from the start: told that all are, it takes it that
   -- none is, the count going round to where it began.
   Hw.writeDirect (doorbells + rxBell * (4 : UInt64)) (swap32 (rxSize.toUInt32 - 1))
-  return .ok ({ registers, doorbells, macHigh, macLow, mtu, txRing, txPages, txSize, txSlots,
-                txBell := doorbells + txBell * (4 : UInt64), txCount := counts + txCounter * (4 : UInt64),
-                rxDesc, rxPages, rxSize, rxBell := doorbells + rxBell * (4 : UInt64) },
-              { filled := rxSize.toUInt32 - 1 }, notes)
+  let card : Card :=
+    { ground, registers, doorbells, macHigh, macLow, mtu, txRing, txPages, txSize, txSlots,
+      txBell := doorbells + txBell * (4 : UInt64), txCount := counts + txCounter * (4 : UInt64),
+      rxDesc, rxPages, rxSize, rxBell := doorbells + rxBell * (4 : UInt64) }
+  return (ground, .ok (card, { filled := rxSize.toUInt32 - 1 }, notes ++ slow))
+
+/-- The card brought up, started over when it does not come up: a card can ask to be started over
+part-way through being made ready (its count of commands done goes back to nothing and no more are
+answered), which was seen on about half the starts on Compute Engine's trust domains. Five tries. -/
+def bringUp (ground : Ground) : BaseIO (Except String (Card × Rings × String)) := do
+  let mut ground := ground
+  let mut before := ""
+  for attempt in [0:5] do
+    let (g, got) ← bring ground
+    ground := g
+    match got with
+    | .ok (card, rings, notes) => return .ok (card, rings, if attempt == 0 then notes else s!"{notes}; after {attempt} tries that ended:{before}")
+    | .error why => before := before ++ s!" [{why}]"
+  return .error s!"five tries, which ended:{before}"
+
+/-- The card found, taken from the firmware and made ready, or why not; and with the card, in words, what
+it said of itself, for whoever is finding out why one does not work. -/
+def start : BaseIO (Except String (Card × Rings × String)) := do
+  match ← claim with
+  | .error why => return .error why
+  | .ok ground => bringUp ground
+
+/-- Whether the card says it wants to be started over (its status, bit 1): asked of it now and then by
+whoever drives it. -/
+def wantsReset (card : @& Card) : BaseIO Bool := do
+  return (← reg card.registers) &&& (2 : UInt32) != 0
+
+/-- The card started over in the memory it had. Whatever was on its way either way is lost, as on any
+network; the rings begin again. -/
+def restart (card : @& Card) : BaseIO (Except String (Card × Rings × String)) := bringUp card.ground
 
 /-- The frames of up to `left` new descriptors copied into `batch` from `at_`, each with its length in
 two bytes before it. What comes back, in one number: how many descriptors were taken (low 16 bits), the

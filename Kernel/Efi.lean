@@ -27,4 +27,11 @@ TDREPORT, or empty when the platform cannot produce one. -/
 @[extern "silo_efi_report"]
 opaque report (data : @& ByteArray) : IO ByteArray
 
+/-- The host asked to make a quote of what lies at `address`, `size` bytes of whole pages inside the
+memory shared with the claimed device (`Kernel/Hw.lean`), and to put its answer there
+(`Kernel/Quote.lean` fills it and reads it). 0 when the host took the request; anything else when it
+did not, or when this is no trust domain. Stops the machine if the run is not inside that memory. -/
+@[extern "silo_efi_quote_ask"]
+opaque quoteAsk (address : UInt64) (size : UInt64) : BaseIO UInt64
+
 end Kernel.Efi

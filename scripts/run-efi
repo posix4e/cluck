@@ -31,8 +31,14 @@ case "$mode" in
       echo 'run-efi: TDX requires an Intel TDX-enabled x86-64 Linux KVM host' >&2; exit 2; }
     tdvf=${SILO_TDVF:-"$root/.lake/build/efi/tdx/OVMF.fd"}
     [[ -r "$tdvf" ]] || { echo 'run-efi: set SILO_TDVF to combined TDVF with VirtioNetDxe' >&2; exit 2; }
+    # SILO_TDX_QGS: the socket of a quoting service on this machine (Intel's QGS), which QEMU then goes
+    # to when the guest itself asks the host for a quote. Without it such a request is answered with
+    # "no service".
+    domain='tdx-guest,id=tdx0'
+    [[ -n "${SILO_TDX_QGS:-}" ]] &&
+      domain='{"qom-type":"tdx-guest","id":"tdx0","quote-generation-socket":{"type":"unix","path":"'"$SILO_TDX_QGS"'"}}'
     args=(-machine q35,kernel-irqchip=split,confidential-guest-support=tdx0 -accel kvm -cpu host
-      -object tdx-guest,id=tdx0 -bios "$tdvf")
+      -object "$domain" -bios "$tdvf")
     devices=disable-legacy=on,iommu_platform=on ;;
   *) echo "$usage" >&2; exit 2 ;;
 esac

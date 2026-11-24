@@ -15,3 +15,4 @@ lean_obj_res silo_efi_send(b_lean_obj_arg bytes) { (void)bytes; return unavailab
 lean_obj_res silo_efi_millis(void) { return unavailable(); }
 lean_obj_res silo_efi_idle(void) { return unavailable(); }
 lean_obj_res silo_efi_report(b_lean_obj_arg bytes) { (void)bytes; return unavailable(); }
+uint64_t silo_efi_quote_ask(uint64_t address, uint64_t size) { (void)address; (void)size; return ~(uint64_t)0; }

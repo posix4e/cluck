@@ -676,16 +676,30 @@ by the guest itself.
       TCP starts slowly again after a connection has been quiet for a second
       (`net.ipv4.tcp_slow_start_after_idle`), and rounds are more than a second apart. Turning
       that off needs root here. Not done.
-  - **The card does not always come up there.** Of some ten starts of the image on 2026-11-24,
-    five ended with a command to the card never answered (once the one that gives it its counts,
-    four times the one that makes the queue for sending), the machine saying so and stopping,
-    as it is meant to. Being looked into; a machine that is to run always has to get past it.
-  - Not done there: a bid sent; a quote the guest asks for itself; checking an image against
-    RTMR1; a look at how often the guest leaves the trust domain there.
-  - Spent so far on Compute Engine for this: under two dollars (of the 500 a month now agreed);
-    nothing is left running. A subnet (`silo-10-0-2`), a firewall rule for this machine's address
-    alone (`silo-test-from-home`), a few images and their disk files remain, which cost cents a
-    month.
+  - **The card can ask to be started over, and now is.** Of some ten starts of the image on
+    2026-11-24, five ended with a command to the card never answered (once the one that gives
+    it its counts, four times the one that makes the queue for sending) and the machine
+    stopped. Looked at: the card's count of commands done had gone back to nothing and, a
+    second on, its status said it wanted to be started over, which Linux's driver provides for
+    and this one did not. Now the driver starts the card over in the same memory and tries
+    again, up to five times, and the machine asks the card once a second while it runs whether
+    it wants that. The next start on Compute Engine came up at the second try, saying so.
+    - Seen once that way, on one start. Not seen: a card asking while the machine runs.
+  - **The guest asks for its own quote** (2026-11-24; `Kernel/Quote.lean`, "JQUO1" in
+    `evm/Evm/Attest.lean`). There is no quoting service of ours beside a machine on Compute
+    Engine, so the guest hands a report to its host by the call the specification has for it
+    and reads the quote back. On this machine, with QEMU pointed at the quoting service here
+    (`SILO_TDX_QGS`), a quote of 5,243 bytes in 10 ms; on Compute Engine one of 8,000 bytes in
+    90 ms as seen from here. Both pass every step of the page's own check
+    (`evm/demo/verify.js`) up to Intel's root. `builder/shadow --guest` now keeps such quotes
+    of the guest's two keys beside its log.
+    - Not done: saying what the quote's measurements should be for an image (MRTD there is
+      Google's firmware; RTMR1 is where the image is measured, and nothing here recomputes it
+      yet), and with that, a check anyone can run of a quote against an image.
+  - Not done there: a bid sent; a look at how often the guest leaves the trust domain there.
+  - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
+    A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone
+    (`silo-test-from-home`), a few images and their disk files remain, which cost cents a month.
 
 ## Ethereum block import, as a service (`evm/`)
 

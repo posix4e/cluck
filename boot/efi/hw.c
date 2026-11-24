@@ -152,6 +152,13 @@ uint64_t silo_hw_alloc(size_t size) {
 }
 
 // Only memory that has been handed out can be read or written, not the whole arena.
+static uint8_t *device_memory(uint64_t address, size_t size);
+
+// Where in this machine's memory a run of the arena is, for the one other piece of C that hands such
+// memory to the host (the request for a quote, boot/efi/platform.c). Stops the machine like every
+// other access if the run is not wholly inside the arena.
+uint8_t *silo_hw_shared(uint64_t address, size_t size) { return device_memory(address, size); }
+
 static uint8_t *device_memory(uint64_t address, size_t size) {
     uint64_t start = (uint64_t)(uintptr_t)arena;
     if (!arena || address < start || address - start > arena_used || size > arena_used - (address - start))

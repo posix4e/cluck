@@ -224,6 +224,38 @@ lean_obj_res silo_efi_report(b_lean_obj_arg challenge) {
 #endif
 }
 
+// A quote asked of the host (TDG.VP.VMCALL<GetQuote>, 0x10002). The request and, later, the answer
+// lie in memory the host can see: a run of whole pages of the arena shared with the claimed device,
+// which Lean has filled and will read; nothing of it is looked at here. The host is told the run's
+// address with the bit set that says host-visible, which the TDX module is asked for
+// (TDG.VP.INFO: the width of a guest address, whose top bit that is). What comes back is the host's
+// word on whether it took the request: 0 when it did.
+extern uint8_t *silo_hw_shared(uint64_t address, size_t size);
+uint64_t silo_efi_quote_ask(uint64_t address, uint64_t size) {
+#if REQUIRE_TDX
+    if ((address & 4095) || (size & 4095) || size == 0 || size > (1u << 20)) return ~(uint64_t)0;
+    uint64_t place = (uint64_t)(uintptr_t)silo_hw_shared(address, (size_t)size);
+    uint64_t leaf = 1, width = 0;
+    __asm__ volatile (".byte 0x66,0x0f,0x01,0xcc" // TDCALL, TDG.VP.INFO
+                      : "+a"(leaf), "+c"(width)
+                      : : "rdx", "r8", "r9", "r10", "r11", "cc", "memory");
+    width &= 63;
+    if (leaf != 0 || width < 32 || width > 52) return ~(uint64_t)0;
+    register uint64_t said __asm__("r10") = 0;                 // a call the specification defines
+    register uint64_t which __asm__("r11") = 0x10002;          // GetQuote
+    register uint64_t where __asm__("r12") = place | ((uint64_t)1 << (width - 1));
+    register uint64_t bytes_ __asm__("r13") = size;
+    uint64_t call = 0, shown = 0x3c00;                         // TDG.VP.VMCALL; the host sees r10 to r13
+    __asm__ volatile (".byte 0x66,0x0f,0x01,0xcc"
+                      : "+a"(call), "+c"(shown), "+r"(said), "+r"(which), "+r"(where), "+r"(bytes_)
+                      : : "cc", "memory");
+    return call != 0 ? ~(uint64_t)0 : said;
+#else
+    (void)address; (void)size;
+    return ~(uint64_t)0;
+#endif
+}
+
 extern int main(int, char **);
 Status EFIAPI efi_main(Handle image, SystemTable *table) {
     system_table = table;

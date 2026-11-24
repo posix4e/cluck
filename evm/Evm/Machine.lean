@@ -6,6 +6,7 @@ import Evm.Seal
 import Evm.Follow
 import Evm.Outbound
 import Kernel.Efi
+import Kernel.Quote
 import Kernel.Net.Wire
 import Kernel.Net.Tcp
 import Kernel.Net.Fragment
@@ -162,6 +163,12 @@ structure State where
   are the firmware's. It is taken out of here while it is used and put back, so that its arrays have one
   owner. -/
   card : Option Kernel.Net.Wire.Own := none
+  /-- Where requests for quotes are put for the host to see (`Kernel/Quote.lean`): nowhere until the
+  first, and never again once the host has left one unfinished. -/
+  quoteAt : UInt64 := 0
+  quoteLost : Bool := false
+  /-- When the card was last asked whether it wants to be started over. -/
+  lookedAt : Nat := 0
   fragments : Fragment.Cache := {}
   nextIpId : UInt32 := 0
   clients : Array Client := #[]
@@ -397,6 +404,15 @@ def receive : M ByteArray := do
     modify fun s => { s with card := some card }
     return frame
 
+/-- The card asked whether it wants to be started over, and started over if so (`Wire.mend`). -/
+def mend : M Unit := do
+  match ← modifyGet fun s => (s.card, { s with card := none }) with
+  | none => pure ()
+  | some card =>
+    let (card, said) ← Kernel.Net.Wire.mend card
+    modify fun s => { s with card := some card }
+    if said != "" then Platform.write s!"evm: {said}\n".toUTF8
+
 def freshWord : IO UInt32 := do
   let b ← Platform.random 4
   return (length b).toUInt32
@@ -441,6 +457,9 @@ def pump : M Bool := do
       let iss ← if opening then (try pure (some (← freshWord)) catch _ => pure none) else pure (some 0)
       if let some iss := iss then transmit (← modifyGet (·.onEvent now iss event))
   if now ≥ (← get).lastTick + 20 then transmit (← modifyGet (·.tick now))
+  if now ≥ (← get).lookedAt + 1000 then
+    modify fun s => { s with lookedAt := now }
+    mend
   deliver
   return !frame.isEmpty
 
@@ -540,6 +559,30 @@ def ask (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Uni
                   (Ask.question relay.name r.path) random with limit := maxAsked }
   transmit (← modifyGet (·.begin now key asked call))
 
+/-- A quote of a report, asked of the host: the answer `Evm/Attest.lean` describes. The machine waits
+for the host and does nothing else meanwhile, up to five seconds; the host is whom that costs. -/
+def quote (key : Tcp.Key) (report : ByteArray) : M Unit := do
+  let s ← get
+  -- What is answered: the quote, or the reason there is none, which is also what the console is told.
+  let (code, body, why) : UInt8 × ByteArray × String ← do
+    if s.quoteLost then pure (2, .empty, "an earlier request was never finished by the host")
+    else
+      let at_ ← if s.quoteAt != 0 then pure s.quoteAt else Kernel.Hw.alloc Kernel.Quote.room
+      modify fun s => { s with quoteAt := at_ }
+      let clock : BaseIO UInt64 := do
+        match ← Efi.millis.toBaseIO with
+        | .ok t => pure t
+        | .error _ => pure 0
+      match ← Kernel.Quote.ask at_ report clock with
+      | .quote bytes => pure (0, bytes, "")
+      | .refused why => pure (1, .empty, why)
+      | .lost =>
+        modify fun s => { s with quoteLost := true }
+        pure (2, .empty, "the host took the request and did not finish it")
+  let body := if code == 0 then body else why.toUTF8
+  Platform.write (if code == 0 then s!"evm: a quote from the host, {body.size} bytes\n" else s!"evm: no quote: {why}\n").toUTF8
+  transmit (← modifyGet (·.reply (← Efi.millis).toNat key (frame (ByteArray.mk #[code] ++ body))))
+
 /-- Every request that is ready is run, one after another. -/
 partial def work : M Unit := do
   match ← modifyGet State.next with
@@ -554,7 +597,8 @@ partial def work : M Unit := do
     let (asked, inner) := match Evm.Attest.asked? request with
       | some asked => (some asked, Evm.Attest.request asked)
       | none => (none, request)
-    if Ask.mine inner then ask key asked inner
+    if let some report := Evm.Attest.quoted? request then quote key report
+    else if Ask.mine inner then ask key asked inner
     else if Send.mine inner then send key asked inner since
     else if Follow.mine inner then
       -- A block of the chain shown to the machine: checked, and if it is valid, what it wrote is kept

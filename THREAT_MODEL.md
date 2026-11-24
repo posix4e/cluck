@@ -83,7 +83,10 @@ the way:
   frames) is cut to what it can be before it is used, as in the first. It was in no image that
   served anything until 2026-11-24; now it is in the builder's, under the system's TCP, and has
   carried the builder's requests and its connections to the relays on Compute Engine. It is newer
-  and less tried than the other, and can only be tried there: QEMU has no such card.
+  and less tried than the other, and can only be tried there: QEMU has no such card. The card
+  can say, by a bit of its status, that it wants to be started over, and is then reset and made
+  ready again in the same memory, when it is being brought up and once a second while it runs.
+  A host that keeps saying so keeps the network down, which it can do by not carrying frames.
 - `silo_hw_write_direct` stores to a register of the claimed device by the processor's own
   instruction, at the place the firmware says the device's window is, where every other register
   access asks the firmware. It is checked to lie in a window like the others. It is there because in
@@ -92,6 +95,16 @@ the way:
   others do not: that the firmware has mapped the device's windows as memory the host shares, and
   that its word on where a window is, is right; a wrong word would be a store somewhere else in the
   machine's addresses, which no check here would catch.
+- `silo_efi_quote_ask` (`boot/efi/platform.c`, 2026-11-24) asks the host for a quote: it asks the
+  TDX module how wide a guest address is (TDG.VP.INFO), which says which bit marks an address the
+  host may see, and then tells the host, by the call the specification has for it
+  (TDG.VP.VMCALL, GetQuote), the address and length of a run of whole pages of the arena shared
+  with the claimed device. The run is checked to lie in the arena, as every access to it is
+  (`silo_hw_shared`, which is that check under a name another file can call). It reads one number
+  back, the host's word on whether it took the request, and hands that to Lean. It never looks at
+  what is in the run: Lean wrote the request there and reads the answer (`Kernel/Quote.lean`).
+  What is new for the host: nothing it could not do before, since the arena is memory it can
+  already read and write at will; it is told which part to write an answer in.
 - `silo_hw_store32` writes four bytes of the memory shared with a device in one go, checked as the
   other stores are; the driver's copies to and from that memory are made by `rep movsb` in
   `boot/efi/hw.c` and not by the runtime's `memcpy`. Neither reads anything.
@@ -124,7 +137,18 @@ the strength of a TCP connection or checksum.
 
 The EFI image and its firmware are separate inputs to measurement. A TDREPORT binds the 64
 caller-supplied REPORTDATA bytes to the local TD. The host-side QGS helper transports it to
-Intel's quoting service and returns the quote bytes. A relying party must verify the signature
+Intel's quoting service and returns the quote bytes. Where there is no such helper to go to (a
+cloud's machine), the builder's image asks its host for the quote itself (`Kernel/Quote.lean`,
+and "JQUO1" in `evm/Evm/Attest.lean`): the status and length the host writes back are read as
+the host's word (twice, until two readings agree; cut to the room there is), and the quote is
+bytes for someone else to check. A host can refuse, be slow, or write nonsense. The machine
+waits up to five seconds and does nothing else meanwhile, so whoever can reach its port can
+have it stand still that long a request, as they can by other requests; a host that takes a
+request and never finishes it gets no more. What is asked for is a quote of a report handed
+in, and reports are made by the machine only of answers it gave, so nothing can be quoted
+that the machine did not say; a report made by another trust domain on the same host could be
+handed in and would be quoted, which lends out the host's quoting service and nothing of this
+machine's. A relying party must verify the signature
 and collateral, freshness, REPORTDATA, DEBUG attribute, expected MRTD and relevant RTMRs
 (including the measured boot of the expected EFI application) under its own policy. The
 launcher does not establish a verifier policy or bind a session key to the demo connection.
@@ -389,6 +413,18 @@ agreeing is all that stands behind it.
 **A stack with no guard.** `evm/boot/stack.c` moves `main` to 64 MiB of the image's own memory. Recursion
 past the end of it writes into the image. How deep Jaune recurses depends on the request, and no bound on
 that depth has been worked out.
+
+**Where the port is reachable from.** On the machine it was made on, the port is forwarded by
+QEMU from the host's loopback, and whoever can reach it is on that host. On Compute Engine
+(since 2026-11-24) the machine has a public address, and a firewall rule of the project's lets
+one address in: the machine at home that feeds it. The rule is Google's to enforce and is no
+part of what is measured; the connection is plain TCP with no proof of who is sending. So
+whoever can send from that address, or stand between (the host, Google's network, the networks
+on the way), can do what the host here could always do: put requests, read the answers and
+every public transaction in them, have the builder build and bid, or starve it. They cannot
+read a sealed transaction or sign with the builder's key, which never leave the machine, and
+what the machine sends to relays goes inside TLS to names checked against the roots in the
+image.
 
 **The input.** Anyone who can reach TCP port 5005 can send a request of up to 32 MiB, which is what a block
 of mainnet with its witness needs room for (the largest seen was 22 MB). `Evm/Service.lean`

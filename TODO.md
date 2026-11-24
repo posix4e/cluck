@@ -827,9 +827,10 @@ by the guest itself.
       nothing. `evm/demo/test-live.mjs` runs the same under node on the files served, and on
       seven wrong ones (another key, challenge or RTMR1; a changed or shortened quote; a date
       past the certificates), each refused. The page was looked at in a headless browser from
-      a local copy of the site: ten checks, all holding. It says what it does not show: it
+      a local copy of the site, 900 and 390 points wide, and then as GitHub serves it:
+      ten checks, all holding, nothing on the console. It says what it does not show: it
       takes the image's RTMR1 from the record, does not check Google's statement, and comes
-      from the same site as its files. Not looked at: the page as GitHub serves it; a phone.
+      from the same site as its files.
       Three relays answer for the key's bids (Flashbots, Ultrasound, Aestus); Titan's list
       answered 408.
     - Not run: 1,000 slots on this image.

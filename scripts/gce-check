@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A quote from the builder's guest on Compute Engine, checked against an image's file:
 #
-#   scripts/gce-check BOOTX64.EFI QUOTE
+#   scripts/gce-check BOOTX64.EFI QUOTE [BUILDER-KEY CHALLENGE]
 #
 # Three questions, each answered by the tool that answers it, and all must come out right:
 #   is the quote a real one (evm/demo/check-quote.mjs: its signatures up to Intel's root, by the same
@@ -9,11 +9,16 @@
 #   is it a quote of this program (scripts/gce-measure: RTMR1 worked out from the file), and
 #   is the firmware it was started by one Google signed for (scripts/gce-firmware: Google's statement
 #     for the quote's MRTD, fetched from Google and its signatures checked; needs openssl and the network).
+# With a builder's public key and a challenge (both in hexadecimal, as builder/shadow writes them beside
+# its log), a fourth: is it this machine's answer, to that challenge, that its key for bids is that one.
+# The quote's 64 bytes of report data must then be SHA-256 of the challenge and the question ("JKEY1"),
+# and SHA-256 of the key (evm/Evm/Attest.lean). The key is the one relays list beside each bid they were
+# sent; the challenge is the hash of a block of the chain, so the quote is no older than that block.
 # What none of them answers is said by each, and comes to: what Google's firmware does, which is Google's
 # to vouch for; RTMR0, the machine's configuration as that firmware measured it; whether Intel or Google
 # has since withdrawn anything.
 set -euo pipefail
-[[ $# -eq 2 && -r "$1" && -r "$2" ]] || { echo "usage: scripts/gce-check BOOTX64.EFI QUOTE" >&2; exit 2; }
+[[ ( $# -eq 2 || $# -eq 4 ) && -r "$1" && -r "$2" ]] || { echo "usage: scripts/gce-check BOOTX64.EFI QUOTE [BUILDER-KEY CHALLENGE]" >&2; exit 2; }
 here="$(cd "$(dirname "$0")" && pwd)"
 echo "Is it a real quote?"
 node "$here/../evm/demo/check-quote.mjs" "$2"
@@ -21,4 +26,26 @@ echo "Is it a quote of this program?"
 "$here/gce-measure" "$1" "$2" | tail -n 1
 echo "Is the firmware one Google signed for?"
 python3 -I "$here/gce-firmware" "$2"
-echo "All three hold: a trust domain started by Google's firmware and running this file made the quote."
+if [[ $# -eq 4 ]]; then
+  echo "Is it this machine saying its key for bids is that one?"
+  python3 -I - "$2" "$3" "$4" <<'PY'
+import hashlib, sys
+quote = open(sys.argv[1], "rb").read()
+try:
+    key, challenge = (bytes.fromhex(x.removeprefix("0x")) for x in sys.argv[2:4])
+except ValueError:
+    sys.exit("gce-check: the key and the challenge are to be in hexadecimal")
+if len(key) != 48 or len(challenge) != 32:
+    sys.exit("gce-check: a builder's key is 48 bytes and a challenge 32")
+# The trust domain's part of a version 4 quote is the 584 bytes after its 48-byte header, and the report
+# data the last 64 of those.
+said = quote[48 + 584 - 64:48 + 584]
+if said != hashlib.sha256(challenge + b"JKEY1").digest() + hashlib.sha256(key).digest():
+    print("the quote's report data is NOT that of this key and challenge")
+    sys.exit(1)
+print(f"the quote is of the answer {key.hex()[:16]}… to the question of the builder's key, asked with that challenge")
+PY
+  echo "All four hold: a trust domain started by Google's firmware and running this file made the quote, and bids under that key are its own."
+else
+  echo "All three hold: a trust domain started by Google's firmware and running this file made the quote."
+fi

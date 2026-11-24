@@ -798,7 +798,18 @@ by the guest itself.
       more than the 32 the machine can hold at once. A post took 6 ms at the median and 82 at
       the most; seven rounds a slot, a round 0.75 s. `run-fixtures tdx --limits --key` and
       `check-secret-code tdx` pass on the image.
-    - Not run: 1,000 slots on this image; kept connections to the real relays, which is next.
+    - **On Compute Engine with it** (from 19:58 UTC that day, a new machine with a new key):
+      `run-fixtures tdx --at ADDRESS --key` passes; in the first twelve slots of bids every
+      block went on a kept connection after the first, a post to the four relays took 88 ms
+      at the median where it had taken 0.5 to 0.7 s, a round 1.22 s where it had taken 1.64,
+      and five fitted a slot. The connections last from slot to slot.
+    - `scripts/gce-check BOOTX64.EFI QUOTE KEY CHALLENGE` now also says whether the quote is
+      of that machine's answer that its key for bids is KEY (the report data is SHA-256 of
+      the challenge and question, and SHA-256 of the key). For the guest running there, with
+      the image's file here, all four hold; with the key of the guest before it, the fourth
+      fails. So from a bid in a relay's public list to the program that signed it there is
+      now a check for every step, on files anyone can have.
+    - Not run: 1,000 slots on this image.
   - **The image built twice is the same file** (2026-11-24). The repository copied to another
     directory, its own build products and Jaune's removed, and `scripts/build-efi tdx evm-os`
     run there: three minutes, and the same SHA-256 as the image built in place

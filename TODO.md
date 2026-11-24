@@ -545,7 +545,7 @@ sweep over the table; what can be tuned is one record, `Tuning`.
 
 What this is for: the builder is to run where others run theirs, on Compute Engine's TDX machines (the
 C3 series), as well as on the machine it was made on. There the firmware is Google's and stays; the
-card is Google's own (gVNIC), for which there is no driver here yet; and a quote has to be asked for
+card is Google's own (gVNIC), for which there was no driver here; and a quote has to be asked for
 by the guest itself.
 
 - **The OS's EFI image starts in a trust domain there** (2026-11-23). `scripts/gce-image` puts an EFI
@@ -664,8 +664,24 @@ by the guest itself.
     next thing to read once the host's program can feed a guest that is not on its own machine.
   - A block that pays the proposer nothing is no longer sent (three were, and were refused, in the
     second live hour).
-  - Not done there: a slot of the builder; a quote the guest asks for itself; checking an image
-    against RTMR1; a look at how often the guest leaves the trust domain there.
+  - **Thirty slots of the builder there, fed from here, nothing posted** (2026-11-24, blocks
+    26485229 to 26485258; `builder/shadow --guest ADDRESS --live --guest-sends --hold --rebid`,
+    which keeps one connection to the guest and tells it to send to no relay). 150 blocks built
+    and bid for, **every one judged valid by the node here and its signature good**; five rounds a
+    slot at the median (one to seven), where the same on this machine has eight. A round took
+    1.35 s: the request, 2.8 MB at the median, was 122 ms in coming by the guest's clock (47 at
+    the least, 221 for one in ten, 419 at the most), and the guest took 0.51 s over a block
+    (0.93 for one in ten). The record is `/data/eth/shadow/gce1/`.
+    - Why 122 ms and not the 64 that Linux managed to Linux on a kept connection: this machine's
+      TCP starts slowly again after a connection has been quiet for a second
+      (`net.ipv4.tcp_slow_start_after_idle`), and rounds are more than a second apart. Turning
+      that off needs root here. Not done.
+  - **The card does not always come up there.** Of some ten starts of the image on 2026-11-24,
+    five ended with a command to the card never answered (once the one that gives it its counts,
+    four times the one that makes the queue for sending), the machine saying so and stopping,
+    as it is meant to. Being looked into; a machine that is to run always has to get past it.
+  - Not done there: a bid sent; a quote the guest asks for itself; checking an image against
+    RTMR1; a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: under two dollars (of the 500 a month now agreed);
     nothing is left running. A subnet (`silo-10-0-2`), a firewall rule for this machine's address
     alone (`silo-test-from-home`), a few images and their disk files remain, which cost cents a

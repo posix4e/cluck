@@ -614,6 +614,11 @@ by the guest itself.
   were kept; neither is so yet. The system's TCP has one segment on its way at a time and takes
   in 8 KB at a time, which the emulator's network on this machine hid, and the host's program
   opens a connection for every request.
+- **The system's TCP over such a path, as it is** (`scripts/tcp-linux-test`, which runs it as
+  the process `net-tcp-serve` against Linux's TCP with delay added; 2026-11-24). 2.5 MB up and
+  30 KB back with 12 ms there and back: **4.2 s** a request (Linux to Linux over the real path:
+  0.064 s). 1 KB up and 130 KB back with 40 ms: 3.7 s. With no delay: 0.22 s. These are the
+  numbers the work on it has to bring down before the builder can be fed over the internet.
   - Not done there: the builder (its guest needs this driver under the system's TCP, an address of
     its own choosing and a quote it asks for itself); anything measured from a machine near it (800
     requests a second from here is this machine's distance, not the guest's speed); a look at how

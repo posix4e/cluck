@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Tries the system's TCP (Kernel/Net/Tcp.lean, as the process net-tcp-serve) against Linux's own, over a
+path with delay and loss, and says how long requests of the builder's shape take. No root is needed: it
+makes itself a network of its own (a user and network namespace), puts a tap device in it for Linux's
+side, and carries frames between that device and net-tcp-serve, losing some on purpose when asked to.
+
+    scripts/tcp-linux-test [--delay MS] [--loss PERCENT] [--up BYTES] [--down BYTES] [--times N] [--fresh]
+
+A request is --up bytes sent to the stack (2,500,000 if not said) and --down bytes asked back (30,000),
+--times times over (10) on one connection kept open, or with --fresh on a new connection each time.
+--delay holds every frame from Linux back so many milliseconds, which is then the round trip; --loss
+loses that share of frames each way. What is printed: how many came back whole, and how long one took.
+"""
+import fcntl, os, random, socket, struct, subprocess, sys, threading, time
+
+if os.environ.get("TCP_INSIDE") != "1":
+    os.execvpe("unshare", ["unshare", "-Urn", sys.executable, os.path.abspath(__file__)] + sys.argv[1:], dict(os.environ, TCP_INSIDE="1"))
+
+def option(name, default):
+    return type(default)(sys.argv[sys.argv.index(name) + 1]) if name in sys.argv else default
+delay, loss = option("--delay", 0), option("--loss", 0.0) / 100
+up, down, times = option("--up", 2500000), option("--down", 30000), option("--times", 10)
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+rng = random.Random(1)
+counts = {"to_stack": 0, "from_stack": 0, "lost_to": 0, "lost_from": 0}
+running = True
+
+tap = os.open("/dev/net/tun", os.O_RDWR)
+fcntl.ioctl(tap, 0x400454ca, struct.pack("16sH22s", b"tap0", 0x0002 | 0x1000, b""))     # TUNSETIFF: a tap, frames bare
+for command in ("ip addr add 10.0.2.2/24 dev tap0", "ip link set tap0 up", "ip link set lo up",
+                "ip neigh replace 10.0.2.15 lladdr 02:00:00:00:00:02 dev tap0 nud permanent"):
+    subprocess.run(command.split(), check=True)
+if delay:
+    subprocess.run(f"tc qdisc add dev tap0 root netem delay {delay}ms limit 100000".split(), check=True)
+server = subprocess.Popen([os.path.join(here, ".lake/build/bin/net-tcp-serve")], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+to_server = threading.Lock()
+
+def inward():
+    while running:
+        try:
+            frame = os.read(tap, 4096)
+        except OSError:
+            return
+        if len(frame) < 34 or frame[12:14] != b"\x08\x00":
+            continue                                     # not IPv4: neighbour discovery and the like
+        if rng.random() < loss:
+            counts["lost_to"] += 1
+            continue
+        counts["to_stack"] += 1
+        with to_server:
+            try:
+                server.stdin.write(struct.pack(">H", len(frame)) + frame)
+            except OSError:
+                return
+
+def outward():
+    def exactly(n):
+        got = b""
+        while len(got) < n:
+            piece = server.stdout.read(n - len(got))
+            if not piece:
+                return None
+            got += piece
+        return got
+    while True:
+        head = exactly(2)
+        if head is None:
+            return
+        frame = exactly(struct.unpack(">H", head)[0])
+        if frame is None:
+            return
+        if rng.random() < loss:
+            counts["lost_from"] += 1
+            continue
+        counts["from_stack"] += 1
+        os.write(tap, frame)
+
+def clock():
+    while running:
+        time.sleep(0.005)
+        with to_server:
+            try:
+                server.stdin.write(b"\0\0")
+            except OSError:
+                return
+
+for work in (inward, outward, clock):
+    threading.Thread(target=work, daemon=True).start()
+
+request = struct.pack(">II", up, down) + bytes(max(0, up - 4))
+expected = bytes(i % 256 for i in range(down))
+
+def exact(s, n):
+    got = b""
+    while len(got) < n:
+        piece = s.recv(n - len(got))
+        if not piece:
+            raise EOFError("the stream ended early")
+        got += piece
+    return got
+
+def once(s):
+    began = time.time()
+    s.sendall(request)
+    n = struct.unpack(">I", exact(s, 4))[0]
+    body = exact(s, n)
+    return body == expected, time.time() - began
+
+whole, took, failed = 0, [], ""
+try:
+    s = None
+    for i in range(times):
+        if s is None or "--fresh" in sys.argv:
+            if s is not None:
+                s.close()
+            s = socket.create_connection(("10.0.2.15", 5005), timeout=60)
+            s.settimeout(120)
+        ok, t = once(s)
+        whole += ok
+        took.append(t)
+    s.close()
+except (OSError, EOFError) as error:
+    failed = f"; then {type(error).__name__}: {error}"
+running = False
+time.sleep(0.3)
+server.stdin.close()
+said = server.stderr.read().decode().strip()
+took.sort()
+linux = dict(line.split()[:2] for line in subprocess.run(["nstat", "-az"], capture_output=True, text=True).stdout.splitlines()[1:]
+             if line.split()[0] in ("TcpRetransSegs", "TcpInErrs", "TcpExtTCPTimeouts", "TcpInCsumErrors"))
+print(f"{up:,} bytes up and {down:,} back, {times} times on {'a new connection each' if '--fresh' in sys.argv else 'one connection'}, {delay} ms of delay, {loss * 100:g}% lost each way")
+print(f"  {whole} whole{failed}" + (f"; one took {took[len(took) // 2] * 1000:.0f} ms at the median, {took[0] * 1000:.0f} at the least, {took[-1] * 1000:.0f} at the most" if took else ""))
+print(f"  frames: {counts}; Linux says {linux}")
+print(f"  {said}")

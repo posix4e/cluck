@@ -213,6 +213,9 @@ lean_exe «flat-gen» where
 lean_exe «net-flat-bench» where
   root := `NetFlatBench
 
+lean_exe «net-tcp-serve» where
+  root := `NetTcpServe
+
 lean_exe «net-flat-serve» where
   root := `NetFlatServe
 

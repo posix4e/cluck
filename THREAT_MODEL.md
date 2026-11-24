@@ -73,6 +73,14 @@ the way:
   (`Kernel/Net/Gvnic.lean`): what it takes from the card (queue lengths, doorbell numbers, lengths of
   frames) is cut to what it can be before it is used, as in the first, and it is in no image that
   serves anything yet.
+- `silo_hw_write_direct` stores to a register of the claimed device by the processor's own
+  instruction, at the place the firmware says the device's window is, where every other register
+  access asks the firmware. It is checked to lie in a window like the others. It is there because in
+  a trust domain the firmware turns each access into a request to the host, and a register that is
+  hardware (the doorbells of Google's card) is not reached that way. What it leans on that the
+  others do not: that the firmware has mapped the device's windows as memory the host shares, and
+  that its word on where a window is, is right; a wrong word would be a store somewhere else in the
+  machine's addresses, which no check here would catch.
 - `silo_hw_store32` writes four bytes of the memory shared with a device in one go, checked as the
   other stores are; the driver's copies to and from that memory are made by `rep movsb` in
   `boot/efi/hw.c` and not by the runtime's `memcpy`. Neither reads anything.

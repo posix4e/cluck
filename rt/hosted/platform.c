@@ -121,6 +121,7 @@ lean_obj_res silo_hw_load_into(uint64_t address, lean_obj_arg bytes, size_t at, 
 lean_obj_res silo_hw_store_from(uint64_t address, b_lean_obj_arg bytes, size_t at, size_t size) { (void)address; (void)bytes; (void)at; (void)size; no_hardware(); }
 uint64_t silo_hw_ticks(void) { no_hardware(); }
 uint32_t silo_hw_load32(uint64_t address) { (void)address; no_hardware(); }
+lean_obj_res silo_hw_write_direct(uint64_t address, uint32_t value) { (void)address; (void)value; no_hardware(); }
 lean_obj_res silo_hw_store32(uint64_t address, uint32_t value) { (void)address; (void)value; no_hardware(); }
 uint16_t silo_hw_load16(uint64_t address) { (void)address; no_hardware(); }
 lean_obj_res silo_hw_store16(uint64_t address, uint16_t value) { (void)address; (void)value; no_hardware(); }

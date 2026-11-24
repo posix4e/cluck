@@ -574,13 +574,26 @@ by the guest itself.
   - On an ordinary machine (`n2-standard-2`, not a trust domain, the emulator's profile of the image):
     the card came up, sent and received; from this machine over the Internet `GET /` got its page, a
     page not there got 404, and a megabyte came in 0.29 s, three times, with nothing sent again.
-  - **On the machines that can be trust domains it does not work yet.** The C3 card takes every
-    command, lists this way of working among those it has, makes the queues, and then nothing moves:
-    of twelve frames given to it none was counted done, and nothing arrived. It lists the newer way
-    too (DQO), which Linux and DPDK take there. Tried and no different: its interrupt doorbells told
-    to be quiet, left alone, and opened, before the queues and after; one receiving place fewer handed
-    over; its packet size told to it. The same image's driver works on the older machine, so what is
-    wanting is the newer way of working, which is next.
+  - **In a trust domain** (`c3-standard-4`, TDX, 2026-11-24): it works. Image `flat-gce`
+    `497a7ea3…e6297325`, Google's firmware under it. From this machine over the Internet: `GET /` got
+    its page and a page not there 404; a megabyte came in 0.22 to 0.30 s, five times; 4,000 requests
+    on 16 connections kept open were all whole (12 ms each at the median, which is the distance);
+    40 megabytes, 8 at once, all whole in 1.4 s (229 megabits a second); the guest sent 90 segments
+    again in all of that and reset nothing.
+  - Two things stood in the way there, and neither was in the first driver.
+    - **The C3 card moves nothing the older way.** It takes that way's every command, lists it among
+      its options, makes the queues, and no frame is ever sent or arrives. It has a newer way (DQO,
+      with addresses as they are), which Linux and DPDK take there, and the driver now has it and
+      uses it when a card lists it. Shown apart from the trust domain: on a C3 that is not one the
+      newer way worked at once.
+    - **In a trust domain the doorbells have to be written by the processor itself.** With the newer
+      way in place the trust domain still moved nothing, where the same machine outside one did. The
+      firmware, in a trust domain, has the host carry out every register access it is asked for; the
+      card's doorbells there are hardware and do not hear of it. `Hw.writeDirect` stores to the
+      register as an operating system would, and with that the first frame was sent.
+    - And one that was only met there: told its packet size (as DPDK tells it), the card in a trust
+      domain starts over, three times of three; outside one it does not. The newer way leaves that
+      command out, as Linux does unless the size is to change.
   - What was learnt on the way: the card gives 64 pages for sending where 512 was expected, so frames
     go in places of 2,048 bytes taken in turn and not one a descriptor; told that every receiving
     place is its own it takes none (one fewer is handed over); it must be told its packet size before
@@ -589,7 +602,13 @@ by the guest itself.
     address is the machine's, given when the machine is made (a subnet 10.0.2.0/24 and the address
     10.0.2.15); nothing here asks the network for an address.
   - Opened to this machine's address only, by a firewall rule made for it; nothing of it is public.
+  - Not done there: the builder (its guest needs this driver under the system's TCP, an address of
+    its own choosing and a quote it asks for itself); anything measured from a machine near it (800
+    requests a second from here is this machine's distance, not the guest's speed); a look at how
+    often the guest leaves the trust domain there; checking an image against RTMR1.
   - Spent so far on Compute Engine for this: under a dollar (of 100 agreed); nothing is left running.
+    A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone (`silo-test-from-home`),
+    two images and their disk files remain, which cost cents a month.
 
 ## Ethereum block import, as a service (`evm/`)
 
@@ -1559,8 +1578,24 @@ times, and the block from the relay. Six stages:
     arrive: 12 ms at the median for 1.7 MB in twelve slots more, where it had been some 400) the
     images are `9cba036e…533321d7` and, for shadow runs, `ce2638bb…7e5dcfec`; `check-secret-code tdx`, `run-fixtures tdx --limits --key`,
     `run-fixtures dev --limits`, the hosted tests and `scripts/test-efi` in both profiles pass.
-    - The 1,000 slots above are on the image before this. A run on this one was started after
-      this was written; its result goes below.
+    - **1,000 slots in a row on this image**, 2026-11-23 20:42 to 2026-11-24 00:03 UTC, blocks
+      26480298 to 26481296, in TDX against the stand-in: every slot with a block; 7,635 blocks sent
+      of 7,782 built (144 kept for paying no more than one sent, 2 ended too late, 1 round built
+      none), all valid and signed, none after its slot began; 7,633 the same at the stand-in and 2
+      unanswered in three seconds, as before. Eight rounds a slot at the median, a round 0.83 s,
+      asking the guest 0.53 s for a request of 2.5 MB. Against the blocks proposers took in 875 of
+      the slots: ours 29% of theirs at the median, 93% at best, never more; of what theirs held that
+      was public a second before the slot, ours held 94% by fees at the median (91% summed), and
+      half a second before, 90%. The run before held 90% and 86%.
+    - **An hour of bids at the four relays, unpaid, on it** (2026-11-24 00:04 to 01:05 UTC, 300
+      slots, blocks 26481300 to 26481600; `/data/eth/shadow/live5/`). 2,029 bids sent by the guest
+      where the hour before sent 1,432; all judged valid here; none answered after its slot began,
+      the last of a slot 0.82 s before it at the median. The relays answered 200 or 202 to all but
+      four: two "zero value block" and one "zero value bid" (a block that paid nothing was sent,
+      which should not be), and one "unknown parent hash" (the relay had not the parent yet). None
+      was taken by a proposer. Against the taken blocks in 253 slots: ours 18% of theirs at the
+      median and 4.5% summed, in an hour when theirs were worth twice what they were the night
+      before; 92% by fees of what was public a second before.
     - Still 0.17 s a round outside the guest's work at the median. Not looked into: QEMU's own
       network, which the builder's guest is still behind (the trial TCP was measured on the
       kernel's and on a poller); how often the guest tells the host of a frame it sends.

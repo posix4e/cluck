@@ -81,18 +81,18 @@ def main : IO UInt32 := do
       if clock != last then
         (t, tx) := tick cfg answers now (clock - last).toUInt32 t tx
         last := clock
-      if clock - told ≥ 5000 && looks < 12 then tx := asking cfg 0x0a000201 tx
+      if clock - told ≥ 5000 && looks < 3 then tx := asking cfg 0x0a000201 tx
       (rings, scratch) ← Gvnic.transmit card rings scratch tx
       if length == 0 then Hw.pause
       if clock - told ≥ 5000 then
         told := clock
-        if looks < 12 then
+        if looks < 3 then
           -- The first minute: how the card stands, whatever has or has not come.
           looks := looks + 1
           let status ← Gvnic.reg card.registers
-          let first ← Hw.load (card.rxDesc + 48) 16
-          let done ← Hw.load32 card.txCount
-          say s!"flat-gce: looking: status {hex status.toNat 8}, sent {rings.posted} descriptors of which the card says {hex (Gvnic.swap32 done).toNat 8} done, taken {rings.taken}, expecting {rings.expected}, the first descriptor ends {String.join ((List.range 16).map fun i => hex (first.get! i).toNat 2)}"
+          let first ← Hw.load card.rxDesc 16
+          let done ← if card.newer then Hw.load card.txDone 8 else Hw.load card.txCount 4
+          say s!"flat-gce: looking: status {hex status.toNat 8}, sending at {rings.posted} with the card at {rings.finished}, its word on that begins {String.join ((List.range done.size).map fun i => hex (done.get! i).toNat 2)}, taken {rings.taken}, expecting {rings.expected}, what has come begins {String.join ((List.range 16).map fun i => hex (first.get! i).toNat 2)}"
         if rings.frames != seen then
           seen := rings.frames
           say s!"flat-gce: {rings.frames} frames in and out, {rings.dropped} dropped at the card; accepted {ld64 t 8}, closed {ld64 t 16}, live {ld64 t 0}, dropped {ld64 t 32}, sent again {ld64 t 72} and {ld64 t 96}, timed out {ld64 t 80}, resets sent {ld64 t 88}"

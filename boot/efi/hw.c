@@ -32,6 +32,7 @@ static Handle *found;
 static size_t found_count;
 static PciIo *device;
 static uint64_t window_size[6];
+static uint64_t window_start[6];
 static uint8_t *arena;
 static size_t arena_used;
 
@@ -84,8 +85,9 @@ uint8_t silo_hw_claim(size_t index) {
     for (uint8_t bar = 0; bar < 6; bar++) {
         Range *range = NULL;
         window_size[bar] = 0;
+        window_start[bar] = 0;
         if (pci->bar_attributes(pci, bar, NULL, (void **)&range) != 0 || !range) continue;
-        if (range->tag == 0x8a && range->kind == 0) window_size[bar] = range->size;
+        if (range->tag == 0x8a && range->kind == 0) { window_size[bar] = range->size; window_start[bar] = range->minimum; }
         bs->free_pool(range);
     }
     void *host = NULL;
@@ -216,6 +218,19 @@ uint16_t silo_hw_load16(uint64_t address) {
 lean_obj_res silo_hw_store16(uint64_t address, uint16_t value) {
     *pair_at(address) = value;
     __sync_synchronize();
+    return lean_box(0);
+}
+
+// A device register written by the processor's own store, and not by way of the firmware. In a trust
+// domain the firmware does not touch a register itself: it asks the host to carry the access out. Some
+// registers are the device's own all the way down and only answer to a store made on them (the
+// doorbells of Google's network card, on the machines where the card is hardware): an operating system
+// writes those directly, and so does this. The register must be in a window of the claimed device, like
+// any other; where it is in the machine's addresses is the firmware's word.
+lean_obj_res silo_hw_write_direct(uint64_t address, uint32_t value) {
+    uint8_t bar = window_of(address, 4);
+    if (!window_start[bar]) rt_stop("a driver wrote directly to a window the firmware gave no place for");
+    *(volatile uint32_t *)(uintptr_t)(window_start[bar] + (address & 0xffffffff)) = value;
     return lean_box(0);
 }
 

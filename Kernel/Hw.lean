@@ -98,6 +98,13 @@ opaque store16 (address : UInt64) (value : UInt16) : BaseIO Unit
 @[extern "silo_hw_command_line"]
 opaque commandLine : BaseIO ByteArray
 
+/-- A 32-bit device register written by the processor's own store and not by way of the firmware. For a
+register that is the device's own hardware and answers to nothing else (in a trust domain the firmware
+has the host carry out every access it is asked for, and such a register does not hear of it). Stops
+the machine if `address` is not inside a window. -/
+@[extern "silo_hw_write_direct"]
+opaque writeDirect (address : UInt64) (value : UInt32) : BaseIO Unit
+
 /-- Four bytes of device memory at an address that is a multiple of four, least significant first, read
 in one go. -/
 @[extern "silo_hw_load32"]

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Feeds a builder's guest that runs somewhere else, for as long as this is left running:
+#
+#   builder/feed ADDRESS DIR [--hold]          (from evm/)
+#
+# It runs builder/shadow against the guest at ADDRESS an hour of slots at a time (300), live, the guest
+# posting its blocks itself to the four relays its image has, unpaid; with --hold, posting to none. Each
+# hour has a record of its own in DIR, named by when it began, and with it the guest's keys and the quotes
+# of them, asked for anew each hour. After each hour one line says what the hour was: slots, blocks,
+# what our node made of them, what the relays answered.
+#
+# It stops by itself, leaving DIR/STOPPED saying why, when more than one in twenty of an hour's answers
+# from relays were refusals: something is wrong then that a person should look at before another bid goes
+# out. A guest that cannot be reached is tried again every minute. A block of ours that becomes the
+# chain's head ends that hour's run early, as builder/shadow does, and the next begins.
+#
+# Requests that were slow are kept whole by builder/shadow (DIR/slow), megabytes each: those older than a
+# day are removed here.
+#
+# This is the untrusted host's side. It never goes in an image.
+set -uo pipefail
+[[ $# -ge 2 ]] || { echo "usage: builder/feed ADDRESS DIR [--hold]" >&2; exit 2; }
+address="$1"; dir="$2"; hold="${3:-}"
+[[ -z "$hold" || "$hold" == --hold ]] || { echo "usage: builder/feed ADDRESS DIR [--hold]" >&2; exit 2; }
+here="$(cd "$(dirname "$0")/.." && pwd)"
+relays=https://boost-relay.flashbots.net,https://relay-builders-us.ultrasound.money,https://aestus.live,https://us-global.titanrelay.xyz
+mkdir -p "$dir"
+cd "$here"
+while true; do
+  if [[ -e "$dir/STOPPED" ]]; then
+    echo "feed: stopped earlier, and $dir/STOPPED says why; remove it to go on"
+    exit 0
+  fi
+  log="$dir/$(date -u +%Y%m%d-%H%M%S).jsonl"
+  # shellcheck disable=SC2086
+  python3 -I builder/shadow --guest "$address" --live --guest-sends $hold --rebid --ready 0.7 --finishing 0.25 \
+    --relay-wait 1500 --relays "$relays" --slots 300 --log "$log" > /dev/null 2> "$log.err"
+  status=$?
+  if [[ ! -s "$log" ]]; then
+    echo "feed: nothing came of a run against $address (exit $status): $(tail -n 1 "$log.err" 2>/dev/null | cut -c1-200)"
+    rm -f "$log" "$log.err"
+    sleep 60
+    continue
+  fi
+  [[ -s "$log.err" ]] || rm -f "$log.err"
+  python3 -I - "$log" "$dir/STOPPED" <<'PY' || exit 0
+import collections, json, statistics, sys
+rows = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+rounds = [x for r in rows for x in r.get("rounds") or []]
+judged = collections.Counter(str(x.get("judged"))[:40] for x in rounds)
+answers = collections.Counter()
+for x in rounds:
+    for status, text in x.get("relay") or []:
+        answers["took it" if status in (200, 202) else "no answer" if status == "no answer" else f"refused ({status}): {text.strip()[:60]}"] += 1
+total, refused = sum(answers.values()), sum(n for what, n in answers.items() if what.startswith("refused"))
+print(f"feed: {len(rows)} slots from block {rows[0]['number']}, {len(rounds)} blocks ({statistics.median(len(r.get('rounds') or []) for r in rows)} a slot), "
+      f"judged here {dict(judged)}; relays: {dict(answers) or 'none asked'}; guest replaced {max((r.get('guest_replaced') or 0) for r in rows)} times; "
+      f"landed {[r['number'] for r in rows if r.get('landed')]}", flush=True)
+if total >= 40 and refused * 20 > total:
+    with open(sys.argv[2], "w") as f:
+        f.write(f"{refused} of {total} answers from relays in {sys.argv[1]} were refusals: {dict(answers)}\n")
+    print("feed: too many refusals; stopping", flush=True)
+    sys.exit(1)
+PY
+  find "$dir/slow" -type f -mmin +1440 -delete 2>/dev/null
+done

@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""What a TDX machine of Google Compute Engine will have in RTMR1 after starting an EFI application from
+the disk scripts/gce-image makes of it, worked out from the application's file alone.
+
+    scripts/gce-measure BOOTX64.EFI [QUOTE-OR-REPORT]
+
+It prints the 48 bytes. Given a quote (as the builder's guest answers "JQUO1" with) or a report (the
+1,024 bytes after an attested answer), it also says whether the RTMR1 in it is that, and prints the
+other measurements in it, which this does not work out: MRTD is Google's firmware, for Google to vouch
+for, and RTMR0 is what the firmware measured of the machine's configuration.
+
+How it is worked out. Google's firmware keeps a log of what it measures (a Linux guest there can read it,
+/sys/firmware/acpi/tables/data/CCEL; one read on 2026-11-24 is what this follows). Into RTMR1 go, in
+this order, each as SHA-384 of the bytes named, and the register is each time SHA-384 of what it was
+and the new digest, from 48 zero bytes:
+
+  1. the words "Calling EFI Application from Boot Option"
+  2. four zero bytes (a separator)
+  3. the disk's partition table as UEFI describes it for measuring: the GPT header, the number of
+     partitions in use as eight bytes, and the entries of those partitions
+  4. the application, by the hash Authenticode defines for a PE file: the file but for its checksum and
+     the directory entry for certificates, headers first and then the sections in file order
+
+An application that goes on to leave the firmware's boot services would add two more; the images here
+never do. scripts/gce-image makes the same disk for the same application, so the partition table is
+known: this makes the disk again and reads the table off it.
+
+That is what the firmware did on the day its log was read. Nothing obliges Google to keep it so, and
+the check against a real quote is the only proof that this still describes it.
+"""
+import hashlib, os, struct, subprocess, sys, tarfile, tempfile
+
+def authenticode_sha384(pe):
+    """The Authenticode hash of an unsigned PE32+ file, as firmware measures an application."""
+    at = struct.unpack_from("<I", pe, 0x3c)[0]
+    if pe[at:at + 4] != b"PE\0\0":
+        sys.exit("gce-measure: not a PE file")
+    sections, optional_size = struct.unpack_from("<H", pe, at + 6)[0], struct.unpack_from("<H", pe, at + 20)[0]
+    optional = at + 24
+    magic = struct.unpack_from("<H", pe, optional)[0]
+    if magic != 0x20b:
+        sys.exit("gce-measure: not a 64-bit PE file")
+    checksum = optional + 64
+    directories = optional + 112
+    certificates = directories + 4 * 8                      # the fifth directory entry
+    headers = struct.unpack_from("<I", pe, optional + 60)[0]
+    if struct.unpack_from("<II", pe, certificates) != (0, 0):
+        sys.exit("gce-measure: the file is signed; this works out unsigned files only")
+    h = hashlib.sha384()
+    h.update(pe[:checksum])
+    h.update(pe[checksum + 4:certificates])
+    h.update(pe[certificates + 8:headers])
+    table = optional + optional_size
+    done = headers
+    for where, size in sorted((struct.unpack_from("<I", pe, table + 40 * i + 20)[0], struct.unpack_from("<I", pe, table + 40 * i + 16)[0])
+                              for i in range(sections)):
+        if size:
+            h.update(pe[where:where + size])
+            done += size
+    h.update(pe[done:])                                      # anything after the last section
+    return h.digest()
+
+def gpt_event(disk):
+    """The partition table as it is measured: header, count of entries in use, those entries."""
+    header = disk[512:512 + 92]
+    if header[:8] != b"EFI PART":
+        sys.exit("gce-measure: the disk has no GPT")
+    first, count, size = struct.unpack_from("<QII", header, 72)
+    entries = [disk[first * 512 + i * size:first * 512 + (i + 1) * size] for i in range(count)]
+    used = [e for e in entries if e[:16] != bytes(16)]
+    return header + struct.pack("<Q", len(used)) + b"".join(used)
+
+def rtmr1(application):
+    here = os.path.dirname(os.path.abspath(__file__))
+    with tempfile.TemporaryDirectory() as work:
+        packed = os.path.join(work, "disk.tar.gz")
+        subprocess.run([os.path.join(here, "gce-image"), application, packed], check=True, stdout=subprocess.DEVNULL)
+        with tarfile.open(packed) as tar:
+            disk = tar.extractfile("disk.raw").read(64 * 512)
+    with open(application, "rb") as f:
+        pe = f.read()
+    digests = [hashlib.sha384(b"Calling EFI Application from Boot Option").digest(),
+               hashlib.sha384(bytes(4)).digest(),
+               hashlib.sha384(gpt_event(disk)).digest(),
+               authenticode_sha384(pe)]
+    register = bytes(48)
+    for digest in digests:
+        register = hashlib.sha384(register + digest).digest()
+    return register, digests
+
+if __name__ == "__main__":
+    if len(sys.argv) not in (2, 3):
+        sys.exit(__doc__)
+    register, digests = rtmr1(sys.argv[1])
+    for name, digest in zip(("the words", "the separator", "the partition table", "the application"), digests):
+        print(f"  {name}: {digest.hex()}")
+    print(f"RTMR1 for this application: {register.hex()}")
+    if len(sys.argv) == 3:
+        with open(sys.argv[2], "rb") as f:
+            given = f.read()
+        # In a report the trust domain's own part begins at byte 512; in a quote, after the 48-byte header.
+        # Either way: 16 bytes before MRTD in a report's part, 136 in a quote's, then MRTD and after
+        # three more fields of 48 bytes the four RTMRs.
+        if len(given) == 1024:
+            kind, mrtd = "report", 512 + 16
+        elif len(given) > 632 and given[:2] == b"\x04\x00":
+            kind, mrtd = "quote", 48 + 136
+        else:
+            sys.exit("gce-measure: neither a report of 1,024 bytes nor a version 4 quote")
+        fields = {"MRTD": given[mrtd:mrtd + 48]}
+        for i in range(4):
+            fields[f"RTMR{i}"] = given[mrtd + 48 * (4 + i):mrtd + 48 * (5 + i)]
+        for name, value in fields.items():
+            print(f"  the {kind}'s {name}: {value.hex()}")
+        same = fields["RTMR1"] == register
+        print(f"the {kind}'s RTMR1 is {'the one worked out: this application, started this way' if same else 'NOT the one worked out'}")
+        sys.exit(0 if same else 1)

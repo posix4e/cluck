@@ -693,9 +693,24 @@ by the guest itself.
     90 ms as seen from here. Both pass every step of the page's own check
     (`evm/demo/verify.js`) up to Intel's root. `builder/shadow --guest` now keeps such quotes
     of the guest's two keys beside its log.
-    - Not done: saying what the quote's measurements should be for an image (MRTD there is
-      Google's firmware; RTMR1 is where the image is measured, and nothing here recomputes it
-      yet), and with that, a check anyone can run of a quote against an image.
+  - **RTMR1 worked out from the image's file** (2026-11-24; `scripts/gce-measure BOOTX64.EFI
+    [QUOTE]`). Google's firmware logs what it measures, and a stock Linux trust domain there
+    was started for a minute to read that log. Into RTMR1 go four things: the words "Calling
+    EFI Application from Boot Option", a separator, the disk's partition table, and the
+    application by its Authenticode hash. The disk is made the same for the same application
+    (`scripts/gce-image`), so all four follow from the file. For the builder's image as it ran
+    there the script gives 59560425…c2a50579, and that is the RTMR1 in the guest's report and
+    in the quotes of its keys. RTMR2 and RTMR3 are nothing, as expected of a program that
+    never leaves the firmware. MRTD there, f21e6b48…1731e5d3, is the firmware's, and Google
+    keeps a signed statement under that very name
+    (`gs://gce_tcb_integrity/ovmf_x64_csm/tdx/`); that statement's signature is **not checked
+    here yet**, nor is RTMR0 (the machine's configuration as the firmware measured it)
+    worked out.
+    - So a quote can now be checked against an image by anyone with the image's file:
+      `evm/demo/verify.js` for the quote's signatures up to Intel, `scripts/gce-measure` for
+      which program it is. Not done: one command or page that does both and says so in plain
+      words; building the image twice and getting the same file, which nobody has tried on
+      another machine.
   - Not done there: a bid sent; a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
     A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone

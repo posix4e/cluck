@@ -23,6 +23,10 @@ is entered, in what carries bytes to the service, and in what the attestation is
 A short tour of all three, with a picture of the attestation being checked in a browser, is at
 <https://posix4e.github.io/cluck/> (`docs/`).
 
+[REPORT.md](REPORT.md) is a short account of the builder in `evm/` for people who build blocks in trusted
+execution environments: what is inside the trust domain, what is still trusted, what it does on Google
+Cloud, and how to check a bid of its back to this source.
+
 What is done and what is left is in [TODO.md](TODO.md). What it defends against, and what it does not, is in
 [THREAT_MODEL.md](THREAT_MODEL.md). How to work on it is in [CONTRIBUTING.md](CONTRIBUTING.md). To build a
 service of your own on it, see "Building on it" below.

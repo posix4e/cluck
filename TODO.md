@@ -809,6 +809,17 @@ by the guest itself.
       the image's file here, all four hold; with the key of the guest before it, the fourth
       fails. So from a bid in a relay's public list to the program that signed it there is
       now a check for every step, on files anyone can have.
+    - **Its first whole hour there** (19:58 to 20:58 UTC, 300 slots from block 26487261;
+      `/data/eth/shadow/gce-live/20261124-195834.jsonl`): 1,540 blocks built, 1,490 sent, all
+      judged valid here and signed; 4,839 of 4,840 answers from relays 200 or 202, one post
+      unanswered in the time allowed, none refused; no bid answered after its slot began, the
+      last of a slot 0.78 s before it at the median; five rounds a slot, a round 1.15 s. By
+      the guest's console: a request (1.5 MB at the median) 151 ms in coming, 359 for one in
+      ten; a block 453 ms to build, 765 for one in ten; a post 74 ms, 141 for one in ten;
+      4,840 posts on kept connections and 6 on new ones.
+    - `REPORT.md` is the account of all this for someone outside; `evm/live/` holds the
+      running guest's key, the quote of it and the command that checks them, replaced
+      whenever the guest is started again.
     - Not run: 1,000 slots on this image.
   - **The image built twice is the same file** (2026-11-24). The repository copied to another
     directory, its own build products and Jaune's removed, and `scripts/build-efi tdx evm-os`

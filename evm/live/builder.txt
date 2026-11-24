@@ -1,0 +1,22 @@
+The builder's guest on Google Compute Engine, as it has run since 2026-11-24 19:58 UTC
+(c3-standard-4 with TDX, us-central1). A guest draws its key when it starts, so these are of this
+start and no other; when the guest is started again this file and builder.quote are replaced.
+
+source      commit 0a2259e of this repository
+image       evm/scripts/build-efi tdx  ->  evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI
+            SHA-256 bfd47e1db9ec4152b814a401512069ee9c7291ea64ff212e25c66fb8e0629dde
+builder key 0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20
+challenge   0x4e5abf620b444e5547e94bc209a78f6f3df002645234279c3937841c3a9b10c3
+            (the hash of mainnet block 26487260, so the quote is no older than that block)
+quote       builder.quote, 8,000 bytes: the guest's answer to "what is your key for bids", asked with
+            that challenge, quoted by the machine it runs on
+
+To check, from the repository's root, with node and openssl installed and the image built:
+
+    scripts/gce-check evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI evm/live/builder.quote \
+      0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20 \
+      0x4e5abf620b444e5547e94bc209a78f6f3df002645234279c3937841c3a9b10c3
+
+The bids it has sent, as a relay lists them:
+
+    https://boost-relay.flashbots.net/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20

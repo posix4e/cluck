@@ -8,10 +8,13 @@ OBJ-DIRECTORY is where scripts/build-efi left its objects and `image.map`
 (.lake/build/efi/tdx/obj for the OS's image, .lake/build/efi/tdx/evm-os/obj for the builder's, which is
 what is taken when none is named and this is run from evm/). The image must have been built there.
 
-Counted: sections of code and of data that is in the file. Not counted: memory that is only set aside
-(the heap, stacks), which is nothing but zeros. What the linker makes itself (tables for moving the image
-to where it is loaded) is a line of its own. A Lean function is put down to the package whose name it
-carries; C to the file it was compiled from.
+Counted: sections of code and of data that are in the EFI file. Not counted: memory that is only set
+aside (the heap, stacks), which is nothing but zeros; and what the linker writes beside the program for
+its own use and boot/efi/mkefi.py leaves out of the file (the tables of symbols and their names, and
+the list of places to adjust when the image is loaded, which the file carries in the firmware's own
+shorter form: that is counted, read from the file). Until 2026-11-24 those were counted as part of the
+image, which made it out half as big again as it is and everything in it a smaller share. A Lean
+function is put down to the package whose name it carries; C to the file it was compiled from.
 """
 import collections, glob, os, re, sys
 
@@ -42,7 +45,10 @@ for text in open(os.path.join(obj, "image.map"), errors="replace"):
     source = sources[int(numbered.group(1))] if numbered and int(numbered.group(1)) < len(sources) else where
     package = re.match(r"(?:_init_)?lp_([a-zA-Z0-9]+(?:_x2d[a-zA-Z0-9]+)*)_", symbol)
     if where == "<internal>":
-        origin = "the linker's own tables"
+        # Text the linker gathered from many objects into one copy is in the file; its own tables are not.
+        if not section.startswith((".rodata", ".text", ".data", ".got")):
+            continue
+        origin = "constants the linker gathered from many objects"
     elif package:
         origin = "Lean, package " + package.group(1).replace("_x2d", "-")
     elif re.match(r"(_init_)?l_|initialize_|_init_", symbol) or re.search(r"lib(Init|Std|Lean)\.a", where):
@@ -56,13 +62,26 @@ for text in open(os.path.join(obj, "image.map"), errors="replace"):
     sizes[origin] += size
     by_file[origin][source] += size
 
+# The places to adjust on loading, as the file has them, and the file's own length.
+efi = os.path.join(os.path.dirname(os.path.abspath(obj)), "BOOTX64.EFI")
+file_size = 0
+if os.path.exists(efi):
+    import struct
+    blob = open(efi, "rb").read()
+    file_size = len(blob)
+    pe = struct.unpack_from("<I", blob, 0x3c)[0]
+    table = pe + 24 + struct.unpack_from("<H", blob, pe + 20)[0]
+    for i in range(struct.unpack_from("<H", blob, pe + 6)[0]):
+        name, virtual = struct.unpack_from("<8sI", blob, table + i * 40)
+        if name.rstrip(b"\0") == b".reloc":
+            sizes["the list of places to adjust on loading"] += virtual
 total = sum(sizes.values())
 def lines(path):
     try:
         return sum(1 for _ in open(path, errors="replace"))
     except OSError:
         return 0
-print(f"{obj}: {total:,} bytes of code and data in the image")
+print(f"{obj}: {total:,} bytes of code and data in the image" + (f"; the file is {file_size:,} bytes" if file_size else ""))
 c_bytes = c_lines = 0
 for origin, size in sorted(sizes.items(), key=lambda kv: (not kv[0].startswith("C"), -kv[1])):
     extra = ""

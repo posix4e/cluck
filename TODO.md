@@ -1821,6 +1821,15 @@ times, and the block from the relay. Six stages:
     - Still 0.17 s a round outside the guest's work at the median. Not looked into: QEMU's own
       network, which the builder's guest is still behind (the trial TCP was measured on the
       kernel's and on a poller); how often the guest tells the host of a frame it sends.
+  - **The count below was wrong about the image's size, and is put right** (2026-11-24, found by a
+    reader set to check `REPORT.md` against the repository). `scripts/image-inventory` counted
+    the linker's tables of symbols and their names and its list of relocations as part of the
+    image, 2.6 MB of them; `boot/efi/mkefi.py` leaves those out of the file, which carries
+    relocations in the firmware's shorter form (15 KB). The file is 4.9 MB, not 7.2 or 7.5. The
+    script now counts what is in the file. For the image running on Compute Engine
+    (`bfd47e1d…e0629dde`, 4,898,304 bytes, 4,813,109 counted): Jaune 31.3%, this package's Lean
+    30.3%, Lean's library 28.8%, the OS's Lean 7.6%, C 30,580 bytes or 0.6% from 4,125 lines.
+    The bytes of each part below were right; the shares and the total were not.
   - **What is in the builder's image, counted** (2026-11-23; `scripts/image-inventory` reads the
     linker's map). Of 7.2 MB of code and data in image `9cba036e…533321d7`: 2.6 MB is the linker's
     tables for moving the image; 1.5 MB is Jaune, which this project did not write; 1.4 MB is this

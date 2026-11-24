@@ -817,9 +817,21 @@ by the guest itself.
       the guest's console: a request (1.5 MB at the median) 151 ms in coming, 359 for one in
       ten; a block 453 ms to build, 765 for one in ten; a post 74 ms, 141 for one in ten;
       4,840 posts on kept connections and 6 on new ones.
-    - `REPORT.md` is the account of all this for someone outside; `evm/live/` holds the
-      running guest's key, the quote of it and the command that checks them, replaced
-      whenever the guest is started again.
+    - `REPORT.md` is the account of all this for someone outside. `docs/live/` holds the
+      running guest's key, the quote of it and the command that checks them, written by
+      `scripts/gce-live` whenever the guest is started again (it runs `gce-check` on what it
+      wrote). **A page checks the quote in a browser**: `docs/live.html`, at
+      <https://posix4e.github.io/cluck/live.html>, with `docs/live.js` and the demo's own
+      `verify.js`: the seven steps up to Intel's root, that the quote is of the answer naming
+      that key, that RTMR1 is the one the record gives for the image, that RTMR2 and RTMR3 are
+      nothing. `evm/demo/test-live.mjs` runs the same under node on the files served, and on
+      seven wrong ones (another key, challenge or RTMR1; a changed or shortened quote; a date
+      past the certificates), each refused. The page was looked at in a headless browser from
+      a local copy of the site: ten checks, all holding. It says what it does not show: it
+      takes the image's RTMR1 from the record, does not check Google's statement, and comes
+      from the same site as its files. Not looked at: the page as GitHub serves it; a phone.
+      Three relays answer for the key's bids (Flashbots, Ultrasound, Aestus); Titan's list
+      answered 408.
     - Not run: 1,000 slots on this image.
   - **The image built twice is the same file** (2026-11-24). The repository copied to another
     directory, its own build products and Jaune's removed, and `scripts/build-efi tdx evm-os`

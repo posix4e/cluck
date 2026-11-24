@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""Writes what the public page says of the builder's guest on Compute Engine (docs/live/), from what
+builder/shadow kept when it last learned the guest's keys.
+
+    scripts/gce-live KEYS.json BOOTX64.EFI STARTED [CHALLENGE-BLOCK]        (from the repository's root)
+
+KEYS.json is the `.keys.json` beside a log of builder/feed's; BOOTX64.EFI the image the guest runs;
+STARTED when it was started, as words for a reader ("2026-11-24 19:58 UTC"); CHALLENGE-BLOCK the number
+of the block whose hash the challenge is, when known. It writes docs/live/builder.quote (the quote of
+the guest's key for bids), docs/live/builder.json (the key, the challenge, the image's SHA-256 and the
+RTMR1 scripts/gce-measure works out for it, the commit) and docs/live/builder.txt (the same for a person,
+with the command that checks it), copies evm/demo/verify.js to docs/, and then runs scripts/gce-check on
+what it wrote: it fails, leaving the files, if the quote is not of that image and key.
+
+A guest draws its keys when it starts, so this is run again whenever the guest is.
+"""
+import hashlib, json, os, shutil, subprocess, sys
+
+if len(sys.argv) not in (4, 5):
+    sys.exit(__doc__)
+keys, image, started = json.load(open(sys.argv[1])), sys.argv[2], sys.argv[3]
+block = sys.argv[4] if len(sys.argv) == 5 else None
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+out = os.path.join(root, "docs", "live")
+os.makedirs(out, exist_ok=True)
+quote = bytes.fromhex(keys["builder_quote"])
+measured = subprocess.run([os.path.join(root, "scripts/gce-measure"), image], capture_output=True, text=True, check=True).stdout
+rtmr1 = measured.strip().splitlines()[-1].split(": ")[1]
+commit = subprocess.run(["git", "-C", root, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+record = {"started": started, "commit": commit, "image_sha256": hashlib.sha256(open(image, "rb").read()).hexdigest(),
+          "image_bytes": os.path.getsize(image), "rtmr1": rtmr1, "builder": keys["builder"], "challenge": keys["challenge"],
+          "challenge_block": int(block) if block else None, "quote": "builder.quote", "quote_bytes": len(quote)}
+with open(os.path.join(out, "builder.quote"), "wb") as f: f.write(quote)
+with open(os.path.join(out, "builder.json"), "w") as f: f.write(json.dumps(record, indent=1) + "\n")
+shutil.copyfile(os.path.join(root, "evm/demo/verify.js"), os.path.join(root, "docs/verify.js"))
+of_block = f"\n            (the hash of mainnet block {block}, so the quote is no older than that block)" if block else ""
+with open(os.path.join(out, "builder.txt"), "w") as f:
+    f.write(f"""The builder's guest on Google Compute Engine, as it has run since {started}
+(c3-standard-4 with TDX, us-central1). A guest draws its key when it starts, so these are of this
+start and no other; when the guest is started again these files are written again (scripts/gce-live).
+
+source      commit {commit} of this repository, or the one before it that changed what goes in the image
+image       evm/scripts/build-efi tdx  ->  evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI
+            {record['image_bytes']:,} bytes, SHA-256 {record['image_sha256']}
+RTMR1       {rtmr1}
+            (what Google's firmware measures for that file: scripts/gce-measure)
+builder key {keys['builder']}
+challenge   {keys['challenge']}{of_block}
+quote       builder.quote, {len(quote):,} bytes: the guest's answer to "what is your key for bids", asked with
+            that challenge, quoted by the machine it runs on
+
+In a browser: https://posix4e.github.io/cluck/live.html checks the quote against this record.
+
+Without taking the record's word for the image, from the repository's root, with node and openssl
+installed and the image built:
+
+    scripts/gce-check evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI docs/live/builder.quote \\
+      {keys['builder']} \\
+      {keys['challenge']}
+
+The bids it has sent, as a relay lists them:
+
+    https://boost-relay.flashbots.net/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey={keys['builder']}
+""")
+checked = subprocess.run([os.path.join(root, "scripts/gce-check"), image, os.path.join(out, "builder.quote"), keys["builder"], keys["challenge"]])
+sys.exit(checked.returncode)

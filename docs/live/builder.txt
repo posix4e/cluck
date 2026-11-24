@@ -1,0 +1,27 @@
+The builder's guest on Google Compute Engine, as it has run since 2026-11-24 19:58 UTC
+(c3-standard-4 with TDX, us-central1). A guest draws its key when it starts, so these are of this
+start and no other; when the guest is started again these files are written again (scripts/gce-live).
+
+source      commit 865fdf7 of this repository, or the one before it that changed what goes in the image
+image       evm/scripts/build-efi tdx  ->  evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI
+            4,898,304 bytes, SHA-256 bfd47e1db9ec4152b814a401512069ee9c7291ea64ff212e25c66fb8e0629dde
+RTMR1       30adead3c0211d36084a811e97cf6a72413844b35e621d462844ef9950e52dadd4a778dcfe1b0c92a4b415607ab44375
+            (what Google's firmware measures for that file: scripts/gce-measure)
+builder key 0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20
+challenge   0x3981d6ecc6ccd7597cc06c4f7a2d77852a1ab86c23b3a606afce3af77ebb41ae
+            (the hash of mainnet block 26487559, so the quote is no older than that block)
+quote       builder.quote, 8,000 bytes: the guest's answer to "what is your key for bids", asked with
+            that challenge, quoted by the machine it runs on
+
+In a browser: https://posix4e.github.io/cluck/live.html checks the quote against this record.
+
+Without taking the record's word for the image, from the repository's root, with node and openssl
+installed and the image built:
+
+    scripts/gce-check evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI docs/live/builder.quote \
+      0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20 \
+      0x3981d6ecc6ccd7597cc06c4f7a2d77852a1ab86c23b3a606afce3af77ebb41ae
+
+The bids it has sent, as a relay lists them:
+
+    https://boost-relay.flashbots.net/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20

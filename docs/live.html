@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cluck: the builder on Google Cloud, checked here</title>
+<meta name="description" content="A block builder that is one Lean program in an Intel TDX trust domain on Google Cloud. This page checks, in your browser, the quote in which it says which key signs its bids.">
+<style>
+  :root {
+    --paper: #f6f4ef; --card: #fffdf9; --ink: #1b1d1c; --soft: #5d635f; --line: #dcd8cd;
+    --accent: #0f6b52; --good-bg: #e2f1ea; --warn: #8a6100; --warn-bg: #f7ecd0; --bad: #a3271c; --bad-bg: #f8e1dc;
+    --code: #f0ede5;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #121514; --card: #1a1e1c; --ink: #e9ebe7; --soft: #9aa39d; --line: #2c3330;
+      --accent: #43c59e; --good-bg: #12322a; --warn: #e6bd5a; --warn-bg: #33290f; --bad: #ff9d8f; --bad-bg: #3a1713;
+      --code: #0e1110;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.6 var(--sans); }
+  main { max-width: 820px; margin: 0 auto; padding: 28px 16px 80px; }
+  a { color: var(--accent); }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+         font-size: 0.88rem; color: var(--soft); }
+  .top .name { font: 600 1rem var(--mono); color: var(--ink); text-decoration: none; }
+  .top nav a { margin-left: 16px; text-decoration: none; }
+  h1 { font-size: clamp(1.8rem, 5.5vw, 2.7rem); line-height: 1.08; letter-spacing: -0.03em; margin: 40px 0 16px; max-width: 20ch; }
+  h2 { font-size: 1.3rem; letter-spacing: -0.015em; line-height: 1.2; margin: 0 0 10px; }
+  p { margin: 0 0 14px; }
+  .lede { font-size: 1.1rem; color: var(--soft); max-width: 62ch; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+  section { margin-top: 44px; }
+  .eyebrow { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+  .verdict { border-radius: 12px; padding: 14px 18px; margin-top: 22px; font-weight: 600; background: var(--warn-bg); color: var(--warn); }
+  .verdict.good { background: var(--good-bg); color: var(--accent); }
+  .verdict.bad { background: var(--bad-bg); color: var(--bad); }
+  .verdict small { display: block; font-weight: 400; margin-top: 4px; }
+  .rows { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card); margin-top: 14px; }
+  .row { display: grid; grid-template-columns: 64px 1fr; gap: 4px 12px; padding: 11px 16px; border-top: 1px solid var(--line); }
+  .row:first-child { border-top: 0; }
+  .row .mark { font: 600 0.74rem/1.9 var(--mono); color: var(--accent); }
+  .row.fails .mark { color: var(--bad); }
+  .row span { color: var(--soft); font-size: 0.9rem; display: block; overflow-wrap: anywhere; }
+  .facts { border: 1px solid var(--line); border-radius: 12px; background: var(--card); margin-top: 14px; }
+  .facts div { display: grid; grid-template-columns: minmax(96px, 150px) 1fr; gap: 2px 14px; padding: 10px 16px; border-top: 1px solid var(--line); }
+  .facts div:first-child { border-top: 0; }
+  .facts b { font-weight: 600; font-size: 0.93rem; }
+  .facts code, .row code { font: 0.8rem/1.5 var(--mono); overflow-wrap: anywhere; background: none; padding: 0; }
+  code { font: 0.86em var(--mono); background: var(--code); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  pre { margin: 12px 0 0; padding: 14px 16px; background: var(--code); border-radius: 10px; overflow-x: auto; font: 0.8rem/1.55 var(--mono); }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin-bottom: 8px; }
+  footer { margin-top: 56px; color: var(--soft); font-size: 0.88rem; }
+  @media (max-width: 520px) { .row { grid-template-columns: 1fr; } .facts div { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <a class="name" href="./">cluck</a>
+    <nav><a href="https://github.com/posix4e/cluck/blob/main/REPORT.md">The report</a><a href="https://github.com/posix4e/cluck">GitHub</a></nav>
+  </div>
+
+  <h1>The builder on Google Cloud, checked here.</h1>
+  <p class="lede">An Ethereum block builder runs in an Intel TDX trust domain on Google Cloud as <strong>one Lean
+    program of 4.9 MB</strong>, with no Linux under it, and bids at four relays. Relays list each bid beside the key
+    that signed it. This page checks, in your browser and with nothing sent anywhere, the quote in which that
+    machine says the key is its own.</p>
+
+  <div class="verdict" id="verdict">Checking…</div>
+
+  <section>
+    <div class="eyebrow">The guest</div>
+    <h2>Which machine this is about</h2>
+    <div class="facts" id="facts"></div>
+  </section>
+
+  <section>
+    <div class="eyebrow">The checks</div>
+    <h2>What the quote says, step by step</h2>
+    <p>Each line is worked out here from two files this site serves: the quote, which is the machine's, and a
+      short record of which key and which program are meant, which is ours.</p>
+    <div class="rows" id="steps"></div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Its bids</div>
+    <h2>The same key, at the relays</h2>
+    <p>A relay publishes every bid it is sent. These are the relays' own lists for the key above; this page has
+      no part in them.</p>
+    <ul id="relays"></ul>
+    <p style="color: var(--soft); font-size: 0.93rem; margin-top: 12px">The fourth relay it bids at, Titan, gave no
+      answer when asked for such a list.</p>
+  </section>
+
+  <section>
+    <div class="eyebrow">What this page does not show</div>
+    <h2>Where you are still taking someone's word</h2>
+    <ul>
+      <li><strong>That the measurement is of the source.</strong> The record says which RTMR1 belongs to the
+        program, and this page takes that from us. To take it from nobody, build the image from the commit
+        named and run the command below: it works RTMR1 out from the file you built.</li>
+      <li><strong>That the firmware is Google's.</strong> MRTD names the firmware that started the guest and
+        stays under it. Google signs a statement for that measurement; the command below fetches and checks it,
+        and this page does not. What that firmware does is Google's word either way.</li>
+      <li><strong>Whether anything has been withdrawn.</strong> Nothing here asks Intel about the processor's
+        firmware level or revoked certificates.</li>
+      <li><strong>That the quote is fresh.</strong> It is from when the guest last told the feeding machine its
+        key, and is no older than the block named above. The guest's port is open to that machine alone, so you
+        cannot ask it yourself.</li>
+      <li><strong>This page.</strong> It and the two files come from one site. Someone who could change the
+        site could change all three, which is the other reason to run the command.</li>
+    </ul>
+    <pre id="command"></pre>
+    <p style="margin-top: 14px">What is inside the program, what is trusted beside it, and what it has done so
+      far: <a href="https://github.com/posix4e/cluck/blob/main/REPORT.md">REPORT.md</a>.</p>
+  </section>
+
+  <footer>The checking code is <a href="verify.js">verify.js</a> and <a href="live.js">live.js</a>; the files are
+    <a href="live/builder.json">live/builder.json</a>, <a href="live/builder.quote">live/builder.quote</a> and, for
+    a person, <a href="live/builder.txt">live/builder.txt</a>.</footer>
+</main>
+<script src="verify.js"></script>
+<script src="live.js"></script>
+<script>
+(async () => {
+  const el = (id) => document.getElementById(id);
+  const make = (tag, text, cls) => { const n = document.createElement(tag); if (text != null) n.textContent = text; if (cls) n.className = cls; return n; };
+  const verdict = el("verdict");
+  try {
+    const record = await (await fetch("live/builder.json", { cache: "no-store" })).json();
+    const quote = new Uint8Array(await (await fetch("live/" + record.quote, { cache: "no-store" })).arrayBuffer());
+    const { fields, steps, good } = await LiveCheck.checkLive(record, quote, Date.now());
+
+    const fact = (name, value, note) => {
+      const row = make("div"); row.append(make("b", name));
+      const cell = make("span"); cell.append(make("code", value)); if (note) cell.append(make("span", note)); row.append(cell);
+      el("facts").append(row);
+    };
+    fact("Running since", record.started);
+    fact("Key for bids", record.builder);
+    fact("Program", "SHA-256 " + record.image_sha256, ` ${record.image_bytes.toLocaleString("en")} bytes, built from commit ${record.commit} or the last before it that changed the image`);
+    fact("RTMR1", fields.RTMR1 || "", " the program, as the firmware measured it");
+    fact("MRTD", fields.MRTD || "", " the firmware");
+    fact("Asked with", record.challenge, record.challenge_block ? ` the hash of mainnet block ${record.challenge_block}` : "");
+
+    for (const s of steps) {
+      const row = make("div", null, "row" + (s.ok ? "" : " fails"));
+      row.append(make("div", s.ok ? "holds" : "FAILS", "mark"));
+      const cell = make("div"); cell.append(make("b", s.title), make("span", s.detail)); row.append(cell);
+      el("steps").append(row);
+    }
+    verdict.className = "verdict " + (good ? "good" : "bad");
+    verdict.textContent = good
+      ? "Every check holds: a TDX trust domain running the program named below made this quote, and says the key is its own."
+      : "A check FAILS. Do not take this key to be the program's.";
+    verdict.append(make("small", good ? "Read on for what that leaves out." : "See which, below."));
+
+    const key = record.builder, path = "/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=" + key;
+    for (const [name, host] of [["Flashbots", "boost-relay.flashbots.net"], ["Ultrasound", "relay-builders-us.ultrasound.money"],
+                                ["Aestus", "aestus.live"]]) {
+      const item = make("li"); const link = make("a", name + ": bids received under this key"); link.href = "https://" + host + path + "&limit=20";
+      item.append(link); el("relays").append(item);
+    }
+    el("command").textContent =
+      "git clone https://github.com/posix4e/cluck && cd cluck\n" +
+      "# build the image: see REPORT.md, \"Reproduce it\"\n" +
+      "scripts/gce-check evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI docs/live/builder.quote \\\n  " + key + " \\\n  " + record.challenge;
+  } catch (error) {
+    verdict.className = "verdict bad";
+    verdict.textContent = "The check could not be made: " + (error.message || error);
+  }
+})();
+</script>
+</body>
+</html>

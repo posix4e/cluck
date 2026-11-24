@@ -155,16 +155,17 @@ the guest's TCP in 0.15 s. A post to four relays takes 0.07 s on connections the
 A relay lists every bid it is sent with the key that signed it. The guest says, in a TDX quote, that
 the key is its own. So a bid can be followed back to source with nothing from us but this repository:
 
-1. **The bid.** Ask a relay for the bids under the builder's key; [`evm/live/builder.txt`](evm/live/builder.txt)
-   has the key and a link. Flashbots, Ultrasound and Titan were seen to list them.
-2. **The key is the guest's.** `evm/live/builder.quote` is the guest's answer to "what is your key",
-   quoted by the machine it runs on.
+1. **The bid.** Ask a relay for the bids under the builder's key; [`docs/live/builder.txt`](docs/live/builder.txt)
+   has the key and a link. Flashbots, Ultrasound and Aestus list them; Titan gave no answer when asked.
+2. **The key is the guest's.** `docs/live/builder.quote` is the guest's answer to "what is your key",
+   quoted by the machine it runs on. <https://posix4e.github.io/cluck/live.html> checks it in a browser,
+   as far as a page can: it takes the image's measurement from a file of ours.
 3. **The guest is this program, on Google's firmware.** Build the image and run the command in
-   `evm/live/builder.txt`. `scripts/gce-check` asks four things: that the quote's signatures lead to
+   `docs/live/builder.txt`. `scripts/gce-check` asks four things: that the quote's signatures lead to
    Intel's root; that RTMR1 in it is what Google's firmware measures for that image file; that Google
    signed for the firmware in MRTD; and that the quote is of that key.
 4. **The program is this source.** The image built here twice, in different directories and from
-   nothing, is the same file. Its SHA-256 is in `evm/live/builder.txt`.
+   nothing, is the same file. Its SHA-256 is in `docs/live/builder.txt`.
 
 Where this is thinner than it looks:
 

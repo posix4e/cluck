@@ -1,0 +1,12 @@
+{
+ "started": "2026-11-24 19:58 UTC",
+ "commit": "865fdf7",
+ "image_sha256": "bfd47e1db9ec4152b814a401512069ee9c7291ea64ff212e25c66fb8e0629dde",
+ "image_bytes": 4898304,
+ "rtmr1": "30adead3c0211d36084a811e97cf6a72413844b35e621d462844ef9950e52dadd4a778dcfe1b0c92a4b415607ab44375",
+ "builder": "0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20",
+ "challenge": "0x3981d6ecc6ccd7597cc06c4f7a2d77852a1ab86c23b3a606afce3af77ebb41ae",
+ "challenge_block": 26487559,
+ "quote": "builder.quote",
+ "quote_bytes": 8000
+}

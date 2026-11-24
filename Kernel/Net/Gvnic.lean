@@ -239,19 +239,28 @@ def bring (ground : Ground) : BaseIO (Ground × Except String (Card × Rings × 
   let doorbells := ground.doorbells
   let bellRoom := ground.bellRoom
   let revision := ground.revision
-  -- Reset, and wait for it.
-  if revision == 0 then setReg (registers + 16) 0 else setReg (registers + 4) 2
-  let mut tries := 0
-  let mut still := true
-  while still && tries < 100000 do
-    if revision == 0 then
-      let left ← reg (registers + 16)
-      still := left != 0
-    else
-      let status ← reg registers
-      still := status &&& (0x10 : UInt32) == 0
-    tries := tries + 1
-  if still then return (ground, .error ("the card did not reset"))
+  -- A card nobody has driven yet has no page of commands and is not reset: Linux's driver does not
+  -- either. (This one did at first. The card says at once that it is reset, carries the reset out
+  -- about a tenth of a second later, taking with it whatever it was given in between, and a second
+  -- after that asks to be reset again.) A card that has been driven, by an earlier try or before it
+  -- started over, is reset and then left alone for half a second, so that the reset is behind it.
+  let driven ← if revision == 0 then (do return (← reg (registers + 16)) != 0) else pure true
+  if driven || ground.rest != 0 then
+    if revision == 0 then setReg (registers + 16) 0 else setReg (registers + 4) 2
+    let mut tries := 0
+    let mut still := true
+    while still && tries < 100000 do
+      if revision == 0 then
+        let left ← reg (registers + 16)
+        still := left != 0
+      else
+        let status ← reg registers
+        still := status &&& (0x10 : UInt32) == 0
+      tries := tries + 1
+    if still then return (ground, .error ("the card did not reset"))
+    let began ← Hw.ticks
+    while (← Hw.ticks) - began < 1500000000 do
+      for _ in [0:2000] do Hw.pause
   -- Who is driving it, a byte at a time, as it is used to being told.
   for byte in "GVE-1.0.0\n".toUTF8 do Hw.write (registers + 31) 1 byte.toUInt32
   -- The page of commands.
@@ -447,14 +456,13 @@ def bring (ground : Ground) : BaseIO (Ground × Except String (Card × Rings × 
 
 /-- The card brought up, and brought up again for as long as it does not stay up, for most of a minute.
 
-**A card can start over by itself.** Seen on Compute Engine's trust domains on more than half the
-starts, in the first seconds of a machine's life: with no command pending, a tenth of a second after
-it had been given its counts and doorbells, its count of commands done was back at nothing, and
-whatever was asked of it next went unanswered; a second later its status asked for a reset. Once it
-did so twice running and came up the third time, once five times in five seconds. An operating system
-gets to its card later than this does, and its driver allows for the same. So: a watched pause before
-the queues are made, every command given up on as soon as the count has gone back, and the whole
-bring-up tried again. -/
+**What was seen of the card starting over.** On Compute Engine's trust domains, on more than half the
+starts: with no command pending, a tenth of a second after it had been given its counts and doorbells,
+its count of commands done was back at nothing, and whatever was asked of it next went unanswered; a
+second later its status asked for a reset. The cause was this driver's own reset of a card that needed
+none (`bring` says so now and does not), carried out late by the card. What is kept from finding that
+out: a watched pause before the queues are made, every command given up on as soon as the count has
+gone back, and the whole bring-up tried again; a card may have reasons of its own some day. -/
 def bringUp (ground : Ground) : BaseIO (Except String (Card × Rings × String)) := do
   let mut ground := ground
   let mut tries := 0

@@ -687,20 +687,23 @@ by the guest itself.
     - On this machine the same image, against the stand-in relay: 25 slots, 175 blocks sent,
       all valid and the stand-in's copy the same, seven rounds a slot, a round 0.74 s. The
       1,000 slots on it were begun at 14:01 UTC that day (`/data/eth/shadow/gate1000i/`).
-  - **The card starts over by itself in a machine's first seconds, and the driver now goes
-    with it.** Of some ten starts of the image on 2026-11-24, five ended with a command to the
-    card never answered and the machine stopped. Looked at closely: with nothing asked of it,
-    a tenth of a second after it had been given its counts and doorbells, the card's count of
-    commands done was back at nothing (the same 289 million ticks in, on two different
-    starts); a second later its status asked for a reset. Once it did so on five tries running.
-    Linux's driver allows for a card that wants a reset, and gets to its card seconds later
-    than this does. Now: the card is left alone and watched for a third of a second before
-    queues are made, a command is given up on as soon as the count has gone back, bring-up is
-    tried again for up to most of a minute, and while it runs the machine asks the card once
-    a second whether it has started over or wants to. Of the last four starts two came up at
-    once, one at the second try and one at the third, each saying so on its console.
-    - Not known: why the card does it. Not seen yet: a card starting over while the machine
-      runs, which is the case the once-a-second look is for.
+  - **Half the starts failed, and it was this driver's doing.** Of some ten starts of the image
+    on 2026-11-24, five ended with a command to the card never answered and the machine
+    stopped; with retries added, one start failed five tries running, and another came up
+    and then brought its card up again every second for two minutes. Watching the card while
+    nothing was asked of it showed the pattern: a tenth of a second after it had been given its
+    counts and doorbells, its count of commands done was back at nothing (289 million ticks
+    in, on three starts); a second later its status asked for a reset. The cause: the driver
+    reset the card before using it, as Linux's driver does not for a card nobody has driven.
+    The card says at once that it is reset and carries the reset out a tenth of a second
+    later, taking the fresh set-up with it; and the look the machine now takes once a second
+    obeyed the request for a reset that followed, which began it again.
+    - Now: a card nobody has driven is not reset. One that has been is reset and then left
+      alone for half a second. Kept from the search: a watched pause before queues are made,
+      a command given up on as soon as the card's count has gone back, bring-up tried again
+      for up to most of a minute, a look once a second while running at whether the card has
+      started over or wants to, and no second bringing-up within ten seconds of one.
+    - Not seen yet: a card that starts over for a reason of its own while the machine runs.
   - **The guest asks for its own quote** (2026-11-24; `Kernel/Quote.lean`, "JQUO1" in
     `evm/Evm/Attest.lean`). There is no quoting service of ours beside a machine on Compute
     Engine, so the guest hands a report to its host by the call the specification has for it

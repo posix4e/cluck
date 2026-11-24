@@ -404,14 +404,17 @@ def receive : M ByteArray := do
     modify fun s => { s with card := some card }
     return frame
 
-/-- The card asked whether it wants to be started over, and started over if so (`Wire.mend`). -/
+/-- The card asked whether it has started over or wants to be, and brought up again if so (`Wire.mend`).
+After that it is not asked for ten seconds: a card that goes on wanting it is not obeyed every second. -/
 def mend : M Unit := do
   match ← modifyGet fun s => (s.card, { s with card := none }) with
   | none => pure ()
   | some card =>
     let (card, said) ← Kernel.Net.Wire.mend card
     modify fun s => { s with card := some card }
-    if said != "" then Platform.write s!"evm: {said}\n".toUTF8
+    if said != "" then
+      modify fun s => { s with lookedAt := s.lookedAt + 9000 }
+      Platform.write s!"evm: {said}\n".toUTF8
 
 def freshWord : IO UInt32 := do
   let b ← Platform.random 4

@@ -24,6 +24,15 @@ image, `flat-os`, which serves three fixed pages over a trial TCP on a driver of
 virtio network card (`Kernel/Net/VirtioNet.lean`). Since 2026-11-23 the builder's images do too: the
 service takes its frames from that driver (`Kernel/Net/Wire.lean`) and its TCP is the system's as before;
 the firmware's network driver is then not in its path, and the firmware's PCI and page-sharing code are.
+Since 2026-11-24 the same images drive Google's card as well when that is the card the machine has,
+and take from which card it is where they are: with the virtio card the gateway and name server of
+QEMU's network; with Google's the first address of the subnet as the only way out, the metadata
+server (169.254.169.254) for names, and segments forty bytes less than the packet size the card
+gives. The host shows the card, so the host chooses between the two; it already carried every frame
+and could answer any name with any address, and what the machine trusts of a relay is its
+certificate under the roots in the image, not the way there. On Google's firmware there is no
+network driver to fall back to: a card that will not come up leaves the machine saying so and
+stopped.
 The OS's own image and the demo still use the firmware's driver. What that C exposes, and what stands in
 the way:
 - It reads any device's configuration space and, for the one device claimed, its registers and an arena
@@ -71,8 +80,10 @@ the way:
 - `silo_hw_load32` reads four bytes of the shared memory in one go, for a count the device keeps
   adding to. And there is a second driver on this interface, for Google's network card
   (`Kernel/Net/Gvnic.lean`): what it takes from the card (queue lengths, doorbell numbers, lengths of
-  frames) is cut to what it can be before it is used, as in the first, and it is in no image that
-  serves anything yet.
+  frames) is cut to what it can be before it is used, as in the first. It was in no image that
+  served anything until 2026-11-24; now it is in the builder's, under the system's TCP, and has
+  carried the builder's requests and its connections to the relays on Compute Engine. It is newer
+  and less tried than the other, and can only be tried there: QEMU has no such card.
 - `silo_hw_write_direct` stores to a register of the claimed device by the processor's own
   instruction, at the place the firmware says the device's window is, where every other register
   access asks the firmware. It is checked to lie in a window like the others. It is there because in
@@ -264,6 +275,9 @@ to read. What that rests on, and where it gives:
     one a relay has already taken for the slot is not sent, and the answer says nothing was sent. For
     a block with sealed transactions tried, that is a comparison of two payments the host is not
     otherwise given by this machine. A relay's list gives both payments outright.
+  - And one more since 2026-11-24: a block that pays the proposer nothing is not sent either, and
+    the answer says nothing was sent. With sealed transactions tried, that tells the host that
+    none that went in paid anything, which a relay's refusal of the block told it before.
   - **What a relay publishes, which undoes part of that.** Found on 2026-11-22, after two blocks had
     been sent this way. Each of the four relays lists every bid it receives, for anyone to read
     (`/relay/v1/data/bidtraces/builder_blocks_received`): the block's hash and parent, the gas it

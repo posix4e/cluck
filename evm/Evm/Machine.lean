@@ -497,6 +497,8 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) (since
     | some (slot, parent, value) => slot == built.slot && parent == built.parent && built.value ≤ value
     | none => false
   if beaten then return ← finish bid built.wanted "it pays no more than one already sent for this slot"
+  -- Nor one that pays the proposer nothing: a relay refuses it, and it would only be this machine's noise.
+  if built.value == 0 then return ← finish bid built.wanted "it pays the proposer nothing"
   -- Nor one ended too long after its time was up: it would reach the relay late, if at all in time.
   let allowed := Evm.Bid.allowed r.bid
   let began := if since == 0 then started else since
@@ -504,12 +506,13 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) (since
     return ← finish bid built.wanted "it was ended too long after the time allowed for it"
   let relays := (← get).relays
   let anchors := (← get).anchors
+  let resolver := (← get).wire.resolver
   let mut calls : Array (Nat × Outbound.Call) := #[]
   for place in [0:relays.relays.size] do
     if (r.relays >>> place) % 2 == 1 then
       let some relay := relays.relays[place]? | continue
       let random ← try Platform.random Outbound.randomSize.toUSize catch _ => pure .empty
-      calls := calls.push (place, { Outbound.Call.start now relay.name relay.port relay.address anchors r.seconds
+      calls := calls.push (place, { Outbound.Call.start now resolver relay.name relay.port relay.address anchors r.seconds
                                       (Send.question relay.name submission) random r.allowed with
                              limit := 65536, bucket := Send.bucket })
   if calls.isEmpty then return ← finish bid built.wanted "no relay of this image was named"
@@ -533,7 +536,7 @@ def ask (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) : M Uni
   let random ← try Platform.random Outbound.randomSize.toUSize catch _ => pure .empty
   if random.size != Outbound.randomSize then return ← refuse "no random bytes to be had"
   Platform.write s!"evm: asking {relay.name} for {r.path}\n".toUTF8
-  let call := { Outbound.Call.start now relay.name relay.port relay.address anchors r.seconds
+  let call := { Outbound.Call.start now (← get).wire.resolver relay.name relay.port relay.address anchors r.seconds
                   (Ask.question relay.name r.path) random with limit := maxAsked }
   transmit (← modifyGet (·.begin now key asked call))
 
@@ -605,13 +608,21 @@ partial def serve (s : State) (quiet : Nat := 0) : IO UInt32 := do
 /-- The machine, talking to the relays of `relays` and to nobody else. -/
 def run (relays : Relays.Table) : IO UInt32 := do
   -- The card is this program's own to drive if it is one it knows; the firmware's driver otherwise.
-  let card ← Kernel.Net.Wire.start
-  if card.isSome then Platform.write "evm: the network card is driven from here\n".toUTF8
+  let (card, said) ← Kernel.Net.Wire.start
+  if card.isSome then Platform.write s!"evm: the network card is driven from here\nevm: it is {said}\n".toUTF8
+  else if said != "" then Platform.write s!"evm: the network card could not be brought up: {said}\n".toUTF8
   let mac ← match card with
     | some own => pure (Kernel.Net.Wire.mac own)
     | none => Efi.mac
-  if mac.size != 6 then return 2
+  if mac.size != 6 then
+    Platform.write "evm: no network: no card this program drives, and none the firmware does\n".toUTF8
+    return 2
   let cfg : Internet.Config := { mac }
+  -- Where the machine is follows from its card: the way out, the name server, the size of a segment.
+  let wire : Outbound.Wire := match card.map Kernel.Net.Wire.around with
+    | some a => { cfg, tcp := { listenPort := servicePort, mss := a.mss }, resolver := a.resolver,
+                  routes := { ipv4Prefix := a.onLink, ipv4Gateway := some a.gateway } }
+    | none => { cfg, tcp := { listenPort := servicePort } }
   let anchors := relays.anchors
   if anchors.size != relays.roots.size then
     Platform.write "evm: a root in this image cannot be read\n".toUTF8
@@ -629,6 +640,6 @@ def run (relays : Relays.Table) : IO UInt32 := do
   let sealing := Seal.Key.of drawn
   Platform.write s!"evm: connects out only to {relays.what}\n".toUTF8
   Platform.write "evm: Ethernet ready, serving TCP 5005\n".toUTF8
-  serve { key, sealing, relays, anchors, card, wire := { cfg, tcp := { listenPort := servicePort } } }
+  serve { key, sealing, relays, anchors, card, wire }
 
 end Evm.Machine

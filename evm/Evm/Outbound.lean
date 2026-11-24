@@ -27,6 +27,8 @@ it has learned. -/
 structure Wire where
   cfg : Internet.Config
   routes : Route.Table := {}
+  /-- The name server asked: QEMU's unless the machine is somewhere else. -/
+  resolver : ByteArray := ⟨#[10, 0, 2, 3]⟩
   tcp : Tcp.Endpoint
   neighbors : Route.Neighbors := {}
 
@@ -152,7 +154,7 @@ def reach (c : Call) (now : Nat) (w : Wire) (ip : ByteArray) : Call × Wire × A
 
 /-- A call begun: nothing has been sent yet, and the first `step` sends it. With an `address` the name is
 not looked up; it is still what the certificate must be for. -/
-def Call.start (now : Nat) (host : String) (port : UInt16) (address : Option ByteArray)
+def Call.start (now : Nat) (resolver : ByteArray) (host : String) (port : UInt16) (address : Option ByteArray)
     (anchors : Array Tls.X509.Anchor) (seconds : Nat) (question random : ByteArray) (allowed : Nat := 10000) : Call :=
   let begun (phase : Phase) : Call := { host, port, anchors, seconds, question, deadline := now + allowed, random, phase }
   if random.size != randomSize then begun (.done (.failed "no random bytes for the call"))
@@ -163,7 +165,7 @@ def Call.start (now : Nat) (host : String) (port : UInt16) (address : Option Byt
     -- lookup and then one connection, never both at once.
     let port := (49152 + (random[68]!.toNat * 256 + random[69]!.toNat) % 16384).toUInt16
     let id := (random[64]!.toNat * 256 + random[65]!.toNat).toUInt16
-    match Dns.Query.start now ⟨#[10, 0, 2, 3]⟩ port id host .a with
+    match Dns.Query.start now resolver port id host .a with
     | some query => begun (.resolving query)
     | none => begun (.done (.failed "a name that cannot be looked up"))
 

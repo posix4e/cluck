@@ -30,12 +30,21 @@ the guest and so hides what the guest's TCP does over a distance. It gets a tap 
 this program's own making (a user and network namespace: no root), with the kernel's vhost-net behind
 it, and the requests go from Linux's TCP straight to the guest's at 10.0.2.15. `--delay` holds every
 frame from Linux back so many milliseconds, which is then the round trip.
+
+    scripts/run-fixtures dev|tdx --at HOST [--limits] [--key] [--from DIR] [name...]
+
+With `--at` no guest is started: the requests go to one already running at HOST, port 5005 (on a
+machine somewhere else, say), and its console is not read, so the guest's own share of each time is not
+said. The first word still names where the bid's files are kept here.
 """
 import glob, os, re, shutil, signal, socket, struct, subprocess, sys, time
 
 if len(sys.argv) < 2 or sys.argv[1] not in ("dev", "tdx"):
     sys.exit(__doc__)
 mode, names = sys.argv[1], sys.argv[2:]
+at = None
+if names[:1] == ["--at"] and len(names) > 1:
+    at, names = names[1], names[2:]
 tap = names[:1] == ["--tap"]
 delay = 0
 if tap:
@@ -59,18 +68,21 @@ if names[:1] == ["--from"] and len(names) > 1:
 if not names:
     names = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(fixtures, "*.req")))
 image = os.path.join(here, ".lake/build/efi", mode, "evm-os/BOOTX64.EFI")
-if not os.path.exists(image):
+if not at and not os.path.exists(image):
     sys.exit(f"run-fixtures: no {image} (run: scripts/build-efi {mode})")
-# The OS's launcher looks for an image under its own build directory, by name.
-slot = os.path.join(system, ".lake/build/efi", mode, "evm-os")
-os.makedirs(slot, exist_ok=True)
-shutil.copyfile(image, os.path.join(slot, "BOOTX64.EFI"))
 port = int(os.environ.get("SILO_HOST_PORT", "5015"))
 log = os.path.join(here, ".lake/build/efi", mode, "evm-os/serial.log")
-guest = subprocess.Popen([os.path.join(system, "scripts/run-efi"), mode, "evm-os"], cwd=system,
-                         env=dict(os.environ, SILO_HOST_PORT=str(port), **({"SILO_NET_TAP": "tap0"} if tap else {})),
-                         stdout=open(log, "wb"), stderr=subprocess.STDOUT, start_new_session=True)
-where = ("10.0.2.15", 5005) if tap else ("127.0.0.1", port)
+os.makedirs(os.path.dirname(log), exist_ok=True)
+guest = None
+if not at:
+    # The OS's launcher looks for an image under its own build directory, by name.
+    slot = os.path.join(system, ".lake/build/efi", mode, "evm-os")
+    os.makedirs(slot, exist_ok=True)
+    shutil.copyfile(image, os.path.join(slot, "BOOTX64.EFI"))
+    guest = subprocess.Popen([os.path.join(system, "scripts/run-efi"), mode, "evm-os"], cwd=system,
+                             env=dict(os.environ, SILO_HOST_PORT=str(port), **({"SILO_NET_TAP": "tap0"} if tap else {})),
+                             stdout=open(log, "wb"), stderr=subprocess.STDOUT, start_new_session=True)
+where = (at, 5005) if at else ("10.0.2.15", 5005) if tap else ("127.0.0.1", port)
 if tap:
     # QEMU makes the device; this end gives it the address the guest takes for its gateway.
     for _ in range(200):
@@ -83,6 +95,8 @@ if tap:
         subprocess.run(f"tc qdisc add dev tap0 root netem delay {delay}ms limit 100000".split(), check=True)
 
 def serial():
+    if at:
+        return ""
     with open(log, "rb") as f:
         return f.read().decode("utf-8", "replace")
 
@@ -103,12 +117,12 @@ def exchange(request, patience):
 failed = 0
 try:
     started = time.time()
-    while "serving TCP 5005" not in serial():
+    while not at and "serving TCP 5005" not in serial():
         if guest.poll() is not None or time.time() - started > 300:
             print("the guest did not come up; its serial output:\n" + serial()[-2000:])
             sys.exit(2)
         time.sleep(0.25)
-    print(f"guest up after {time.time() - started:.1f} s")
+    print(f"the guest at {at}" if at else f"guest up after {time.time() - started:.1f} s")
     for name in names:
         with open(os.path.join(fixtures, name + ".req"), "rb") as f:
             request = f.read()
@@ -193,12 +207,13 @@ try:
         print(f"a bid for a block built from a fixture, {took:.2f} s: "
               f"{'signed by that key, and the signature verifies' if ok else 'NOT VERIFIED: ' + checked.stdout.strip()}")
 finally:
-    try:
-        os.killpg(guest.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    guest.wait(timeout=20)
-    print("serial:")
+    if guest is not None:
+        try:
+            os.killpg(guest.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        guest.wait(timeout=20)
+        print("serial:")
     for line in serial().splitlines():
         if line.startswith(("silo:", "evm:")):
             print("  " + line)

@@ -49,6 +49,9 @@ the clock would otherwise take the place of a fuller one. The answer then names 
 block was built. With sealed transactions tried this tells the request's sender that the block paid no
 more than the last, which a relay's public list of bids would have told it too.
 
+Nor is a block sent that pays the proposer nothing: a relay refuses it. The answer names no relay then
+either, which with sealed transactions tried says that none that went in paid anything.
+
 Nor is a block sent that was ended more than half a second after the time allowed for its transactions
 ran out (`grace`): the allowance is there so that the block reaches the relay before its slot, and one
 long transaction can carry a block past it. The answer names no relay then either.

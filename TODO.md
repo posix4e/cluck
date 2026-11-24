@@ -645,13 +645,31 @@ by the guest itself.
   - Not run on it yet: a slot of the builder against the stand-in relay, the 1,000 slots,
     `check-secret-code`, connections out over a real distance (they are tried on Compute
     Engine, there being no such path to a guest here without root).
-  - Not done there: the builder (its guest needs this driver under the system's TCP, an address of
-    its own choosing and a quote it asks for itself); anything measured from a machine near it (800
-    requests a second from here is this machine's distance, not the guest's speed); a look at how
-    often the guest leaves the trust domain there; checking an image against RTMR1.
-  - Spent so far on Compute Engine for this: under a dollar (of 100 agreed); nothing is left running.
-    A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone (`silo-test-from-home`),
-    two images and their disk files remain, which cost cents a month.
+- **The builder's image runs in a trust domain there** (2026-11-24). `Kernel/Net/Wire.lean` now
+  drives either card and says what is around the one it finds, so the image is the same one that
+  runs here: on a `c3-standard-4` with TDX it brought Google's card up, took 10.0.2.15, and served
+  port 5005 to this machine over the internet.
+  - `evm/scripts/run-fixtures tdx --at ADDRESS --key`: every fixture the expected answer; the
+    builder's key the same twice; a bid whose signature verifies.
+  - Five build requests of mainnet (2.7 to 13.8 MB, `--from`), each the expected answer. By the
+    guest's clock they took 92 to 205 ms to arrive (2.7 MB: 92 and 97 ms; 13.8 MB: 205 ms), each
+    on a new connection.
+  - The guest asked each of the four relays for its public list of coming proposers, itself, twice:
+    all eight answered whole, in 0.20 to 0.41 s as seen from here. So names are looked up at the
+    metadata server, the way out is found, and TLS to the relays holds from there.
+  - **It computes slower there.** The same request took 4.4 s of the guest's time there and 2.2 to
+    3.1 s in a trust domain here (the smallest of the five; the others in proportion). The machine
+    there is a Sapphire Rapids (Xeon 8481C), this one an Emerald Rapids (Gold 6526Y), and the
+    builder uses one core. What a round of the builder costs there is not measured yet; it is the
+    next thing to read once the host's program can feed a guest that is not on its own machine.
+  - A block that pays the proposer nothing is no longer sent (three were, and were refused, in the
+    second live hour).
+  - Not done there: a slot of the builder; a quote the guest asks for itself; checking an image
+    against RTMR1; a look at how often the guest leaves the trust domain there.
+  - Spent so far on Compute Engine for this: under two dollars (of the 500 a month now agreed);
+    nothing is left running. A subnet (`silo-10-0-2`), a firewall rule for this machine's address
+    alone (`silo-test-from-home`), a few images and their disk files remain, which cost cents a
+    month.
 
 ## Ethereum block import, as a service (`evm/`)
 

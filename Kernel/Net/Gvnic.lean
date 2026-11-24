@@ -55,7 +55,7 @@ it is used, and the memory shared with the card is the only memory any of it can
 gets frames lost or the machine stopped, as it can anyway.
 
 Not done: more than one queue; frames longer than a buffer (they are dropped); checksums or segmenting
-left to the card; noticing that the card wants to be reset; the newer way of working (DQO). -/
+left to the card; noticing that the card wants to be reset. -/
 
 namespace Kernel.Net.Gvnic
 

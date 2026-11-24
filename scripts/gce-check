@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# A quote from the builder's guest on Compute Engine, checked against an image's file:
+#
+#   scripts/gce-check BOOTX64.EFI QUOTE
+#
+# Two questions, each answered by the tool that answers it, and both must come out right:
+#   is the quote a real one (evm/demo/check-quote.mjs: its signatures up to Intel's root, by the same
+#     code the page uses; needs node), and
+#   is it a quote of this program (scripts/gce-measure: RTMR1 worked out from the file).
+# What neither answers is said by each of them, and comes to: that the firmware (MRTD) is Google's, which
+# is Google's to vouch for; RTMR0; whether Intel has since revoked anything.
+set -euo pipefail
+[[ $# -eq 2 && -r "$1" && -r "$2" ]] || { echo "usage: scripts/gce-check BOOTX64.EFI QUOTE" >&2; exit 2; }
+here="$(cd "$(dirname "$0")" && pwd)"
+echo "Is it a real quote?"
+node "$here/../evm/demo/check-quote.mjs" "$2"
+echo "Is it a quote of this program?"
+"$here/gce-measure" "$1" "$2" | tail -n 1
+echo "Both hold: a trust domain on Compute Engine running this file made the quote."

@@ -725,11 +725,14 @@ by the guest itself.
     (`gs://gce_tcb_integrity/ovmf_x64_csm/tdx/`); that statement's signature is **not checked
     here yet**, nor is RTMR0 (the machine's configuration as the firmware measured it)
     worked out.
-    - So a quote can now be checked against an image by anyone with the image's file:
-      `evm/demo/verify.js` for the quote's signatures up to Intel, `scripts/gce-measure` for
-      which program it is. Not done: one command or page that does both and says so in plain
-      words; building the image twice and getting the same file, which nobody has tried on
-      another machine.
+    - So a quote can now be checked against an image by anyone with the image's file, in one
+      command: `scripts/gce-check BOOTX64.EFI QUOTE` runs the page's own check of the quote's
+      signatures up to Intel (`evm/demo/check-quote.mjs`, under node) and then
+      `scripts/gce-measure`, and fails if either does; given the quote of the guest running
+      there and another image's file, it fails. RTMR0 was the same on every start looked at
+      (48ab35e1…682f9693, a `c3-standard-4` in us-central1), which is seen and not derived.
+      Not done: a page that does it for someone without the repository; building the image
+      twice and getting the same file, which nobody has tried on another machine.
   - Not done there: a bid sent; a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
     A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone

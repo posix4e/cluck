@@ -63,8 +63,15 @@ What that count leaves out or flatters:
 - **Firmware is not in it**, and stays underneath the whole time. The firmware built from source where
   this was developed is a file of 4 MB, as large as the image, of compressed C; Google's cannot be
   looked into. See the next section.
-- **No Linux image was measured for comparison.** "Far less" is a claim about kinds of thing, a
-  kernel and what runs on it against one program, and not a count of somebody else's bytes.
+- **No Linux image was measured for comparison**; one published size was looked up. The image of
+  [BuilderNet v1.6][bn16] (December 2025, the last release with public notes) for TDX on Azure is a
+  disk image of 326,107,648 bytes, which its notes say holds rbuilder, Reth, Lighthouse, FlowProxy,
+  HAProxy, a proxy for attestation, an operator API and acme.sh on a Yocto Linux. That is 81 times
+  the 4.0 MB here, and the two are not the same kind of thing: the file was not downloaded or looked
+  into, a disk image has room in it that is not code, and theirs holds two clients that follow the
+  chain inside the trust domain, where this builder is shown proofs against a header it is given
+  (see what the feeder can still do, below). "Far less" is a claim about kinds of thing, a kernel
+  and what runs on it against one program, and that one number goes no further than that.
 - **Jaune is someone else's code, a fifth of the image, and still does part of the work.** The
   interpreter that runs transactions was written here and is held to Jaune by tests; Jaune's own
   interpreter went out of the image on 2026-11-25 (the image was 4.9 MB with it, and a request could
@@ -306,5 +313,6 @@ To feed it you need a synced reth with the `txpool`, `flashbots` and `debug` API
     builder/feed ADDRESS DIR --hold       # builds every slot and posts nothing; without --hold it bids
 
 [bn]: https://buildernet.org/blog/2025/04/28/buildernet-v1.3
+[bn16]: https://buildernet.org/blog/2025/12/02/buildernet-v1.6
 [jaune]: https://github.com/skbaek/jaune
 [image-runs]: https://github.com/posix4e/cluck/actions/workflows/image.yml

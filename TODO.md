@@ -1002,9 +1002,18 @@ by the guest itself.
         blocks sent and all valid, seven and eight rounds a slot, 0.73 s a round, as before;
         the limit left out two to seven of the least paying in seven last rounds and 35 in
         one, and one transaction was left out for a slow precompile.
-        **Not shown: a full pool with the limit.** There has been none since, and nothing here
-        makes one. The first trial of the change failed outright (a name used twice; every
-        round raised an error), in a copy the feed did not run.
+        The first trial of the change failed outright (a name used twice; every round raised
+        an error), in a copy the feed did not run.
+        **A full pool with the limit** came at 09:01 UTC the same day: 400 pending in five of
+        six slots running (15731102 to 15731107), 300 or more in twelve of that hour's on
+        Compute Engine and thirteen of the run's here. Every one of them had a block sent,
+        there and here, where the same pool an hour and a half before had cost five slots in
+        a row. On Compute Engine the first block of such a slot was at the relays 3.4 to 6.7 s
+        before the slot, with 143 to 377 transactions in it, and the last carried 228 to 400.
+        What it did not do: in three of those twelve slots there (15731104, 15731107,
+        15731111) and one here, the first round was the only one, its block ready five
+        seconds before the slot. The feeder judged a second round by what the first had cost,
+        4.5 to 5.5 s, most of it proofs that a second round does not fetch again.
       - Not done: BLS12-381 written for the purpose, so that those transactions can go in;
         the limit in the guest's own clock inside a transaction (it looks between
         transactions, so one slow transaction overruns it); sending only what is new each

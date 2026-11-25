@@ -266,9 +266,10 @@ Where this is thinner than it looks:
   five slots in a row went by with nothing sent. One call to the point evaluation precompile cost the
   guest 3 s: that arithmetic, and BLS12-381's, is still the third-party library's on numbers of any
   size, and the guest looks at its clock between transactions and not inside one. The feeder now
-  leaves such transactions out and gives a round no more than fits its time, and the guest orders a
-  full pool in a third of the time it took. A full pool has not come again to show what that is
-  worth, and transactions that call those precompiles are simply not built in.
+  leaves such transactions out and gives a round no more than fits its time. The next image, not yet
+  on Google Cloud, builds a full pool's block in 55% to 70% of the time, by putting the transactions
+  in order less wastefully. A full pool has not come again to show what any of this is worth, and
+  transactions that call those precompiles are simply not built in.
 - **One feeder, at somebody's home.** When that machine or its link stops, the builder stops.
 - **Side channels.** The key's field arithmetic was written to take the same steps whatever the key,
   and a script reads its machine code for conditional jumps (`evm/scripts/check-secret-code`). The

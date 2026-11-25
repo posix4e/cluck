@@ -1069,10 +1069,10 @@ by the guest itself.
         of 12:48 and 13:47 UTC five such bids, at the first slot of five epochs, to which
         Aestus said "unknown parent hash" (it had the late block), Flashbots and Ultrasound
         that the bid was below their floor, and Titan 200. No harm done and no use to
-        anybody. Changed at 15:10 UTC: the wait is seven seconds, and the beacon node is
+        anybody. Changed at 14:47 UTC: the wait is seven seconds, and the beacon node is
         asked once more for a later block when a round's gathering is done, just before the
         guest is asked; if there is one the round ends there, "skipped" in the record. The
-        feed has it from its run of 15:47 UTC. `scripts/round-check` has the new number.
+        feed has it from its run of 15:45 UTC. `scripts/round-check` has the new number.
         **Not run:** the second question to the beacon node, other than by the feed from
         then on.
         One case goes the other way and is left as it is. At 15732480 a block came late,

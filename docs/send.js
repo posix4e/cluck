@@ -74,6 +74,50 @@
     return bytes;
   }
 
+  // Keccak-256 of a transaction's bytes as they go on the wire: its hash, which is the name a block
+  // explorer knows it by once it is in a block. (Not SHA3-256, which ends its input with another byte, and
+  // not in the browser's own crypto.) The state is 25 lanes of 64 bits, lanes[x + 5 * y].
+  function hashOf(bytes) {
+    const MASK = (1n << 64n) - 1n;
+    const turned = (lane, by) => ((lane << BigInt(by % 64)) | (lane >> BigInt(64 - by % 64))) & MASK;
+    const lanes = new Array(25).fill(0n);
+    const permute = () => {
+      let constant = 1;
+      for (let round = 0; round < 24; round++) {
+        const columns = [0, 1, 2, 3, 4].map((x) => lanes[x] ^ lanes[x + 5] ^ lanes[x + 10] ^ lanes[x + 15] ^ lanes[x + 20]);
+        for (let x = 0; x < 5; x++) {
+          const mix = columns[(x + 4) % 5] ^ turned(columns[(x + 1) % 5], 1);
+          for (let row = 0; row < 25; row += 5) lanes[x + row] ^= mix;
+        }
+        let x = 1, y = 0, carried = lanes[1];
+        for (let t = 0; t < 24; t++) {
+          [x, y] = [y, (2 * x + 3 * y) % 5];
+          const next = lanes[x + 5 * y];
+          lanes[x + 5 * y] = turned(carried, (t + 1) * (t + 2) / 2);
+          carried = next;
+        }
+        for (let row = 0; row < 25; row += 5) {
+          const was = lanes.slice(row, row + 5);
+          for (let i = 0; i < 5; i++) lanes[row + i] = was[i] ^ (~was[(i + 1) % 5] & was[(i + 2) % 5]);
+        }
+        for (let j = 0; j < 7; j++) {
+          constant = ((constant << 1) ^ ((constant >> 7) * 0x71)) & 0xff;
+          if (constant & 2) lanes[0] ^= 1n << BigInt((1 << j) - 1);
+        }
+      }
+    };
+    // 136 bytes at a time; after the last of the input a byte of 1, and the top bit of the last byte set.
+    const padded = new Uint8Array(Math.ceil((bytes.length + 1) / 136) * 136);
+    padded.set(bytes);
+    padded[bytes.length] ^= 0x01;
+    padded[padded.length - 1] ^= 0x80;
+    for (let at = 0; at < padded.length; at += 136) {
+      for (let i = 0; i < 136; i++) lanes[i >> 3] ^= BigInt(padded[at + i]) << BigInt(8 * (i & 7));
+      permute();
+    }
+    return Uint8Array.from({ length: 32 }, (_, i) => Number((lanes[i >> 3] >> BigInt(8 * (i & 7))) & 0xffn));
+  }
+
   // The request that hands a transaction in, sealed to `key`: only the machine holding the other half
   // can read anything of it but its length.
   async function sealed(key, last, bytes) {
@@ -105,5 +149,5 @@
     return answer;
   }
 
-  scope.SendCheck = { checkKey, slotAt, lastSlot, transaction, sealed, askKey, handIn, unhex };
+  scope.SendCheck = { checkKey, slotAt, lastSlot, transaction, hashOf, sealed, askKey, handIn, unhex };
 })(typeof window !== "undefined" ? window : globalThis);

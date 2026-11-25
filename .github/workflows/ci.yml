@@ -120,6 +120,12 @@ jobs:
       - name: The page that seals a transaction, on kept answers
         working-directory: evm
         run: node demo/test-send.mjs
+      # The page itself: its own script under Node, with a document that is only what it asks of one and
+      # a door that is only kept answers. Sending stays shut until the key's quote has passed, what goes
+      # to the door is sealed, and the sender is shown the transaction's hash.
+      - name: The page that seals a transaction, what it does
+        working-directory: evm
+        run: node demo/test-send-page.mjs
       # The pages the site serves (docs/) are copies of those the tests above ran.
       - name: The published pages are the tested ones
         run: for file in send.html send.js seal.js verify.js; do cmp "evm/demo/$file" "docs/$file"; done

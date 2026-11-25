@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const demo = join(root, "evm", "demo");
 for (const name of ["verify.js", "seal.js", "send.js"]) new Function(readFileSync(join(demo, name), "utf8"))();
-const { checkKey, slotAt, lastSlot, transaction, sealed, askKey, handIn } = globalThis.SendCheck;
+const { checkKey, slotAt, lastSlot, transaction, hashOf, sealed, askKey, handIn } = globalThis.SendCheck;
 let failures = 0;
 const expect = (what, holds) => { console.log(`  ${holds ? "ok  " : "FAIL"}  ${what}`); if (!holds) failures += 1; };
 const bytes = (path) => Uint8Array.from(readFileSync(path));
@@ -88,6 +88,21 @@ if (process.argv.length > 2) {
   expect("what could not is refused: too short, with blobs, of no known kind, not hexadecimal, too long",
          refused("0x02abcd") && refused("03" + "ab".repeat(120)) && refused("7f" + "ab".repeat(120)) && refused("0xzz") &&
          refused("02" + "ab".repeat(128 * 1024)));
+  // The hash: of nothing and of three letters, as Keccak's authors give them, and of three transactions of
+  // mainnet's block 26494797 (of the old kind, of the usual one, and one that sets code), by the names the
+  // chain knows them by. All three are longer than the 136 bytes taken at a time.
+  const hashed = (given) => Buffer.from(hashOf(typeof given === "string" ? transaction(given) : given)).toString("hex");
+  expect("the hash of nothing and of abc",
+         hashed(new Uint8Array(0)) === "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470" &&
+         hashed(new TextEncoder().encode("abc")) === "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45");
+  expect("the hash of 135, 136 and 137 bytes differs, and each is 32 bytes",
+         new Set([135, 136, 137].map((n) => hashed(new Uint8Array(n)))).size === 3 && hashOf(new Uint8Array(136)).length === 32);
+  const landed = [
+    ["bb6f1ef18e9b430c78026088a7632db36e4131f9bc287296dc1fb6ecaccd3cd3", "0xf8ab82138a8408d7f4a783010c2f94a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4880b844a9059cbb0000000000000000000000003cc936b795a188f0e246cbb2d74c5bd190aecf18000000000000000000000000000000000000000000000000000000009c1ac4c026a0f10017ff8c02e22559249178d8e6192ba7157f84918a6d29218f270466b8d3cea025aabc5e800a2715e700b39a6af137c09634704317a498a1253798a1ebaf4d9b"],
+    ["7ee564331204090b3a26b4dc425c35cb9cf8891a449efce7ec3faa40782556bd", "0x02f8b2018216ca847735940084814c30418301adb094dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000ff3f306410ff2f1060ad5fa780283c54a5d9155300000000000000000000000000000000000000000000000000000000089927c1c001a0cf178a56c3df4bf7e4288a7342cb3b20881e741809ba998155a7056d6c6767f7a04abc6d613ba260d831925c8dbe17855035e217da591493121c2a601d99bf1678"],
+    ["febec7d60ef2c54eadd3748e1349526bf5a09a89ca762069e663e583f40eca1a", "0x04f8f3018303427384018b2b2d840899309c83010f2c944de23f3f0fb3318287378adbde030cf61714b2f380a4c4d66de8000000000000000000000000333333320bb4a0345a7a102c49c72b37647aa088c0f85ff85d019484d05511614272694d3a9cebe896514dbde51f40830b41ae01a005516027f713d59153fc9e6b6ae30740dde62c688d4bd6814163a2c9877cda20a04a9a52648d5b72f988765ac7201bdd94118c33cd3c496f181d3f739b09ffb05801a0f7cfff8dc13226e23d51761bfffe097fc414c16d1e6b819c2b1fae7fe0e801d3a058e798db2ff5e4ac25baa6d677e5aaf84438209eb0d91d8cbdda4b0dee3ea0d8"],
+  ];
+  expect("the hash of three transactions that are in the chain is the one the chain has", landed.every(([hash, raw]) => hashed(raw) === hash));
   // Sealed here, the request is the kind's name, the sender's 32 bytes, and the message with 8 bytes of slot
   // before it and 16 of tag after.
   const request = await sealed(real.key, 1005, transaction("0x02" + "ab".repeat(120)));

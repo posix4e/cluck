@@ -119,7 +119,9 @@
         The builder sees the public pool and nothing else, and its blocks have been worth a third or less of
         the ones that win. What your transaction pays the block's builder counts towards its bid; a tip large enough
         to make the difference changes the odds, and nothing else here does.</li>
-      <li>Nothing tells you here whether it went in. Watch the transaction's sender on a block explorer.</li>
+      <li>Nothing tells you here whether it went in. When it is handed in the page shows the transaction's hash,
+        worked out here from its bytes: look for that on a block explorer, where it appears only if it has
+        landed.</li>
       <li>If you also send it elsewhere, whichever lands first uses up its number, and the other can no longer
         happen.</li>
     </ul>
@@ -170,7 +172,7 @@
     el("state").textContent = text;
     if (small) el("state").append(make("small", small));
   };
-  const { checkKey, slotAt, lastSlot, transaction, sealed, askKey, handIn } = SendCheck;
+  const { checkKey, slotAt, lastSlot, transaction, hashOf, sealed, askKey, handIn } = SendCheck;
   let record, recordQuote, door, key = null;
   const showSlot = () => {
     el("slot").textContent = "until slot " + lastSlot(Date.now(), Number(el("minutes").value)) + "; it is slot " + slotAt(Date.now()) + " now";
@@ -232,9 +234,12 @@
     try {
       const last = lastSlot(Date.now(), Number(el("minutes").value));
       const said = await handIn(door, await sealed(key, last, bytes));
-      el("sent").textContent = said.status === 0
-        ? "Handed in. The builder has it and will try it in every block until slot " + last + "."
-        : "The builder did not keep it: " + said.means + ".";
+      if (said.status === 0) {
+        el("sent").textContent = "Handed in. The builder has it and will try it in every block until slot " + last + ". Its hash, to look for on a block explorer: ";
+        el("sent").append(make("code", "0x" + TdxQuote.hex(hashOf(bytes))));
+      } else {
+        el("sent").textContent = "The builder did not keep it: " + said.means + ".";
+      }
     } catch (error) {
       el("sent").textContent = String(error.message || error);
     }

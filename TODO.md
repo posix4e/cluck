@@ -1336,6 +1336,20 @@ by the guest itself.
       transaction went in; a name of the project's own in place of `sslip.io`'s; the
       door's machine is not kept up to date by anything but Debian's own unattended
       upgrades, which were not checked to be on.
+      **The sender is shown the transaction's hash** (2026-11-25, late). When the builder
+      has kept a transaction the page says its hash, worked out on the page from the bytes
+      (Keccak-256, forty lines in `demo/send.js`: a browser has none of its own), so there is
+      a name to look for on a block explorer. That is all: nothing here watches the chain for
+      the sender, and nothing tells them it was dropped when its time ran out. Run:
+      `node demo/test-send.mjs` (the hash of nothing, of `abc`, and of three transactions
+      of block 26494797 as this box's node has them, one of each kind the page takes), and a
+      new `node demo/test-send-page.mjs`, which runs the page's own script under Node with a
+      document that is only what the script asks of one and a door that is only kept
+      answers: sending stays shut until the key's quote has passed, what goes to the door
+      is sealed and holds no eight bytes in a row of the transaction, a builder that did
+      not keep it is said so, a door serving another key gets nothing. Both in CI. Not run:
+      the page with this change in a browser (the text appears only after a hand-in, and a
+      hand-in to the live builder takes the feeder's check away for as long as it is kept).
   - **Against the blocks proposers took, from Compute Engine** (2026-11-25, the hour from 04:28
     UTC, the first on the image now there; `/data/eth/shadow/tools/gap.py` on the feed's record,
     asking six relays' public lists what each slot's taken block paid): 267 of 300 slots had a

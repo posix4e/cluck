@@ -14,10 +14,10 @@ one, were described in [its release notes of April 2025][bn] as full Linux TDX i
 Reth, a proxy for order flow and one for attestation. The kernel, and anything that runs with its
 rights, can read the transactions.
 
-This is a builder whose guest is one EFI program of 4.9 MB. Above the firmware there is nothing else:
+This is a builder whose guest is one EFI program of 4.0 MB. Above the firmware there is nothing else:
 no kernel, no C library, no OpenSSL, no shell, no file system, and one listening TCP port. The network
 card's driver, Ethernet, IP, TCP, DNS, TLS 1.3, X.509, HTTP, the EVM, the Merkle-Patricia trie, BLS
-signing, SSZ and the builder itself are Lean in that one program. The 0.6% of it that is C parses no
+signing, SSZ and the builder itself are Lean in that one program. The 0.8% of it that is C parses no
 frame, no request and no certificate.
 
 It runs today in a TDX trust domain on Google Cloud, builds a block about every second from the public
@@ -39,13 +39,13 @@ The image as it runs on Google Cloud, counted from the linker's map and the file
 
 | Part | Bytes | Share | Whose |
 |---|---:|---:|---|
-| Jaune, an executable specification of the EVM in Lean | 1,505,013 | 31.3% | a third party's ([skbaek/jaune][jaune]), in a fork with changes made here |
-| The builder: engine, trie, TLS, bids, relays | 1,457,850 | 30.3% | this project's Lean |
-| Lean's own library | 1,387,773 | 28.8% | Lean's |
-| The OS: card drivers, Ethernet to TCP, DNS | 365,488 | 7.6% | this project's Lean |
-| Start-up and constants of compiled modules, relocations, and 1,653 bytes of three small libraries | 66,405 | 1.4% | the compiler's, the linker's, mathlib's |
-| C | 30,580 | 0.6% | 2,875 lines printed at build time from programs kept as data in Lean (`Mini/`), 1,250 by hand |
-| Counted | 4,813,109 | | the file is 4,898,304 bytes |
+| The builder: engine, trie, TLS, bids, relays | 1,383,958 | 35.3% | this project's Lean |
+| Lean's own library | 1,320,269 | 33.7% | Lean's |
+| What is left of Jaune, an executable specification of the EVM in Lean | 761,501 | 19.4% | a third party's ([skbaek/jaune][jaune]), in a fork with changes made here |
+| The OS: card drivers, Ethernet to TCP, DNS | 365,488 | 9.3% | this project's Lean |
+| Start-up and constants of compiled modules, relocations, and 1,093 bytes of two small libraries | 61,692 | 1.6% | the compiler's, the linker's, mathlib's |
+| C | 29,683 | 0.8% | 2,875 lines printed at build time from programs kept as data in Lean (`Mini/`), 1,266 by hand |
+| Counted | 3,922,591 | | the file is 4,000,256 bytes |
 
 About 15,000 lines of Lean written here are in it: the OS's network and drivers, the builder, the
 execution engine, TLS and its cryptography. The C is the allocator and reference counting that compiled
@@ -57,11 +57,13 @@ What that count leaves out or flatters:
 
 - **Firmware is not in it**, is far larger than the image, and stays underneath the whole time. See
   the next section.
-- **Jaune is someone else's code, nearly a third of the image, and still does much of the work.** The
-  interpreter that runs transactions was written here and is held to Jaune by tests. Decoding
-  transactions, recovering their senders, checking the header, most precompiled contracts and the
-  block's roots are still Jaune's. The fork used differs from upstream, in three places by code that
-  nothing proves equal to the specification.
+- **Jaune is someone else's code, a fifth of the image, and still does part of the work.** The
+  interpreter that runs transactions was written here and is held to Jaune by tests; Jaune's own
+  interpreter went out of the image on 2026-11-25 (the image was 4.9 MB with it, and a request could
+  ask for a block built by it), and a request for it is now refused. Decoding blocks, headers and
+  transactions, recovering senders, checking the header, the precompiled contracts with their curves
+  and hashes, and the tries of transactions, withdrawals and receipts are still Jaune's. The fork
+  used differs from upstream, in three places by code that nothing proves equal to the specification.
 - **The compilers are trusted**: Lean's, and the C compiler and linker behind it.
 - **Nothing proved covers the builder.** Parts of the runtime have proofs. The network stack and the
   builder are tested: the cryptography against OpenSSL's, the engine against Ethereum's own suites
@@ -115,7 +117,9 @@ here, before Google Cloud.
 **On Google Cloud** (`c3-standard-4` with TDX, us-central1), fed over the internet from a node 12 ms
 away, bidding at four relays with nothing paid for a win:
 
-- It has bid since 2026-11-24 18:30 UTC. These are the first hours, not a long record.
+- It has bid since 2026-11-24 18:30 UTC, and on the image described above since 2026-11-25 04:27.
+  These are the first hours, not a long record; the hours below are from the image before, which
+  differs in what it holds and not in how it builds.
 - **The hour from 19:58 UTC**, 300 slots: 1,540 blocks built and 1,490 sent. Of the 50 not sent, 31
   paid no more than one already sent for the slot, 18 were for proposers no relay had a registration
   from, and one was too late. Every block sent was judged valid by reth's validator on the feeding
@@ -130,22 +134,26 @@ away, bidding at four relays with nothing paid for a win:
   0.03 s. Five builds a slot, 1.15 s apart: 0.15 s for the request (1.5 MB) to arrive, 0.45 s to
   build, 0.07 s to post to four relays and have their answers, and the rest the feeder gathering
   transactions and proofs.
-- **It began again by itself three times in its first six hours on this machine** (22:58 and 23:58
-  UTC on the 24th, 01:59 on the 25th), each time about two seconds into a request to have a quote
-  made, with nothing on its console. The cause is not known yet. Every start draws new keys, so for
-  three hours its bids at the relays were under keys this repository did not name; the record here is
-  of the start of 01:59. Bidding went on through each, some slots later. The feeder asked for quotes
-  every hour then, and asks once for each start now.
+- **It began again by itself three times in six hours** (22:58 and 23:58 UTC on the 24th, 01:59 on
+  the 25th), each time at a request to have a quote made, with nothing on its console. Every start
+  draws new keys, so for three hours its bids at the relays were under keys this repository did not
+  name. Bidding went on through each, some slots later. What set it off: the firmware keeps a timer
+  interrupt going every 10 ms, and with one due while Google's host was making the quote, about one
+  such call in ten never returned and the trust domain was started afresh. Why the host does that
+  is not known here; a Linux guest, which does not run the firmware's timer, got 350 quotes of 350.
+  The image now stops that timer for the call: 818 requests since on Google's machines, no start.
+  The feeder, which asked every hour, asks once for each start.
 - **No proposer took one**, and none was expected to.
 - The machine costs about 23 cents an hour.
 
 **On one machine** (Xeon Gold 6526Y; guest in TDX; a stand-in relay beside it):
 
-- 1,000 slots in a row on the image now live (its twin that knows the stand-in for its relay): 999
-  with a block sent (the run joined the first too late), 7,017 blocks sent, every one judged valid by
-  reth's validator and accepted by the stand-in, none late. Eight builds a slot, 0.73 s apart; 0.30 s of
-  the guest's work for each.
-- The same on the image before it: 999 slots, 6,415 blocks, all valid, none late.
+- 1,000 slots in a row on the image now live as it was one small change earlier (its twin that knows
+  the stand-in for its relay; the change after is to how a quote is asked for): every slot with a
+  block sent, 6,790 blocks sent, every one judged valid by reth's validator and accepted by the
+  stand-in, none late. Seven builds a slot, 0.75 s apart; 0.35 s of the guest's work for each.
+- The same on the two images before it: 999 slots each (each run joined its first slot too late),
+  7,017 and 6,415 blocks, all valid, none late.
 - Three runs of 1,000 slots on earlier images: two with a block for every slot, one with 998.
 
 **Against the blocks proposers took** (one machine, 875 slots, 2026-11-23): ours were worth 29% of
@@ -192,7 +200,11 @@ Where this is thinner than it looks:
 - RTMR0, the machine's configuration as the firmware measured it, was the same on every start seen
   and is not worked out from anything.
 - The guest's port is open to the feeding machine alone, so you cannot ask it for a fresh quote
-  yourself; the one in the repository is from when it started.
+  yourself; the one in the repository is from when it started. A program that would stand between
+  (`evm/builder/door`) is written and runs nowhere yet.
+- A guest that starts again has new keys, and the record here is written by hand after a start.
+  The feeder says when the two differ; until someone acts on that, the page names a key the guest
+  no longer has, as it did for three hours on 2026-11-25.
 
 ## What is not done
 

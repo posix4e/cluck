@@ -974,9 +974,11 @@ by the guest itself.
       transaction's last slot may be (it keeps one as long as its sender says); the button
       that adds a payment to the proposer.
   - Not done there: a look at how often the guest leaves the trust domain there.
-  - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
-    A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone
-    (`silo-test-from-home`), a few images and their disk files remain, which cost cents a month.
+  - Spent so far on Compute Engine for this: about nine dollars by 2026-11-25 04:30 UTC (of the
+    500 a month agreed); the builder's machine is 23 cents an hour. A subnet (`silo-10-0-2`), a
+    firewall rule for this machine's address alone (`silo-test-from-home`), a second network
+    for a test machine beside the running one (`silo-test2`, its subnet and its rule), a few
+    images and their disk files remain, which cost cents a month.
 
 ## Ethereum block import, as a service (`evm/`)
 
@@ -2015,10 +2017,31 @@ times, and the block from the relay. Six stages:
     - `run-ask` had a case that was wrong before this and went unseen: the same bid sent again
       with no relay listening is no longer sent at all, since a block that pays no more than
       one a relay took for the slot is held back. The case now asks for the slot after.
+    - **1,000 slots on this image** (the stand-in's twin of it, `b385e741…`; 2026-11-25 00:52
+      to 04:13 UTC, blocks 26488731 to 26489730, in TDX on this machine against the stand-in
+      relay, the same command as the run before, record in `/data/eth/shadow/gate1000k`).
+      Every one of the 1,000 slots had a block sent. 6,941 rounds: 6,790 sent, each judged
+      valid by the node, the same at the stand-in as here, and signed; 146 kept back by the
+      guest for paying no more than one it had sent; 5 stopped at a witness that fell short.
+      No answer from the stand-in other than 200, none missing, no block ready after its slot
+      began, the guest never replaced. 6,789 of the 6,790 posts went on the connection kept
+      from the post before. Seven rounds a slot at the median, a round 0.75 s (0.35 s the
+      guest's own work at the median over all rounds, 0.55 s the host's wait for the last of
+      a slot); the last block of a slot ready 0.87 s before it at the median, 0.74 s at the
+      10th centile. Blocks held more than in the run before (105 transactions at the median
+      against about 90); for requests of a like size the guest took as long as it had (2 to
+      3 MB: 0.55 s asked and answered, against 0.57 s).
+    - **On Compute Engine since 2026-11-25 04:27 UTC**, with the change after it (the
+      firmware's clock stopped while a quote is asked for, above): image `e2010f12…e0e3b4`.
+      Before it went: on the images built with both changes, in TDX here, the OS's
+      `scripts/test-efi tdx`, `run-fixtures tdx --limits --key --quotes 30`, `run-fixtures
+      tdx --spec`, `check-secret-code tdx`, `run-ask tdx`, and 25 slots against the stand-in
+      (180 rounds, 178 sent, all valid). There, after the start: the fixtures, the key and a
+      bid, and 50 quotes one after another under one key; then the feed, and `docs/live`
+      written for the new key (`0x928980a9…`).
     - Not run: the `dev` images in the emulator; `demo/server.py` on `evm-os-spec`; Ethereum's
-      suites (the engine did not change). Running as this is written: 1,000 slots on the new
-      image (`/data/eth/shadow/gate1000k`). Not yet on Compute Engine, where the image before
-      this one is still the one bidding.
+      suites (the engine did not change); 1,000 slots on the image with the quote change
+      itself, which touches nothing a slot's work reaches.
     - Not done: the precompiled contracts and the decoders are still Jaune's.
   - Not done: a bid can still be answered after its slot
     has begun when the parent comes very late (one in 1,432 at the real relays); the builders

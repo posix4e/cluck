@@ -1247,8 +1247,8 @@ by the guest itself.
     - Not done: `docs/live` is still written by hand after a start. Google logs every quote a
       guest asks for in the project's own log (`tdxLaunchAttestationReportEvent`), which is
       where the times above are from.
-  - **A door for people who are not the feeder** (`evm/builder/door`, 2026-11-25): written and
-    tried, running nowhere yet. It listens for HTTP and passes on to the guest's port the
+  - **A door for people who are not the feeder** (`evm/builder/door`, 2026-11-25): open to the
+    public since 18:41 UTC that day (further down). It listens for HTTP and passes on to the guest's port the
     guest's two keys asked for with a report and quoted (`/key` the sealing key, `/builder`
     the key for bids; a quote made at most once a minute for all comers, or for a caller's own
     challenge a few times a minute) and sealed transactions (`POST /sealed`), with limits on
@@ -1308,8 +1308,34 @@ by the guest itself.
       Not run: the feed with `--button`; a press against the running builder, which spends;
       a press that is taken, and the feed going on after it. Not built: a page with the button on
       it (it is a command), and anything that tells a sender their transaction went in.
-    - Not done: where the door runs and under what name, which needs HTTPS in front for a
-      page to use it and is to be decided.
+    - **The door is open** (2026-11-25 18:41 UTC; `scripts/gce-door`, which says what it makes):
+      <https://35-225-124-179.sslip.io>, on an e2-micro with Debian 12 beside the guest
+      (`silo-door`, 10.0.2.20), Caddy from Debian in front with a certificate from Let's Encrypt,
+      got 35 seconds after the machine started. Three firewall rules: 80 and 443 from anyone to
+      that machine, nothing else to it, and from it to the guest's port (numbered before the
+      guest's own deny rule). No SSH key, no service account; it is changed by running the
+      script again. About ten dollars a month: the machine six, its address under four.
+      The page is published: <https://posix4e.github.io/cluck/send.html>, linked from the two
+      other pages, with the door's address in `docs/live/door.json`; CI holds the copies in
+      `docs/` to those in `evm/demo/`.
+      Run against it from here: `demo/test-send.mjs` with the door's address and the record
+      of the running guest (the twelve checks held on a quote made for its own random bytes;
+      a made-up message was kept; one sealed to another key did not open); a request to
+      build posted to `/sealed` was refused by the door (400); the machine's ports 22, 8080
+      and 5005 answer nobody from here. And the page in headless Chrome 154, served from this
+      checkout, wide and at a phone's width: the twelve checks held on a quote made for the
+      page's asking, which had not been seen in a browser, and made-up bytes pasted as a
+      transaction were handed in and kept for a minute.
+      **Seen while doing it:** for the slots a made-up message was kept (15734005, and five
+      from 15734013), the feed's records have no verdict on the blocks sent, as the threat
+      model says they would not: the guest shows the feeder no block while it holds a sealed
+      transaction. Anybody can now bring that about for up to an hour at a time; what is
+      left for those slots is the relays' answers. Counted apart from here on.
+      Not done: a real transaction through the door (it would be a spend); the page from
+      GitHub's server in a browser, Firefox, Safari; anything that tells a sender their
+      transaction went in; a name of the project's own in place of `sslip.io`'s; the
+      door's machine is not kept up to date by anything but Debian's own unattended
+      upgrades, which were not checked to be on.
   - **Against the blocks proposers took, from Compute Engine** (2026-11-25, the hour from 04:28
     UTC, the first on the image now there; `/data/eth/shadow/tools/gap.py` on the feed's record,
     asking six relays' public lists what each slot's taken block paid): 267 of 300 slots had a
@@ -1347,8 +1373,9 @@ by the guest itself.
     `Content-Length` its download server gave for the image file linked from the release notes,
     asked on 2026-11-25 without fetching the file.)
   - Not done there: a look at how often the guest leaves the trust domain there.
-  - Spent so far on Compute Engine for this: about nine dollars by 2026-11-25 04:30 UTC (of the
-    500 a month agreed); the builder's machine is 23 cents an hour. A subnet (`silo-10-0-2`), a
+  - Spent so far on Compute Engine for this: about thirteen dollars by 2026-11-25 18:45 UTC (of
+    the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine
+    is 23 cents an hour, about 170 dollars a month, and the door's about ten a month. A subnet (`silo-10-0-2`), a
     firewall rule for this machine's address alone (`silo-test-from-home`), a second network
     for a test machine beside the running one (`silo-test2`, its subnet and its rule), a few
     images and their disk files remain, which cost cents a month.

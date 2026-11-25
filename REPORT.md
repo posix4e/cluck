@@ -366,9 +366,12 @@ Where this is thinner than it looks:
   and is not worked out from anything.
 - The guest's port is plain TCP that asks nobody who they are, and a firewall rule of Google's lets in
   the feeder's address alone. Whoever can send from that address, or stands between, can do what the
-  feeder can. And you cannot ask the guest for a fresh quote yourself; the one in the repository is from
-  when it started. A program to stand in front of the port and pass on only requests for a key with its
-  quote, and sealed transactions (`evm/builder/door`), is written and runs nowhere yet.
+  feeder can. A program stands beside the port for everybody else and passes on only requests for a
+  key with its quote, and sealed transactions (`evm/builder/door`, at the address in
+  `docs/live/door.json` since 2026-11-25): through it anybody can have a quote made for random bytes
+  of their own, which <https://posix4e.github.io/cluck/send.html> does before it seals anything. It
+  runs on an ordinary machine of Google's that is measured by nobody and could ask the guest whatever
+  the feeder can; no transaction of a stranger's has come through it yet, and none has landed.
 - A guest that starts again has new keys, and the record here is written by hand after a start.
   The feeder says when the two differ; until someone acts on that, the page of step 2 names a key
   the guest no longer has, as it did for more than three hours in the night of 2026-11-24.

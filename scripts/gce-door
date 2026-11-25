@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# The door (evm/builder/door) on a small machine of Google Compute Engine beside the builder's guest, with
+# HTTPS in front of it under a name made from the machine's public address:
+#
+#   scripts/gce-door [NAME]            makes it, or makes it again with the door as it is checked out
+#   scripts/gce-door --end [NAME]      removes the machine (the address and the rules stay; they are named below)
+#
+# NAME is silo-door unless said. What it makes, each only if it is not there:
+#
+#   an address          NAME, reserved, so that the name people are given stays the same
+#   three firewall rules, on the network the guest is on:
+#     NAME-web          anyone may reach machines tagged NAME on TCP 80 and 443
+#     NAME-deny-rest    and on nothing else (a `default` network lets ICMP, 22 and 3389 in otherwise)
+#     NAME-to-guest     machines tagged NAME may reach those tagged SILO_GCE_GUEST_TAG on TCP 5005
+#   a machine           NAME, an e2-micro with Debian, no service account, nobody's SSH key
+#
+# and what the machine does when it starts (the script further down, which it is given as metadata): installs
+# Caddy from Debian, takes evm/builder/door from its metadata as this script read it from the checkout, runs
+# it as a user of its own on 127.0.0.1:8080 with --forwarded, and has Caddy answer for
+# A-B-C-D.sslip.io (D.C.B.A being the address) with a certificate it asks Let's Encrypt for, passing everything
+# on to the door. sslip.io is somebody's name server that answers any such name with the address in it:
+# one more party that could send people elsewhere, and what they would find there could not show the
+# guest's quote. Nothing is logged but the door's own line a request (who, when, what was asked, never a
+# body).
+#
+# Nobody logs in to it: to change it, run this again; to see what it says,
+# `gcloud compute instances get-serial-port-output NAME`. It costs money while it stands, about ten dollars a
+# month when this was written (the machine six, its address under four, its disk cents).
+#
+# From the surroundings: gcloud, signed in, with a project set; SILO_GCE_ZONE (us-central1-a);
+# SILO_GCE_SUBNET (silo-10-0-2), the guest's; SILO_GCE_GUEST (10.0.2.15), the guest's address there;
+# SILO_GCE_DOOR_IP (10.0.2.20), this machine's; SILO_GCE_GUEST_TAG (silo-test).
+set -euo pipefail
+zone="${SILO_GCE_ZONE:-us-central1-a}"
+region="${zone%-*}"
+subnet="${SILO_GCE_SUBNET:-silo-10-0-2}"
+guest="${SILO_GCE_GUEST:-10.0.2.15}"
+inside="${SILO_GCE_DOOR_IP:-10.0.2.20}"
+guest_tag="${SILO_GCE_GUEST_TAG:-silo-test}"
+here="$(cd "$(dirname "$0")" && pwd)"
+if [[ "${1:-}" == --end ]]; then
+  gcloud compute instances delete "${2:-silo-door}" --zone "$zone" --quiet
+  exit 0
+fi
+name="${1:-silo-door}"
+door="$here/../evm/builder/door"
+[[ -r "$door" ]] || { echo "scripts/gce-door: no evm/builder/door beside this script" >&2; exit 2; }
+network="$(gcloud compute networks subnets describe "$subnet" --region "$region" --format='value(network.basename())')"
+
+gcloud compute addresses describe "$name" --region "$region" > /dev/null 2>&1 ||
+  gcloud compute addresses create "$name" --region "$region" > /dev/null
+address="$(gcloud compute addresses describe "$name" --region "$region" --format='value(address)')"
+host="${address//./-}.sslip.io"
+
+rule() {  # NAME then what follows `firewall-rules create NAME --network N --direction INGRESS`
+  local rule="$1"; shift
+  gcloud compute firewall-rules describe "$rule" > /dev/null 2>&1 ||
+    gcloud compute firewall-rules create "$rule" --network "$network" --direction INGRESS "$@" > /dev/null
+}
+# The guest's own deny rule is numbered 900 (TODO.md): what lets the door through to it has to come before.
+rule "$name-web" --priority 800 --action allow --rules tcp:80,tcp:443 --source-ranges 0.0.0.0/0 --target-tags "$name"
+rule "$name-deny-rest" --priority 900 --action deny --rules all --source-ranges 0.0.0.0/0 --target-tags "$name"
+rule "$name-to-guest" --priority 800 --action allow --rules tcp:5005 --source-tags "$name" --target-tags "$guest_tag"
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/gce-door.XXXXXXXX")"
+trap 'rm -rf -- "$work"' EXIT
+cat > "$work/startup" <<'STARTUP'
+#!/bin/bash
+# Run by the machine as root each time it starts (scripts/gce-door).
+set -eu
+attribute() { curl -fsS -H Metadata-Flavor:Google "http://metadata.google.internal/computeMetadata/v1/instance/attributes/$1"; }
+host="$(attribute door-host)"
+guest="$(attribute door-guest)"
+if ! command -v caddy > /dev/null; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -q
+  apt-get install -yq caddy
+fi
+id door > /dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin door
+install -d -m 755 /opt/door
+attribute door > /opt/door/door.new
+mv /opt/door/door.new /opt/door/door
+chmod 644 /opt/door/door
+cat > /etc/systemd/system/door.service <<EOF
+[Unit]
+Description=The public door to the builder's guest (evm/builder/door)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=door
+ExecStart=/usr/bin/python3 -I /opt/door/door $guest --port 8080 --listen 127.0.0.1 --forwarded
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+# A body larger than the door would read is refused before it; the door's own limit is 262,197 bytes.
+cat > /etc/caddy/Caddyfile <<EOF
+$host {
+	request_body {
+		max_size 300KB
+	}
+	reverse_proxy 127.0.0.1:8080
+}
+EOF
+systemctl daemon-reload
+systemctl enable door > /dev/null 2>&1
+systemctl restart door
+systemctl restart caddy
+echo "gce-door: the door is started for $guest, and Caddy for $host"
+STARTUP
+
+gcloud compute instances delete "$name" --zone "$zone" --quiet 2> /dev/null || true
+gcloud compute instances create "$name" --zone "$zone" --machine-type e2-micro \
+  --image-family debian-12 --image-project debian-cloud --boot-disk-size 10GB --boot-disk-type pd-standard \
+  --network-interface "subnet=$subnet,private-network-ip=$inside,address=$address" \
+  --tags "$name" --no-service-account --no-scopes \
+  --metadata "door-host=$host,door-guest=$guest,block-project-ssh-keys=true" \
+  --metadata-from-file "startup-script=$work/startup,door=$door" > /dev/null
+echo "https://$host"

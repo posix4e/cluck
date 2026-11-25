@@ -493,8 +493,8 @@ drops everything for this machine that the feeder's rule does not allow; tried f
 feeder's address, where those three ports were refused before it and are silent after. Tried
 from no other address.
 
-**A door for everybody else** (`evm/builder/door`, 2026-11-25; written and tried against a guest,
-not yet run where the public can reach it). The port cannot be opened to all, since whoever reaches
+**A door for everybody else** (`evm/builder/door`, 2026-11-25; open to the public since 18:41 UTC
+that day, below). The port cannot be opened to all, since whoever reaches
 it can have the builder build and bid. The door is a program on the untrusted side that listens for
 HTTP and passes on to the guest's port only this: the guest's two keys asked for with a report, a
 report to be made a quote, and a sealed transaction. Everything else it refuses itself. When it
@@ -509,6 +509,25 @@ hold it back until the slot sealed inside has passed; it cannot open one. The ke
 believed for the quote that comes with it, which the sender checks, not for the door's word.
 While a sealed transaction is kept, the feeder is told nothing of the blocks built
 (`Evm/Send.lean`), so its own check of those blocks against its node is not made.
+
+Where it runs (`scripts/gce-door`): a small Linux machine of Compute Engine on the guest's subnet,
+which is no trust domain and is measured by nobody. On it Caddy, as Debian packages it, answers
+HTTPS for a name made from the machine's address under `sslip.io` and passes everything to the
+door on the same machine. What that brings in, all of it on the untrusted side:
+- **That machine can ask the guest anything.** A firewall rule lets it reach the guest's port, and
+  the port does not know the door from the feeder. Whoever takes the machine (through Caddy, the
+  door, Debian, or Google, whose it is) can do what the feeder can: have blocks built and bid,
+  or keep the guest busy. They get no key and can read no sealed transaction. Nobody logs in to
+  it: it has no SSH key and no service account, and the firewall lets in TCP 80 and 443 and nothing
+  else.
+- **Three more parties stand between a sender and the door**: whoever runs `sslip.io`'s name
+  servers, who could answer the name with another address; Let's Encrypt and every other
+  authority browsers accept, who could certify somebody else for it; and GitHub, which serves the
+  page that does the sealing and could serve another. None of them can make a quote. A sender
+  who runs the checks from the repository, and not the page as served, depends on none of them
+  for whose key it is; for whether the message arrives, on all of them.
+- **The door's machine keeps a line for each request**: the sender's address, the time, the path.
+  Never a body.
 
 **The input.** Anyone who can reach TCP port 5005 can send a request of up to 32 MiB, which is what a block
 of mainnet with its witness needs room for (the largest seen was 22 MB). `Evm/Service.lean`

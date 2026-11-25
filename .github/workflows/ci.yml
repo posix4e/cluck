@@ -120,6 +120,9 @@ jobs:
       - name: The page that seals a transaction, on kept answers
         working-directory: evm
         run: node demo/test-send.mjs
+      # The pages the site serves (docs/) are copies of those the tests above ran.
+      - name: The published pages are the tested ones
+        run: for file in send.html send.js seal.js verify.js; do cmp "evm/demo/$file" "docs/$file"; done
       # What the live code needs from a runtime, next to the list in the repository (taken on a Mac, where
       # the C start-up symbols differ). Printed, not enforced.
       - name: Runtime symbols the demo service keeps live

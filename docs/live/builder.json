@@ -1,12 +1,12 @@
 {
- "started": "2026-11-25 04:27 UTC",
- "commit": "16922ef",
- "image_sha256": "e2010f125df509278d82f72ba3e7f8493b96d88a68ac60f1343775aeb9e0e3b4",
- "image_bytes": 4000256,
- "rtmr1": "c426b958210ce3a904229706b01f7e728481ac1570836593b13312047d0c6063b28312a33b14e8cfc525c769ede724d6",
- "builder": "0x928980a909925197c1cd07b1ebdc451c7297cb529df3382b038a88d2d9dd1c8eef5b6a2f6fe91f339a5cd7758f9ff6e8",
- "challenge": "0x1eedc7180a18f192e8ffa137f65c39e8d447387f4896ac9a2a6e31604b0c1fd3",
- "challenge_block": 26489804,
+ "started": "2026-11-25 12:47 UTC",
+ "commit": "87ed77c",
+ "image_sha256": "e3faec9433bc96af55de9e2a9205d09371c2d50a6ce74f57c7c01d05a08da33c",
+ "image_bytes": 4004864,
+ "rtmr1": "1a198381f5b878712805e4679a6bf02b6dbff5c6350970ec342cbe1950115a15e78de8605d4e642db87d4dba697650fd",
+ "builder": "0x894ed5e6c7a96a91cbfbb0ec8e35801e6d16ff1177f4143e89dc82010f0820e1106816b16005d808c41ba16dfd463d72",
+ "challenge": "0xe29d9a5f703dce2c3b39b5aedf64af696c577f2c39d12aee6eb4864d0c2233eb",
+ "challenge_block": 26492294,
  "quote": "builder.quote",
  "quote_bytes": 8000
 }

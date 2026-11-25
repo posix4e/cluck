@@ -983,8 +983,10 @@ by the guest itself.
         evaluation). `build-test` holds it to the old definition on nine made-up lists (862
         checks). The images with it: `evm-os` `e3faec94…a08da33c` (4,004,864 bytes), the
         twin `a5e5ba1c…`, `evm-os-spec` `0c7e20f5…`; in TDX here `run-fixtures tdx --limits
-        --key --quotes 30`, `--spec`, `check-secret-code` and `run-ask` pass. Not on Compute
-        Engine.
+        --key --quotes 30`, `--spec`, `check-secret-code` and `run-ask` pass. **On Compute
+        Engine since 2026-11-25 12:47 UTC** (`evm-os` `e3faec94…`, key `0x894ed5e6…`,
+        `docs/live`): there `run-fixtures tdx --at … --key --quotes 50` passed before the
+        feed was started again, four minutes after it was stopped.
         **1,000 slots on the twin of that image** (2026-11-25 08:36 to 11:56 UTC, blocks
         26491041 on, `/data/eth/shadow/gate1000m`, with the feeder's limit on rounds): 999
         slots with a block sent, the one without being the first, which the run joined 1.3 s
@@ -2237,7 +2239,7 @@ times, and the block from the relay. Six stages:
       10th centile. Blocks held more than in the run before (105 transactions at the median
       against about 90); for requests of a like size the guest took as long as it had (2 to
       3 MB: 0.55 s asked and answered, against 0.57 s).
-    - **On Compute Engine since 2026-11-25 04:27 UTC**, with the change after it (the
+    - **On Compute Engine from 2026-11-25 04:27 to 12:43 UTC**, with the change after it (the
       firmware's clock stopped while a quote is asked for, above): image `e2010f12…e0e3b4`.
       Before it went: on the images built with both changes, in TDX here, the OS's
       `scripts/test-efi tdx`, `run-fixtures tdx --limits --key --quotes 30`, `run-fixtures

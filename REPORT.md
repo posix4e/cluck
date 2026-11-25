@@ -382,6 +382,10 @@ Where this is thinner than it looks:
   of their own, which <https://posix4e.github.io/cluck/send.html> does before it seals anything. It
   runs on an ordinary machine of Google's that is measured by nobody and could ask the guest whatever
   the feeder can; no transaction of a stranger's has come through it yet, and none has landed.
+  While the guest keeps a sealed transaction it shows the feeder none of its blocks, so the feeder's
+  node cannot say whether they were valid, and anybody can now bring that about for an hour a message:
+  for those blocks the relays' answers are all there is. In the door's first hour that was 33 of
+  1,077 bids, all while this project's own test messages were kept.
 - A guest that starts again has new keys, and the record here is written by hand after a start.
   The feeder says when the two differ; until someone acts on that, the page of step 2 names a key
   the guest no longer has, as it did for more than three hours in the night of 2026-11-24.

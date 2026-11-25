@@ -509,7 +509,13 @@ their address, the time, and how long the sealed message is. The door can drop a
 hold it back until the slot sealed inside has passed; it cannot open one. The key it serves is
 believed for the quote that comes with it, which the sender checks, not for the door's word.
 While a sealed transaction is kept, the feeder is told nothing of the blocks built
-(`Evm/Send.lean`), so its own check of those blocks against its node is not made.
+(`Evm/Send.lean`), so its own check of those blocks against its node is not made. With the door
+open that is anybody's to bring about: a message that opens to something shaped like a
+transaction is kept whether or not it could ever go in a block, for up to an hour, and another
+can follow it. For as long as one is kept, what says the blocks sent are valid is the relays'
+answers alone, and the feed's rule for stopping itself on an invalid block sees nothing. Seen
+in the door's first hour: 33 of 1,077 bids went without the node's word, every one while a
+made-up message from this project's own tests was kept. Nothing is done about it yet.
 
 Where it runs (`scripts/gce-door`): a small Linux machine of Compute Engine on the guest's subnet,
 which is no trust domain and is measured by nobody. On it Caddy, as Debian packages it, answers

@@ -123,6 +123,15 @@ On Google Cloud:
    is measured (MRTD), and Google signs a statement for that measurement, which is checked. What it
    does is Google's word; nobody else builds it. On a machine of one's own the firmware can be built
    from source, as it is where this was developed, and making it small would be the next reduction.
+   What the program still asks of it once the card is up is three things: to print a line on the
+   console, one for each request served; a counted delay of a millisecond when nothing has come from
+   the network for a while; and, once a second, to read two registers of the card, which say whether
+   the card has started over. Packets, the time and the request for a quote do not go through it,
+   and its timer is stopped when the program starts, so that its code runs when called or when the
+   processor raises an exception, and not otherwise (`THREAT_MODEL.md` has each of these). That is
+   on Google's card; on the virtio card of a machine of one's own, each time the card is told there
+   is work for it goes through the firmware as well. None of it makes the firmware less trusted:
+   it is in the same address space the whole time.
 3. **The image**, measured into RTMR1 together with the partition table of the disk it starts from.
    Anyone can work that value out from the image's file.
 4. **Four certificate roots** the image holds for the relays' names, and every authority under them.

@@ -1396,9 +1396,12 @@ by the guest itself.
       the one it is written in, so at that commit `docs/live` is the record of the guest before;
       the report said to check out that commit and run the command "given there". It now says to
       build in a second checkout and check from the newest, with the commands, and
-      `docs/live/builder.txt` (and `scripts/gce-live`, which writes it) says the same. Not run:
-      those commands as written, with `git worktree`; `image.yml` does the same with two
-      checkouts and passes.
+      `docs/live/builder.txt` (and `scripts/gce-live`, which writes it) says the same. Run as
+      written at 23:50 UTC that day, with `git worktree` and commit 46a5cfe: the file came out
+      `93068517…1e1372`, the one running, and `scripts/gce-check` said all five hold. The
+      packages (mathlib, Jaune and the rest, with what was already compiled of them) were copied
+      into the second checkout from the first instead of fetched, so the fetching was not run
+      here; `image.yml` fetches them and does the same with two checkouts, and passes.
     - What the reproduction steps left out: Linux on x86-64, elan, the packages `gce-check`
       needs, how `scripts/gce-try` is called and that `SILO_GCE_FROM` needs a tag and is a range,
       where the feed looks for its nodes, the reth the patch is for, the quoting service's socket.

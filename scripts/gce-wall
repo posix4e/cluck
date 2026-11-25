@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Who may reach the machines of Compute Engine that carry a network tag: the feeder, on the guest's port,
+# and nobody else.
+#
+#   scripts/gce-wall TAG FROM [NETWORK [WHAT]]     makes the two rules below, then shows as --show does
+#   scripts/gce-wall --show TAG [NETWORK]          the rules that decide what reaches such a machine
+#
+# TAG is the network tag the machines are given (SILO_GCE_TAGS of scripts/gce-try); FROM the feeder's
+# address as a range (203.0.113.7/32); NETWORK the network they are on (default); WHAT what the feeder
+# may reach (tcp:5005, the guest's port). It makes, each only if no rule of that name is there:
+#
+#   TAG-from-home     numbered 800: FROM may reach machines tagged TAG on WHAT
+#   TAG-deny-rest     numbered 900: nothing else may reach them
+#
+# The second is not there for tidiness. A project's `default` network comes with rules that let anyone
+# reach every machine by ICMP and on TCP 22 and 3389, and a project may have more of its own: without it
+# the guest answers pings from anywhere and reads the header of every packet sent to those ports
+# (THREAT_MODEL.md says what was open on the builder's guest, and until when). A rule with a lower number
+# is asked first, so anything that is to reach these machines has to be numbered under 900
+# (scripts/gce-door makes such a rule for the door).
+#
+# A rule of either name that is already there is left as it is; if TAG-from-home lets in some other range
+# than FROM, this says so and fails. What it shows at the end is every rule of the network that applies
+# to a machine tagged TAG and is asked before TAG-deny-rest, which is all that can let anything in: read
+# it. (The subnets here carry no IPv6, and these rules are of IPv4 only.)
+#
+# From the surroundings: gcloud, signed in, with a project set.
+set -euo pipefail
+usage() { sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+show() {  # TAG NETWORK
+  gcloud compute firewall-rules list --format json | python3 -I -c '
+import json, sys
+tag, network = sys.argv[1:3]
+rules = [r for r in json.load(sys.stdin)
+         if r["network"].rsplit("/", 1)[-1] == network and r["direction"] == "INGRESS" and not r.get("disabled")
+         and not r.get("targetServiceAccounts") and ("targetTags" not in r or tag in r["targetTags"])]
+rules.sort(key=lambda r: (r["priority"], "denied" not in r))  # of two with one number, the one that keeps out is asked first
+wall = next((i for i, r in enumerate(rules) if r["name"] == tag + "-deny-rest"), None)
+if wall is None:
+    print(f"scripts/gce-wall: no rule {tag}-deny-rest on the network {network}: whatever is below reaches machines tagged {tag}",
+          file=sys.stderr)
+else:
+    rules = rules[:wall + 1]
+what = lambda r: " ".join(e["IPProtocol"] + (":" + ",".join(e["ports"]) if e.get("ports") else "")
+                          for e in r.get("allowed", r.get("denied", [])))
+print(f"What is asked, in this order, of a packet for a machine tagged {tag} on the network {network}:")
+for r in rules:
+    source = ",".join(r.get("sourceRanges", []) + ["machines tagged " + t for t in r.get("sourceTags", [])])
+    does = "lets in  " if "allowed" in r else "keeps out"
+    print("  %5d  %-26s %s %-22s from %s" % (r["priority"], r["name"], does, what(r), source))
+sys.exit(0 if wall is not None else 1)
+' "$1" "$2"
+}
+if [[ "${1:-}" == --show ]]; then
+  [[ $# -ge 2 ]] || usage
+  show "$2" "${3:-default}"
+  exit 0
+fi
+[[ $# -ge 2 ]] || usage
+tag="$1" from="$2" network="${3:-default}" what="${4:-tcp:5005}"
+there() { gcloud compute firewall-rules describe "$1" --format "$2" 2> /dev/null; }
+if has="$(there "$tag-from-home" 'value(sourceRanges.list())')"; then
+  [[ "$has" == "$from" ]] || {
+    echo "scripts/gce-wall: the rule $tag-from-home is there and lets in $has, not $from; it is left as it is" >&2
+    exit 1
+  }
+else
+  gcloud compute firewall-rules create "$tag-from-home" --network "$network" --direction INGRESS --priority 800 \
+    --action allow --rules "$what" --source-ranges "$from" --target-tags "$tag" > /dev/null
+fi
+there "$tag-deny-rest" 'value(name)' > /dev/null ||
+  gcloud compute firewall-rules create "$tag-deny-rest" --network "$network" --direction INGRESS --priority 900 \
+    --action deny --rules all --source-ranges 0.0.0.0/0 --target-tags "$tag" > /dev/null
+show "$tag" "$network"

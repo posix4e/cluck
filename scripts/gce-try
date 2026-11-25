@@ -12,9 +12,12 @@
 # What it takes from the surroundings: gcloud, signed in, with a project set; SILO_GCE_ZONE (us-central1-a);
 # SILO_GCE_MACHINE (c3-standard-4); SILO_GCE_NET, what follows --network-interface (nic-type=GVNIC; a
 # subnet, a private address and a reserved public one, address=NAME, go here); SILO_GCE_TAGS, network
-# tags for firewall rules to name (this script makes no rule and checks none: a project's `default`
-# network lets anyone in by ICMP and on TCP 22 and 3389 unless a rule of yours says otherwise). The image is marked as one firmware may start without Secure Boot,
-# for Google's card, for TDX. The machine is given no service account: nothing in it would use one. A
+# tags for firewall rules to name; SILO_GCE_FROM, the one range of addresses that may reach the machine,
+# on TCP 5005 (203.0.113.7/32, the feeder's). With SILO_GCE_FROM and a tag, scripts/gce-wall is run for
+# the first tag before the machine is made: it makes the rule that lets that range in and the one that
+# keeps everything else out, and shows what applies. Without it no rule is made or looked at, and a
+# project's `default` network lets anyone reach the machine by ICMP and on TCP 22 and 3389. The image is
+# marked as one firmware may start without Secure Boot, for Google's card, for TDX. The machine is given no service account: nothing in it would use one. A
 # trust domain is not moved when its host is seen to: it is ended, and Compute Engine starts it again
 # (which is its default), as a new machine with new keys.
 set -euo pipefail
@@ -33,6 +36,19 @@ name="$1"
 work="$(mktemp -d "${TMPDIR:-/tmp}/gce-try.XXXXXXXX")"
 trap 'rm -rf -- "$work"' EXIT
 "$here/gce-image" "$2" "$work/$name.tar.gz" > /dev/null
+net="${SILO_GCE_NET:-nic-type=GVNIC}"
+if [[ -n "${SILO_GCE_FROM:-}" ]]; then
+  [[ -n "${SILO_GCE_TAGS:-}" ]] || { echo "scripts/gce-try: SILO_GCE_FROM needs SILO_GCE_TAGS, for its rules to name" >&2; exit 2; }
+  network=default
+  if [[ ",$net," =~ ,subnet=([^,]+), ]]; then
+    network="$(gcloud compute networks subnets describe "${BASH_REMATCH[1]}" --region "${zone%-*}" --format='value(network.basename())')"
+  elif [[ ",$net," =~ ,network=([^,]+), ]]; then
+    network="${BASH_REMATCH[1]}"
+  fi
+  "$here/gce-wall" "${SILO_GCE_TAGS%%,*}" "$SILO_GCE_FROM" "$network" >&2
+else
+  echo "scripts/gce-try: no SILO_GCE_FROM, so no firewall rule is made or looked at" >&2
+fi
 gcloud compute instances delete "$name" --zone "$zone" --quiet 2>/dev/null || true
 gcloud compute images delete "$name" --quiet 2>/dev/null || true
 gcloud storage cp "$work/$name.tar.gz" "gs://$bucket/$name.tar.gz" 2>&1 | tail -1
@@ -44,7 +60,7 @@ kind=(--confidential-compute-type TDX --maintenance-policy TERMINATE)
 [[ -n "${SILO_GCE_PLAIN:-}" ]] && kind=()
 gcloud compute instances create "$name" --zone "$zone" --machine-type "${SILO_GCE_MACHINE:-c3-standard-4}" \
   "${kind[@]}" --image "$name" --no-service-account --no-scopes ${SILO_GCE_TAGS:+--tags "$SILO_GCE_TAGS"} \
-  --network-interface "${SILO_GCE_NET:-nic-type=GVNIC}" --no-shielded-secure-boot \
+  --network-interface "$net" --no-shielded-secure-boot \
   --format "value(name,networkInterfaces[0].networkIP,networkInterfaces[0].accessConfigs[0].natIP)"
 sleep "${3:-45}"
 gcloud compute instances get-serial-port-output "$name" --zone "$zone" 2>/dev/null | tr -d '\r' | sed 's/\x1b\[[0-9;=?]*[A-Za-z]//g' | grep -a -v '^$' || true

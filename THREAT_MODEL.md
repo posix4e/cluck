@@ -491,7 +491,8 @@ request port, and nothing that reads a request. Nobody looked at what came in th
 the guest keeps no count. Since then a second rule (`silo-test-deny-rest`, ahead of Google's)
 drops everything for this machine that the feeder's rule does not allow; tried from the
 feeder's address, where those three ports were refused before it and are silent after. Tried
-from no other address.
+from no other address. `scripts/gce-wall` makes both rules for a machine started from here on, and
+lists every rule that can still let something reach it.
 
 **A door for everybody else** (`evm/builder/door`, 2026-11-25; open to the public since 18:41 UTC
 that day, below). The port cannot be opened to all, since whoever reaches

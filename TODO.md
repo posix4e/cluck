@@ -1388,9 +1388,18 @@ by the guest itself.
     shows the guest never saw that one; it has no times, so it says no more). Closed with a
     rule of lower number than Google's, `silo-test-deny-rest` (900, deny all, for the tag
     `silo-test`), and `silo-test-from-home` moved to 800. The feed went on through the change.
-    The second network never had those rules. **Not done:** `scripts/gce-try` does not make
-    or check either rule; whoever starts a guest on a `default` network of their own has the
-    same opening until they close it.
+    The second network never had those rules. **The recipe makes both rules now**
+    (`scripts/gce-wall TAG FROM`, which `scripts/gce-try` runs when it is given `SILO_GCE_FROM`,
+    and which then lists every rule that can let anything reach a machine with that tag).
+    **Run**, 2026-11-25 19:55 UTC: `gce-wall --show` on the running guest's tag (the feeder's
+    rule, the door's, the deny) and on a tag with no rules (it lists Google's and fails); the
+    two rules made twice for a new tag on `default`, the second time making nothing; then
+    `gce-try` with `SILO_GCE_FROM` and a new tag on the second network, the builder's image:
+    from the feeder's address the guest's port connected, a ping and TCP 22, 80 and 3389 got
+    no answer. The machine, its image and those rules were removed afterwards. **Not run:**
+    that last check on a `default` network, where Google's own rules are (the guest's address
+    there is the running builder's); what shows the deny rule comes before them is the
+    running guest, tried the same way when its rule was made.
 
 ## Ethereum block import, as a service (`evm/`)
 

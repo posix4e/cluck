@@ -945,8 +945,61 @@ by the guest itself.
       program. Nothing was found to want it: the OS's `scripts/test-efi tdx`, the hosted
       tests, `run-fixtures tdx --limits --key --quotes 100`, `--spec`, `check-secret-code`,
       `run-ask`, all in TDX here; and on a trust domain on Compute Engine the fixtures, the
-      key and a bid, and 400 quotes one after another under one key. 1,000 slots on it here
-      are running as this is written (`/data/eth/shadow/gate1000l`).
+      key and a bid, and 400 quotes one after another under one key.
+    - **1,000 slots on that image here, and two of them with no block sent** (2026-11-25 04:46
+      to 08:06 UTC, blocks 26489898 on, the twin that knows the stand-in;
+      `/data/eth/shadow/gate1000l`). 998 slots with a block sent; 6,741 blocks built, 6,627
+      sent, all judged valid and the same at the stand-in, 111 kept for paying no more, three
+      ended by the guest as too late; the guest never replaced, every post but the first on a
+      kept connection. Seven rounds a slot, 0.78 s a round, the last block of a slot 0.85 s
+      before it at the median. The two slots (15730694 and 15730695, 07:39 UTC) were in three
+      minutes when the pool was full: see "When the pool fills" below.
+    - **When the pool fills, the builder falls behind** (found 2026-11-25, 07:37 to 07:40 UTC,
+      in that run and on Compute Engine at once). For three minutes the node had 400 or more
+      transactions pending that could go in, which is as many as the feeder proposes. Every
+      round then carried all of them: requests of 6 to 9 MB, proofs of 800 accounts, blocks of
+      30 million gas. Here a round took 5 to 10 s where it takes 0.8 s: 3.4 s of the feeder's
+      gathering (0.5 s tracing, 2.9 s proofs) and 2 s of the guest's. On Compute Engine it took
+      6.5 to 12.7 s, and **five slots in a row went by with nothing sent** (15730694 to
+      15730698); here two. One round a slot, where there are seven. What was found, with the
+      requests the feeder keeps when a round is slow (`gate1000l/slow/`, put again to
+      `evm-serve-min`, the service as a process on the guest's own runtime, and sampled with a
+      few lines of Python around `ptrace`, there being no profiler here that runs without root):
+      - **One call to the point evaluation of EIP-4844 (precompile 0x0a) cost the guest 3.3 s.**
+        It is Jaune's, a pairing on BLS12-381 over whole numbers of any size, and 57% of a
+        build that took 5.8 s. The same build took 2.4 s on Lean's own runtime, whose big
+        numbers are GMP's. The slots with nothing sent were the ones whose pool held such a
+        transaction. The BLS12-381 operations of EIP-2537 (0x0b to 0x11) are the same
+        arithmetic and were not measured. bn254's, written here for the purpose, is 4 ms a
+        pairing.
+      - **Putting the transactions in order by tip was 42% of an ordinary full build**: 0.8 s
+        of 1.9 s for 400 transactions, against 8% for running them. `Build.byTip` worked out
+        the front of every signer's queue from every pair of waiting transactions, anew for
+        each transaction taken.
+      - Recovering signers is 30% of what is left, and three fifths of that is one inverse
+        modulo the curve's order by Euclid's algorithm on whole numbers (Jaune's
+        `FinField.inv`), about 0.35 ms a signature. Not changed.
+      - **What the feeder does about it** (`builder/shadow`, 2026-11-25; the feed on Compute
+        Engine has it from its run of 08:28 UTC). A round is given no more transactions than
+        fit in its time, best paying first: the first round for a head half the time there is,
+        when that is three seconds or more, so that a bid is out early; each later round what
+        is left, and never fewer than the round before with 25 more. What a transaction costs,
+        in gathering and in the guest, is learned from the rounds (the middle one of the last
+        three; for a later round, what the guest took over this head's round before). And a
+        transaction that reaches precompile 0x0a to 0x11 is not proposed (`SHADOW_SLOW=none`
+        proposes it). `scripts/round-check`, in CI, tests the arithmetic. Twice 25 slots here
+        in TDX against the stand-in, the second with both costs said to be 40 ms: every slot
+        with a block but one that fell while `bid-verify` was being rebuilt under it, 348
+        blocks sent and all valid, seven and eight rounds a slot, 0.73 s a round, as before;
+        the limit left out two to seven of the least paying in eight last rounds and 35 in
+        one, and one transaction was left out for a slow precompile.
+        **Not shown: a full pool with the limit.** There has been none since, and nothing here
+        makes one. The first trial of the change failed outright (a name used twice; every
+        round raised an error), in a copy the feed did not run.
+      - Not done: BLS12-381 written for the purpose, so that those transactions can go in;
+        the limit in the guest's own clock inside a transaction (it looks between
+        transactions, so one slow transaction overruns it); sending only what is new each
+        round, where now every round sends and the guest recovers and proves everything again.
     - Not done: `docs/live` is still written by hand after a start. Google logs every quote a
       guest asks for in the project's own log (`tdxLaunchAttestationReportEvent`), which is
       where the times above are from.

@@ -112,6 +112,9 @@ jobs:
       # when not, with a wallet made for the test and no node. Nothing is signed where Python has no Keccak.
       - name: The button that pays a proposer, its limits
         run: python3 -I evm/scripts/press-check
+      # How many transactions the feeding program gives a round when the pool is full: the arithmetic only.
+      - name: The limit on a round, its arithmetic
+        run: python3 -I evm/scripts/round-check
       # What the page for sealed transactions does with the door's answer, on answers kept from a real
       # guest: the key is taken only on a quote that holds, and twelve wrong ones are refused.
       - name: The page that seals a transaction, on kept answers

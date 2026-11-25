@@ -671,6 +671,17 @@ block. Which transactions were offered, the proofs, the assembling of the payloa
 making of the quote are the host's as before. The relays learned this machine's address and the builder's
 key; the chain shows the wallet's address.
 
+*Anybody can slow it with a transaction* (seen 2026-11-25). The guest runs what is pending in public,
+and some of what the EVM offers costs it far more time than the gas pays for: a call to the point
+evaluation precompile (0x0a) takes it seconds, because that arithmetic is Jaune's on whole numbers of any
+size, and the BLS12-381 precompiles (0x0b to 0x11) are the same. The guest looks at its clock between
+transactions and not inside one. So one pending transaction that anybody may send, costing its sender
+50,000 gas only if it lands, kept this builder from bidding for the slots it was pending in; it need
+not be sent with that in mind, and the one that did it was a rollup's. The feeder now leaves such
+transactions out before the guest sees them, which is the untrusted side protecting the trusted one
+from the public: a feeder that does not, or a sealed transaction that calls one, still holds the guest
+for as long as the call takes. Nothing secret is at stake in this, only whether the builder bids.
+
 *A payment a person asks for, on a feed that is always running* (`builder/shadow --button`,
 `builder/press`, 2026-11-25; written, its rule tested, no block built with it yet). Until now a wallet's
 key was read by a run started for one payment, which ended when it was made. With the button the program

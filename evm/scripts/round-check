@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Tests how builder/shadow decides how many transactions a round carries (`most_for`, `learn_pace`).
+
+    scripts/round-check [FILE]           (from evm/; FILE is builder/shadow unless said)
+
+builder/shadow is loaded as it would be started for a guest somewhere else; nothing is asked of a node
+or a guest and no round is run. The cases are the arithmetic: that a round is given what fits in its
+time, best paying first; that what was proposed before for the same head costs no gathering again; that
+a later round never gets fewer than the one before with a few more; and that what rounds cost is
+learned from several and not from one.
+
+Not tested here: that rounds with fewer transactions make for more and earlier bids when the pool is
+full, which needs a guest and a full pool (TODO.md says what was run).
+"""
+import importlib.machinery, importlib.util, os, sys
+
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.dont_write_bytecode = True
+path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, "builder/shadow")
+os.environ.pop("SHADOW_PACE", None)
+sys.argv = ["shadow", "--guest", "127.0.0.1:1", "--live", "--guest-sends", "--rebid", "--relays", "https://aestus.live"]
+loader = importlib.machinery.SourceFileLoader("shadow", path)
+shadow = importlib.util.module_from_spec(importlib.util.spec_from_loader("shadow", loader))
+loader.exec_module(shadow)
+
+failed = []
+def check(name, good, got=None):
+    print(f"{'ok  ' if good else 'FAIL'}  {name}")
+    if not good:
+        failed.append(name)
+        if got is not None:
+            print(f"      got {got!r}")
+
+txs = [{"hash": f"0x{n:064x}"} for n in range(400)]
+def set_pace(gather, guest):
+    shadow.pace["gather"], shadow.pace["guest"] = [gather] * 3, [guest] * 3
+
+set_pace(0.008, 0.008)
+got = shadow.most_for(txs, set(), 4.21)
+check("a full pool and 4.2 s: 250 transactions, not 400", got == 250, got)
+check("  time for everything: everything", shadow.most_for(txs, set(), 60) == 400)
+check("  time for nothing: thirty all the same", shadow.most_for(txs, set(), 0.1) == 30)
+check("  fewer pending than fit: all of them", shadow.most_for(txs[:100], set(), 4.2) == 100)
+check("  nothing pending: none", shadow.most_for([], set(), 4.2) == 0)
+before = {tx["hash"] for tx in txs[:250]}
+got = shadow.most_for(txs, before, 4.21)
+check("what was proposed before costs no gathering: the next round carries more", got == 375, got)
+got = shadow.most_for(txs, before, 4.21, guest_each=0.02)
+check("  fewer when the guest took longer over this head's last round than rounds usually take", got == 200, got)
+got = shadow.most_for(txs, before, 1.0, guest_each=0.02, floor=275)
+check("a later round with little time: the round before and a few more, never fewer", got == 275, got)
+got = shadow.most_for(txs[:260], before, 1.0, guest_each=0.02, floor=275)
+check("  and no more than are pending", got == 260, got)
+
+# What rounds cost is the middle one of the last three: one odd round changes nothing, two do.
+set_pace(0.008, 0.008)
+shadow.learn_pace(100, 100, 0.8, 5.2)          # a round the guest took 5 s over: 50 ms a transaction
+check("one slow round is not believed", shadow.each("guest") == 0.008, shadow.pace)
+shadow.learn_pace(100, 100, 0.8, 5.2)
+check("two are", abs(shadow.each("guest") - 0.05) < 1e-9, shadow.pace)
+for _ in range(2):
+    shadow.learn_pace(100, 100, 0.4, 0.8)
+check("two quick ones after, and the quick pace is back", abs(shadow.each("guest") - 0.006) < 1e-9 and abs(shadow.each("gather") - 0.004) < 1e-9, shadow.pace)
+kept = dict(shadow.pace)
+shadow.learn_pace(5, 10, 3.0, 3.0)
+check("a round of a few transactions teaches nothing", shadow.pace == kept, shadow.pace)
+shadow.learn_pace(100, 100, 0.0, 0.1)
+check("a cost is never taken for nothing", min(shadow.pace["guest"]) >= 0.0005 and min(shadow.pace["gather"]) >= 0.0005, shadow.pace)
+check("no more than three rounds are remembered", len(shadow.pace["guest"]) == 3 and len(shadow.pace["gather"]) == 3, shadow.pace)
+
+if failed:
+    sys.exit(f"round-check: {len(failed)} cases failed")
+print("round-check: all as it should be")

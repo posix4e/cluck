@@ -33,8 +33,8 @@ the source it was built from; how is below.
 Three things it is not. It is not a competitive builder: it sees only the public pool, and its blocks
 were worth between a fifth and a third of the winning ones at the median, and less summed (the
 measurements are below). It guards nothing private yet: the instance that is running holds a key for
-signing bids, which guards no money, and no way is open for anybody outside to send it a sealed
-transaction. And it is not the same shape as a builder with its node inside: here the node is outside
+signing bids, which guards no money, and though anybody can send it a sealed transaction since
+2026-11-25 (through a door described below), nobody outside has. And it is not the same shape as a builder with its node inside: here the node is outside
 the trust domain and hands the guest transactions with proofs of the state they touch. That is what lets
 the inside be small. It also means the machine that feeds it sees the public flow and chooses what the
 builder sees of it. Private flow has to be sealed to the guest, which is shown here for single

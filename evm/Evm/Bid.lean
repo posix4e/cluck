@@ -197,6 +197,9 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
   match (Build.request (input.extract (start + 64) input.size)).run 0 with
   | none => return refuse
   | some (request, _) =>
+    -- A request that allows a time is built against a clock, and no transaction in it may ask more of
+    -- precompiled contracts than `Build.txWork`; with no time allowed the answer depends on the request alone.
+    let request := if allowed input == 0 then request else { request with work := Build.txWork }
     -- The block the request proposed, with the added transactions after its own.
     let own := (Submit.proposed? request.witness.block).getD 0
     let parent := match request.witness.headers.getLast? with

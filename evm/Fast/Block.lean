@@ -41,6 +41,9 @@ structure BlockInput where
   blobsPerTx : UInt64
   /-- The addresses of the precompiled contracts. -/
   precompiles : Array Word
+  /-- The work one transaction may ask of them (`Allowance.work`): no limit, but for a block being built
+  against a clock. -/
+  work : UInt64 := 0xffffffffffffffff
 
 structure BlockOutput where
   world : World
@@ -103,7 +106,7 @@ def transactions (blk : @& BlockEnv) (host : @& Host) (input : @& BlockInput) :
     | some tx =>
       let allowed : Allowance :=
         { gas := blk.gasLimit - out.gasUsed, blobs := input.maxBlobs - out.blobs, blobsPerTx := input.blobsPerTx,
-          alwaysWarm := input.precompiles }
+          alwaysWarm := input.precompiles, work := input.work }
       match process blk host allowed tx out.stack out.world with
       | .error (why, world, _) => .error (s!"transaction {i}: {why}", world)
       | .ok (world, stack, receipt) =>

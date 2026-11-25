@@ -682,6 +682,23 @@ transactions out before the guest sees them, which is the untrusted side protect
 from the public: a feeder that does not, or a sealed transaction that calls one, still holds the guest
 for as long as the call takes. Nothing secret is at stake in this, only whether the builder bids.
 
+It is wider than those two kinds of contract, and the guest now stands in the way itself (2026-11-25;
+`Bridge.work`, `Build.txWork`; in the image after `e3faec94…`, which is not yet the one running). Measured
+on the guest's runtime (`precompile-time`), one transaction of all the gas a transaction may have, spent
+on nothing but recovering signers, adding points of bn254 or raising small numbers to powers, holds the
+builder four to six seconds: those contracts are priced for machine code and are Jaune's arithmetic here.
+A block built against a clock now gives each transaction a quarter of a second of such work, counted
+before each call from a table of what the calls were measured to cost. A transaction that asks for more
+has that call fail without being run and is left out of the block, as one that the witness could not
+answer for is. So a transaction costs the builder at most that quarter second a round, where it cost the
+round; the point evaluation and the BLS12-381 pairing cost more than the whole allowance and are never
+run in a block being built. What is left: the table is an estimate, made on one machine; work outside
+these contracts is bounded only by gas (hashing megabytes, say, which was not measured); a transaction
+whose proof-checking is honest and heavy is left out with the rest; and many such transactions from many
+senders each take their quarter second, every round, since the feeder does not yet learn which they
+were. A block being judged, as when the guest follows the chain, has no such limit: its transactions
+are in it.
+
 *A payment a person asks for, on a feed that is always running* (`builder/shadow --button`,
 `builder/press`, 2026-11-25; written, its rule tested, no block built with it yet). Until now a wallet's
 key was read by a run started for one payment, which ended when it was made. With the button the program

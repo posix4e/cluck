@@ -195,6 +195,12 @@ structure World where
   /-- Everything that could not be answered since this was last emptied, each once, up to `maxLacks`: for
   whoever can go and get it. -/
   lacks : Array Lack
+  /-- The work the transaction running may still have done for it by precompiled contracts, in the host's
+  measure (`Host.work`); all of it but while a transaction with a limit runs (`Fast.process`). -/
+  work : UInt64 := 0xffffffffffffffff
+  /-- Whether it asked for more than that. The call that asked failed without being run, and, as with
+  `missing`, nothing computed after it means anything: the transaction is one that was not run. -/
+  overworked : Bool := false
   deriving Inhabited
 
 namespace World
@@ -217,6 +223,15 @@ def noAccount : Account :=
   else { w with lacks := w.lacks.push ⟨kind, what, key⟩ }
 
 @[inline] def lack (w : World) (what : Word) : World := lackOf w 0 what Word.zero
+
+/-- A call of a precompiled contract that costs `cost` to run: the world with that taken from the work the
+transaction has left, and whether there was enough. Where there was not the world is marked and the call
+must not be run. -/
+def afford (w : World) (cost : UInt64) : World × Bool :=
+  if w.work < cost then ({ w with overworked := true }, false) else ({ w with work := w.work - cost }, true)
+
+/-- No transaction with a limit on its work is running. -/
+def rested (w : World) : World := { w with work := 0xffffffffffffffff, overworked := false }
 
 /-- The account at `a`, fetched if it has not been. When it cannot be fetched the world is marked and an
 account that is not there is handed back, which the caller must not take for an answer. -/

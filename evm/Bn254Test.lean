@@ -107,6 +107,15 @@ def main : IO UInt32 := do
     additions := additions + 1
     if !(← compare "addition" 6 input gas.toUInt64) then failures := failures + 1
   IO.println s!"addition against Jaune's: {additions} inputs"
+  -- The contract that hands its input back, which the engine has of its own too.
+  let mut copies := 0
+  for size in [0, 1, 31, 32, 33, 64, 1000, 4097] do
+    let input : ByteArray := ⟨(List.range size).map (fun i => (i * 7 + size).toUInt8) |>.toArray⟩
+    let cost := 15 + 3 * ((size + 31) / 32)
+    for gas in [0, cost - 1, cost, cost + 1, 100000] do
+      copies := copies + 1
+      if !(← compare "the input handed back" 4 input gas.toUInt64) then failures := failures + 1
+  IO.println s!"the input handed back, against Jaune's: {copies} inputs"
   -- Multiplication.
   let mut multiplications := 0
   for a in points1.extract 0 12 ++ bad1 do

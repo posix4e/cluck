@@ -1084,10 +1084,35 @@ by the guest itself.
         15731111) and one here, the first round was the only one, its block ready five
         seconds before the slot. The feeder judged a second round by what the first had cost,
         4.5 to 5.5 s, most of it proofs that a second round does not fetch again.
+      - **A limit inside a transaction, in the guest** (2026-11-25; not yet in an image that
+        runs anywhere). It is wider than the two kinds of contract above. `precompile-time`
+        puts each precompiled contract's worst input to the engine's host on the guest's
+        runtime: a transaction of all the gas one may have (2^24) spent on nothing but
+        recovering signers takes 4.0 s, on bn254 additions 4.0 s, on powers of 32-byte
+        numbers 3.4 s, on SHA-256 1.7 s, on BLS12-381 16 to 41 s; the contract that hands
+        its input back took 33 ms over a megabyte, by way of a list (6 s a transaction).
+        Now: `Bridge.work` says what a call costs in microseconds, from those measurements
+        rounded up; a block built against a clock (a bid that allows a time) gives each
+        transaction 250 ms of it (`Build.txWork`); a call there is no work left for fails
+        without being run, and the transaction is left out. The contract that hands its
+        input back is the engine's own (0 ms). A block being judged has no limit, and a
+        request with no time allowed is answered as before.
+        Tried: `fast-op-test` (the calls that fit are run, the next fails, the world is
+        marked), `bn254-test` (the engine's own copy against Jaune's, 40 inputs),
+        `build-test`'s 862 checks; and 40 requests the feeders kept for being slow, put to
+        `evm-serve-min` before and after: 27 answered the same byte for byte, 13 with one
+        or two transactions fewer in 0.4 to 1.05 s where they had taken 1.4 to 8.8 s.
+        The images with it: `evm-os` `93068517…b31e1372` (4,014,080 bytes), the twin
+        `d5c20a59…`, `evm-os-spec` `643acf73…`; in TDX here `run-fixtures tdx --limits
+        --key --quotes 30`, `--spec`, `check-secret-code` and `run-ask` pass, and hosted
+        `stateless-test`, `evm-test`, `trie-test`, `fast-word-test`.
+        Not done: work outside those contracts is not counted (gas bounds it, less
+        closely, and it was not measured); the feeder is not told which transactions were
+        left out for this, so each costs its quarter second again every round; the four
+        BLS12-381 contracts that were not measured are guessed above those that were.
       - Not done: BLS12-381 written for the purpose, so that those transactions can go in;
-        the limit in the guest's own clock inside a transaction (it looks between
-        transactions, so one slow transaction overruns it); sending only what is new each
-        round, where now every round sends and the guest recovers and proves everything again.
+        sending only what is new each round, where now every round sends and the guest
+        recovers and proves everything again.
     - Not done: `docs/live` is still written by hand after a start. Google logs every quote a
       guest asks for in the project's own log (`tdxLaunchAttestationReportEvent`), which is
       where the times above are from.

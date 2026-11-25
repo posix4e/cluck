@@ -38,6 +38,10 @@ structure Precompiled where
 structure Host where
   isPrecompile : Word → Bool
   precompile : Word → ByteArray → UInt64 → Precompiled
+  /-- What a call of a precompiled contract costs whoever runs it, by the address and the input, in a
+  measure of the host's own (`World.work` is counted down in it). Gas does not say: it is priced for
+  machines that do this arithmetic in a few microseconds. Nothing, where nobody counts. -/
+  work : Word → ByteArray → UInt64 := fun _ _ => 0
 
 /-- One call: whose code runs, on whose storage, for whom. -/
 structure Frame where

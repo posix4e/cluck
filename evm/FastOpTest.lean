@@ -180,5 +180,36 @@ def main : IO UInt32 := do
       failures := failures + 1
       if failures < 15 then IO.println s!"program {round}: code {hexOf code}\n  input {hexOf input}\n  Jaune: {a}\n  fast:  {b}"
   IO.println s!"random programs: {programs}, of which {ended} ran to their end, returning {returned} bytes in all"
+  -- Work for precompiled contracts. A host with one contract, at address 9, that costs 1,000 a call and
+  -- answers with one byte; a program that calls it three times and returns what the three calls said.
+  let host : Host :=
+    { isPrecompile := fun a => a == Word.ofUInt64 9, work := fun _ _ => 1000
+      precompile := fun _ _ gas => ⟨true, gas, ⟨#[7]⟩⟩ }
+  -- STATICCALL(gas 50000, 9, 0, 0, 0, 0), its answer stored at 0, 32 and 64; then 96 bytes returned.
+  let call (at_ : UInt8) : ByteArray := ⟨#[0x5f, 0x5f, 0x5f, 0x5f, 0x60, 0x09, 0x61, 0xc3, 0x50, 0xfa, 0x60, at_, 0x52]⟩
+  let code := call 0 ++ call 32 ++ call 64 ++ ⟨#[0x60, 0x60, 0x5f, 0xf3]⟩
+  let blk : BlockEnv :=
+    { coinbase := Word.zero, number := 0, timestamp := 0, gasLimit := 0, prevRandao := Word.zero,
+      baseFee := Word.zero, blobBaseFee := Word.zero, chainId := 0, blockHash := fun _ => Word.zero, osaka := true }
+  let frame : Frame :=
+    { address := Word.zero, caller := Word.zero, value := Word.zero, input := ByteArray.empty, code,
+      jumps := World.jumpBits code, static := false, depth := 0, base := 0 }
+  let env : TxEnv := { origin := Word.zero, gasPrice := Word.zero, blobHashes := #[] }
+  let said (out : Outcome) : List UInt8 := [31, 63, 95].map fun i => out.output.data.getD i 9
+  let expect (what : String) (work : UInt64) (answers : List UInt8) (left : UInt64) (over : Bool) : IO Bool := do
+    let out := execute blk env host frame ByteArray.empty 1000000 { World.new default with work }
+    let good := out.halt == 0 && said out == answers && out.world.work == left && out.world.overworked == over
+    if !good then
+      IO.println s!"work for precompiled contracts, {what}: halt {out.halt}, the calls said {said out}, work left {out.world.work.toNat}, marked {out.world.overworked}"
+    return good
+  let mut works := 0
+  for (what, work, answers, left, over) in [
+      ("no limit", (0xffffffffffffffff : UInt64), [1, 1, 1], (0xffffffffffffffff : UInt64) - 3000, false),
+      ("enough for exactly three calls", 3000, [1, 1, 1], 0, false),
+      ("enough for two: the third fails and the world is marked", 2999, [1, 1, 0], 999, true),
+      ("enough for none: all three fail", 999, [0, 0, 0], 999, true)] do
+    works := works + 1
+    if !(← expect what work answers left over) then failures := failures + 1
+  IO.println s!"work for precompiled contracts: {works} limits"
   if failures == 0 then IO.println "fast-op-test: all checks passed" else IO.println s!"fast-op-test: {failures} FAILED"
   return if failures == 0 then 0 else 1

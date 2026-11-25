@@ -98,6 +98,17 @@ structure Request where
   said in the answer (`Response.wanted`). Not part of a request as it is written: every transaction a
   request proposes may; the ones added to it by the machine itself may or may not (`Evm/Bid.lean`). -/
   loud : Nat := 1000000000
+  /-- The work one transaction may ask of precompiled contracts (`Bridge.work`), by the fast engine. Not
+  part of a request as it is written, and no limit unless whoever runs it sets one: a block built with
+  no clock running is a function of its request. -/
+  work : UInt64 := 0xffffffffffffffff
+
+/-- What one transaction may ask of precompiled contracts in a block built against a clock: a quarter of a
+second, by `Bridge.work`. The clock is looked at between transactions and cannot be looked at inside one,
+so this is what one transaction can make a block late by, as far as those contracts go, and it is under
+the half second after which a block is not sent (`Send.grace`). A proof checked on bn254 is some 20 ms
+of it and a hundred signers recovered 80; a transaction that wants more is left out, and said to be. -/
+def txWork : UInt64 := 250000
 
 def request (input : ByteArray) : P Request := do
   let begins ← take input magic.size
@@ -415,6 +426,7 @@ def startFast (r : Request) (fork : Fork) (parent : Header) (ancestors : List He
     match Bridge.body fork r.witness.chainId { template with header := blank } [] with
     | none => .done { status := 5 } #[] ""
     | some body =>
+      let body := { body with work := r.work }
       let witness := Bridge.Witness.of r.witness parent.stateRoot
       let blk := Bridge.environment fork r.witness.chainId blank ancestors
       let host := Bridge.host fork
@@ -446,7 +458,7 @@ def FastJob.step : FastJob → FastJob
           let ⟨world, stack, receipts, gasUsed, blobs, requests⟩ := out
           let allowed : Fast.Allowance :=
             { gas := blk.gasLimit - gasUsed, blobs := body.maxBlobs - blobs, blobsPerTx := body.blobsPerTx,
-              alwaysWarm := body.precompiles }
+              alwaysWarm := body.precompiles, work := body.work }
           match Fast.process blk host allowed tx stack world with
           | .error (why, world, stack) =>
             -- A marked world is the witness not answering. The transaction is undone already; the mark is

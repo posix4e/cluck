@@ -260,6 +260,9 @@ def prepareCall (kind : UInt8) (host : @& Host) (f : @& Frame)
   let world := if kind == 0xf1 && !value.isZero then (world.debit f.address value).credit target value else world
   let input := slice mem argsOff argsLen
   if host.isPrecompile target then
+    -- A contract the transaction has no work left for is not run: the call fails, the world is marked.
+    let (world, may) := world.afford (host.work target input)
+    if !may then .resumed (settleCall answerAt retOff retLen mark mem gas (lost stack world)) else
     let answer := host.precompile target input childGas
     .resumed (settleCall answerAt retOff retLen mark mem gas
       (if answer.success then ⟨0, answer.gasLeft, answer.output, stack, world⟩ else lost stack world))

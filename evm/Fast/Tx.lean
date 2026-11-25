@@ -94,12 +94,17 @@ structure Allowance where
   blobsPerTx : UInt64
   /-- Addresses that are warm in every transaction: the precompiled contracts. -/
   alwaysWarm : Array Word
+  /-- The work one transaction may have done for it by precompiled contracts, in the host's measure
+  (`Host.work`). A block being judged has no limit: its transactions are in it. One being built can
+  leave a transaction out, and has to when the transaction would keep it past its time. -/
+  work : UInt64 := 0xffffffffffffffff
 
 /-- A transaction run. An error is the transaction being one the block may not hold, in which case nothing
 was changed and the world and the stack come back with the reason; otherwise the world after it, the stack
 given back, and its receipt (with `cumulativeGas` holding only this transaction's gas, for the caller to
 add up). A transaction that read what the world could not get a proven answer for is an error too, with
-the world put back as it was before the transaction and still marked. -/
+the world put back as it was before the transaction and still marked. So is one that asked more work of
+precompiled contracts than `allowed.work`, with the world put back and no mark left. -/
 def process (blk : @& BlockEnv) (host : @& Host) (allowed : @& Allowance) (tx : @& Tx) (stack : ByteArray) (world : World) :
     Except (String × World × ByteArray) (World × ByteArray × Receipt) :=
   let (intrinsic, floor) := intrinsicGas tx
@@ -135,6 +140,7 @@ def process (blk : @& BlockEnv) (host : @& Host) (allowed : @& Allowance) (tx : 
   let world := tx.accessList.foldl (fun world entry =>
     entry.2.foldl (fun world key => world.warmSlotOnly entry.1 key) (world.warm entry.1).1) world
   let world := authorize blk.chainId world tx.authorizations
+  let world := { world with work := allowed.work, overworked := false }
   let gas := tx.gasLimit - intrinsic
   let env : TxEnv := { origin := tx.sender, gasPrice := Word.ofNat price, blobHashes := tx.blobHashes }
   let mark := world.checkpoint
@@ -153,6 +159,8 @@ def process (blk : @& BlockEnv) (host : @& Host) (allowed : @& Allowance) (tx : 
           (world, namedAccount.code, namedAccount.codeHash)
         | none => (world, account.code, account.codeHash)
       if host.isPrecompile to then
+        let (world, may) := world.afford (host.work to tx.input)
+        if !may then lost stack world else
         let answer := host.precompile to tx.input gas
         if answer.success then ⟨0, answer.gasLeft, answer.output, stack, world⟩ else lost stack world
       else if code.size == 0 then ⟨0, gas, ByteArray.empty, stack, world⟩
@@ -189,8 +197,10 @@ def process (blk : @& BlockEnv) (host : @& Host) (allowed : @& Allowance) (tx : 
   -- Everything it did is undone, payment and nonce with the rest, and the world comes back still marked,
   -- for the caller to decide what a transaction that cannot be run means: for a block being checked,
   -- that there is no verdict; for one being built, that this transaction is left out.
-  if world.missing then .error ("it read what the witness does not prove", world.revert begun, out.stack) else
+  if world.missing then .error ("it read what the witness does not prove", (world.revert begun).rested, out.stack) else
+  if world.overworked then
+    .error ("it asked more work of precompiled contracts than a transaction is given", (world.revert begun).rested, out.stack) else
   let receipt : Receipt := { kind := tx.kind, success, cumulativeGas := used, logs := world.logs }
-  .ok (world.endTransaction, out.stack, receipt)
+  .ok (world.endTransaction.rested, out.stack, receipt)
 
 end Fast

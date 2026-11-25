@@ -153,6 +153,11 @@ lean_exe «evm-bench» where
   root := `Bench
   moreLinkObjs := #[platformHosted, clockHosted]
 
+/-- Times the precompiled contracts as a transaction reaches them, on whichever runtime it is linked against. -/
+lean_exe «precompile-time» where
+  root := `PrecompileTime
+  moreLinkObjs := #[platformHosted, clockHosted]
+
 /-- `Evm.Trie` against Jaune's root computation, through witnesses whole and incomplete. -/
 @[default_target]
 lean_exe «trie-test» where

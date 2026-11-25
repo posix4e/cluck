@@ -48,17 +48,65 @@ def jauneHost (fork : Fork) : Fast.Host :=
         if cost ≤ gas.toNat then ⟨true, gas - cost.toUInt64, ⟨output.toArray⟩⟩ else ⟨false, 0, ByteArray.empty⟩
       | .error _ _ => ⟨false, 0, ByteArray.empty⟩ }
 
-/-- The engine's host: the precompiled contracts the engine has of its own (the three on bn254), at the
-prices the fork's rules give, and Jaune's for the rest. A contract that is given too little gas, or input
-that is not what it takes, fails and keeps all it was given. -/
+/-- What one call of a precompiled contract costs this builder: microseconds on the runtime it has in a
+trust domain, as `precompile-time` measured them there on 2026-11-25, rounded up. Gas is no guide. It is
+priced for arithmetic written for the purpose in machine code, and most of these are Jaune's, on whole
+numbers of any size: a transaction of all the gas one may have, spent on recovering signers or adding
+points or small powers, took four to six seconds, which a node runs in a few hundredths of one. The
+point evaluation (0x0a) and BLS12-381's pairing (0x0f) cost seconds a call. Those of BLS12-381 that were
+not measured (0x0d, 0x0e, 0x0f, 0x11) are put above the ones that were. Not counted: what a transaction
+does outside these contracts, which gas does bound, less closely. -/
+def work (a : Fast.Word) (input : ByteArray) : UInt64 :=
+  let size := input.size.toUInt64
+  let words := (size + 31) / 32
+  -- A length as the power contract reads it: 32 bytes, the highest first, absent ones nothing. More than
+  -- 1,024 is refused by the contract or priced out of any block, and counts as that here.
+  let lengthAt (at_ : Nat) : UInt64 :=
+    let n := (List.range 32).foldl (fun n i => if n > 1024 then n else n * 256 + (input.data.getD (at_ + i) 0).toNat) 0
+    (min n 1024).toUInt64
+  let n := a.w0
+  if n == 1 then 800
+  else if n == 2 then 10 + 2 * words
+  else if n == 3 then 20 + 6 * words
+  else if n == 4 then 1 + words / 64
+  else if n == 5 then
+    -- Squarings and multiplications of numbers of `limbs` 64-bit words, one or two for each bit of the
+    -- exponent. For each bit, in hundredths of a microsecond: 8 for each pair of words, 25 a word, 100.
+    let limbs := (max (lengthAt 0) (lengthAt 64) + 7) / 8
+    100 + (8 * limbs * limbs + 25 * limbs + 100) * (8 * lengthAt 32 + 8) / 100
+  else if n == 6 then 40
+  else if n == 7 then 650
+  else if n == 8 then 100 + 3300 * (size / 192)
+  else if n == 9 then
+    5 + ((List.range 4).foldl (fun r i => r * 256 + (input.data.getD i 0).toNat) 0).toUInt64 / 20
+  else if n == 0x0a then 3500000
+  else if n == 0x0b then 500
+  else if n == 0x0c then 35000 * max 1 (size / 160)
+  else if n == 0x0d then 2500
+  else if n == 0x0e then 150000 * max 1 (size / 288)
+  else if n == 0x0f then 2000000 * max 1 (size / 384)
+  else if n == 0x10 then 6000
+  else if n == 0x11 then 40000
+  else if n == 0x100 then 300
+  else 0
+
+/-- The engine's host: the precompiled contracts the engine has of its own (the three on bn254, and the
+one that hands its input back), at the prices the fork's rules give, and Jaune's for the rest. A contract
+that is given too little gas, or input that is not what it takes, fails and keeps all it was given. -/
 def host (fork : Fork) : Fast.Host :=
   let jaune := jauneHost fork
   let prices := fork.ruleSet.bn254
   let failed : Fast.Precompiled := ⟨false, 0, ByteArray.empty⟩
   let word (b : Bool) : ByteArray := (ByteArray.mk (Array.replicate 31 0)).push (if b then 1 else 0)
   { isPrecompile := jaune.isPrecompile
+    work
     precompile := fun a input gas =>
-      if a.w0 == 6 then
+      if a.w0 == 4 then
+        -- The input, as it is: 15 gas and 3 for each 32 bytes begun. (Jaune's took 33 ms over a megabyte,
+        -- by way of a list.)
+        let cost := 15 + 3 * ((input.size.toUInt64 + 31) / 32)
+        if gas < cost then failed else ⟨true, gas - cost, input⟩
+      else if a.w0 == 6 then
         let cost := prices.add.toUInt64
         if gas < cost then failed else
         match Fast.Bn254.addPoints input with

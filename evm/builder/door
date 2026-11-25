@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+"""The door through which people who are not the builder's feeder hand it sealed transactions.
+
+    builder/door GUEST[:PORT] [--port 8080] [--listen 127.0.0.1] [--forwarded]
+
+The guest has one port, and whoever reaches it can ask it anything: to build, to bid, to post to relays.
+So that port is let in from the feeder alone, and this stands beside it for everybody else. It speaks
+HTTP, and of all the guest's requests it passes on these and nothing more:
+
+    GET  /key      the guest's key for sealing (Evm/Seal.lean), with a quote that ties the key to the
+                   guest's measurements (Evm/Attest.lean). Asked of the guest at most once a minute,
+                   with a challenge made here; everybody is given that answer until the next.
+    POST /key      the same, asked anew with the caller's own challenge: {"challenge": 64 hex digits}.
+    GET, POST /builder
+                   the same two for the guest's key for bids (Evm/Bid.lean), the one relays list its
+                   bids under: so that anybody can have a quote of it no older than they like.
+    POST /sealed   a sealed transaction, the body being the request as the guest takes it: "JSEA1" or
+                   "JSEA2" and what follows. Answered with the guest's one byte and what it means.
+
+Each answers in JSON. Everything else is refused here and never reaches the guest.
+
+This program is on the untrusted side, like the feeder. It sees who sends, when, and how long a sealed
+message is; it can drop one, keep one back, or hand it in late (the slot sealed inside a message is
+the sender's limit on that). It cannot read one or make one the guest would take for somebody else's.
+A sender does not have to believe the key it serves: the quote is checked by the sender, against
+measurements worked out from the source.
+
+What it holds back, so that a stranger cannot keep the guest from its work: a body over the size of
+the largest sealed message is not read; one address may hand in `--each` sealed transactions a minute
+and everybody together `--all` (the guest keeps 64 at most, and 512 KB); a new quote is asked for at
+most `--quotes` times a minute, each of which holds the guest for the tenth of a second its host takes; one request is before the guest at a time; and it holds 64 connections
+at once, each given 20 seconds. That last is no defence against somebody set on keeping others out of
+the door; it keeps them out of the guest.
+
+It serves plain HTTP. A browser will only send to it from a page served over HTTPS if it is behind
+something that speaks HTTPS; with --forwarded the sender's address is taken from the last entry of
+X-Forwarded-For, which is right only when that something is the only way in.
+
+This never goes in an image.
+"""
+import argparse, base64, collections, json, os, socket, struct, sys, threading, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+SEALED = b"JSEA1"
+SEALED_WITH_PROOFS = b"JSEA2"
+# The sender's public half and the seal's tag, then: the slot and a transaction no larger than nodes
+# pass around (128 KB); or, with proofs, the most the guest will open (Evm/Seal.lean, `maxOpened`).
+MOST = {SEALED: 5 + 32 + 16 + 8 + 128 * 1024, SEALED_WITH_PROOFS: 5 + 32 + 16 + 256 * 1024}
+# The question each path puts to the guest, and how long the key that answers it is.
+KEYS = {"/key": (b"JSEK1", 32), "/builder": (b"JKEY1", 48)}
+MEANS = {0: "kept", 1: "it does not open with this machine's key", 2: "it opens to nothing that could be a transaction",
+         3: "no room: the machine keeps 64 sealed transactions at most",
+         4: "its proofs are at a block this machine does not know, or do not reach what they say they prove"}
+
+
+class Guest:
+    """The guest's port: one request at a time, on a connection kept between them."""
+
+    def __init__(self, host, port):
+        self.where, self.link, self.turn = (host, port), None, threading.Lock()
+
+    def ask(self, request, patience=30):
+        with self.turn:
+            for attempt in (0, 1):
+                try:
+                    if self.link is None:
+                        self.link = socket.create_connection(self.where, timeout=10)
+                        self.link.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    self.link.settimeout(patience)
+                    self.link.sendall(struct.pack(">I", len(request)) + request)
+                    got = b""
+                    while len(got) < 4 or len(got) < 4 + struct.unpack(">I", got[:4])[0]:
+                        piece = self.link.recv(1 << 16)
+                        if not piece:
+                            raise ConnectionError("the guest closed the connection")
+                        got += piece
+                    return got[4:]
+                except OSError:
+                    if self.link is not None:
+                        self.link.close()
+                    self.link = None
+                    # A connection that had gone stale while idle is tried once more; a sealed message
+                    # handed in twice is kept twice at worst, and the second fails when built.
+                    if attempt:
+                        raise
+
+
+class Pace:
+    """At most `most` in any `seconds`, for each name asked about."""
+
+    def __init__(self, most, seconds=60):
+        self.most, self.seconds, self.seen, self.lock = most, seconds, collections.defaultdict(collections.deque), threading.Lock()
+
+    def allows(self, name, now=None):
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            # Names not heard from for a while are forgotten, so that this holds no more than a minute's.
+            if len(self.seen) > 4096:
+                for old in [n for n, times in self.seen.items() if not times or now - times[-1] >= self.seconds]:
+                    del self.seen[old]
+            times = self.seen[name]
+            while times and now - times[0] >= self.seconds:
+                times.popleft()
+            if len(times) >= self.most:
+                return False
+            times.append(now)
+            return True
+
+
+class Door:
+    def __init__(self, guest, each, everybody, quotes, key_age=60):
+        self.guest = guest
+        self.each, self.everybody, self.quotes = Pace(each), Pace(everybody), Pace(quotes)
+        self.key_age, self.kept, self.kept_lock = key_age, {}, threading.Lock()
+
+    def key(self, which, challenge):
+        """One of the guest's keys with its report made into a quote, for this challenge."""
+        asked, size = KEYS[which]
+        answer = self.guest.ask(b"JATT1" + challenge + asked)
+        if len(answer) != size + 1024:
+            raise RuntimeError("the machine gave a key with no report: it is not in a trust domain" if len(answer) == size
+                               else "the machine did not answer with a key")
+        key, report = answer[:size], answer[size:]
+        made = self.guest.ask(b"JQUO1" + report, 60)
+        if made[:1] != b"\0":
+            raise RuntimeError("the machine's host made no quote: " + made[1:200].decode(errors="replace"))
+        return {"key": key.hex(), "question": asked.decode(), "challenge": challenge.hex(),
+                "quote": base64.b64encode(made[1:]).decode(), "asked": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+
+    def key_for_all(self, which):
+        with self.kept_lock:
+            kept, at = self.kept.get(which, (None, 0.0))
+            if kept is None or time.monotonic() - at >= self.key_age:
+                kept = self.key(which, os.urandom(32))
+                self.kept[which] = (kept, time.monotonic())
+            return kept
+
+
+def handler_for(door, forwarded):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "door"
+        protocol_version = "HTTP/1.1"
+        timeout = 20
+
+        def log_message(self, format, *args):
+            # Who and when, and never a body: what is handed in is sealed, and stays unwritten anyway.
+            sys.stderr.write("%s %s %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), self.sender(), format % args))
+
+        def sender(self):
+            if forwarded:
+                named = self.headers.get("X-Forwarded-For", "") if self.headers else ""
+                if named.strip():
+                    return named.split(",")[-1].strip()[:64]
+            return self.client_address[0]
+
+        def say(self, status, value, close=False):
+            body = json.dumps(value).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            # Any page may ask: nothing here is anybody's in particular, and no cookie is looked at.
+            self.send_header("Access-Control-Allow-Origin", "*")
+            if close:
+                self.send_header("Connection", "close")
+                self.close_connection = True
+            self.end_headers()
+            self.wfile.write(body)
+
+        def body(self, most):
+            """The request's body, or None after having refused it."""
+            try:
+                length = int(self.headers.get("Content-Length", ""))
+            except ValueError:
+                self.say(411, {"error": "say how long the body is"}, close=True)
+                return None
+            if not 0 < length <= most:
+                # Not read: the connection is closed with the body still on its way.
+                self.say(413, {"error": f"a body here is at most {most} bytes"}, close=True)
+                return None
+            got = self.rfile.read(length)
+            if len(got) != length:
+                self.say(400, {"error": "the body ended early"}, close=True)
+                return None
+            return got
+
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Access-Control-Max-Age", "86400")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_GET(self):
+            path = self.path.split("?")[0]
+            if path == "/":
+                return self.say(200, {"what": "the door to a block builder in a trust domain: /key, /builder, POST /sealed",
+                                      "source": "evm/builder/door"})
+            if path not in KEYS:
+                return self.say(404, {"error": "there is /key, /builder and /sealed"})
+            try:
+                self.say(200, door.key_for_all(path))
+            except (RuntimeError, OSError) as error:
+                self.say(502, {"error": str(error) or type(error).__name__})
+
+        def do_POST(self):
+            path = self.path.split("?")[0]
+            if path in KEYS:
+                asked = self.body(256)
+                if asked is None:
+                    return
+                try:
+                    challenge = bytes.fromhex(json.loads(asked)["challenge"])
+                    if len(challenge) != 32:
+                        raise ValueError
+                except (ValueError, KeyError, TypeError):
+                    return self.say(400, {"error": 'ask with {"challenge": 64 hexadecimal digits}'})
+                if not door.quotes.allows("all"):
+                    return self.say(429, {"error": "new quotes are made a few a minute; GET has the last one"})
+                try:
+                    return self.say(200, door.key(path, challenge))
+                except (RuntimeError, OSError) as error:
+                    return self.say(502, {"error": str(error) or type(error).__name__})
+            if path != "/sealed":
+                return self.say(404, {"error": "there is /key, /builder and /sealed"})
+            sealed = self.body(max(MOST.values()))
+            if sealed is None:
+                return
+            kind = sealed[:5]
+            if kind not in MOST:
+                return self.say(400, {"error": 'a sealed transaction begins "JSEA1" or "JSEA2"'})
+            if len(sealed) > MOST[kind]:
+                return self.say(413, {"error": f"one of this kind is at most {MOST[kind]} bytes"})
+            if len(sealed) < 5 + 32 + 16 + 8 + 1:
+                return self.say(400, {"error": "too short to be a sealed transaction"})
+            if not door.each.allows(self.sender()) or not door.everybody.allows("all"):
+                return self.say(429, {"error": "too many handed in this minute; try in a minute"})
+            try:
+                answer = door.guest.ask(sealed)
+            except OSError as error:
+                return self.say(502, {"error": f"the machine could not be reached: {error}"})
+            if len(answer) != 1:
+                return self.say(502, {"error": "the machine did not answer as it should"})
+            self.say(200, {"status": answer[0], "means": MEANS.get(answer[0], "something this door does not know")})
+
+    return Handler
+
+
+class Server(ThreadingHTTPServer):
+    """No more than `ROOM` connections at once: one over that is closed unanswered."""
+    daemon_threads = True
+    request_queue_size = 64
+    ROOM = 64
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.room = threading.BoundedSemaphore(self.ROOM)
+
+    def process_request(self, request, client_address):
+        if not self.room.acquire(blocking=False):
+            return self.shutdown_request(request)
+        super().process_request(request, client_address)
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self.room.release()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="The public door to a builder's guest: its sealing key, and sealed transactions.")
+    parser.add_argument("guest", help="the guest's address, with :PORT if not 5005")
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--listen", default="127.0.0.1", help="the address to listen on (default: this machine only)")
+    parser.add_argument("--forwarded", action="store_true", help="take the sender's address from X-Forwarded-For")
+    parser.add_argument("--each", type=int, default=6, help="sealed transactions a minute from one address")
+    parser.add_argument("--all", type=int, default=30, help="sealed transactions a minute from everybody")
+    parser.add_argument("--quotes", type=int, default=6, help="quotes a minute made for callers' own challenges")
+    args = parser.parse_args()
+    host, _, port = args.guest.partition(":")
+    door = Door(Guest(host, int(port or 5005)), args.each, args.all, args.quotes)
+    server = Server((args.listen, args.port), handler_for(door, args.forwarded))
+    print(f"door: http://{args.listen}:{server.server_address[1]} for the guest at {host}:{int(port or 5005)}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

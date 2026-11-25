@@ -104,6 +104,10 @@ jobs:
       # builder's guest on Google Cloud, and against the same made wrong one way at a time. Fetches nothing.
       - name: Intel's standing for a TDX platform
         run: verify/test-tdx-standing
+      # The door that stands between strangers and the builder's port, against a stand-in for the guest:
+      # what it serves, and that nothing else it is sent reaches the guest.
+      - name: The builder's public door
+        run: python3 -I evm/scripts/door-check
       # What the live code needs from a runtime, next to the list in the repository (taken on a Mac, where
       # the C start-up symbols differ). Printed, not enforced.
       - name: Runtime symbols the demo service keeps live

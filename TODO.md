@@ -944,6 +944,25 @@ by the guest itself.
       program; that touches every run and wants the long tests again. `docs/live` is still
       written by hand after a start. Google logs every quote a guest asks for in the project's
       own log (`tdxLaunchAttestationReportEvent`), which is where the times above are from.
+  - **A door for people who are not the feeder** (`evm/builder/door`, 2026-11-25): written and
+    tried, running nowhere yet. It listens for HTTP and passes on to the guest's port the
+    guest's two keys asked for with a report and quoted (`/key` the sealing key, `/builder`
+    the key for bids; a quote made at most once a minute for all comers, or for a caller's own
+    challenge a few times a minute) and sealed transactions (`POST /sealed`), with limits on
+    size and on how many a minute. Nothing else reaches the guest.
+    - `scripts/door-check`, in CI: 50 cases against a stand-in for the guest's port, among them
+      every other kind of request the guest knows, each of which must be refused without the
+      guest hearing of it.
+    - Tried against a guest in a trust domain on Compute Engine, from here: both keys came
+      with quotes of them (`scripts/gce-check` held on the one for bids, against the image),
+      a made-up sealed message was answered "does not open" by the guest, a request to build
+      was refused by the door.
+    - What it would give once it runs somewhere: anyone can ask for a quote no older than
+      they like (REPORT.md says they cannot now), a page could show the guest's key as it is
+      and not as a file says it was, and strangers can hand in sealed transactions.
+    - Not done: where it runs and under what name, which needs HTTPS in front for a page to
+      use it and is to be decided; the page; a limit in the guest on how far ahead a sealed
+      transaction's last slot may be (it keeps one as long as its sender says).
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
     A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone

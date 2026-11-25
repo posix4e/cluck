@@ -1,0 +1,212 @@
+#!/usr/bin/env python3
+"""Tests builder/door against a stand-in for the guest's port.
+
+    scripts/door-check            (from evm/)
+
+The stand-in speaks the guest's framing, answers the requests the door is allowed to pass on, and writes
+down every request it is sent. The cases ask the door for what it serves and for what it must refuse,
+and then look at what reached the stand-in: nothing but a request for one of the guest's two keys with a
+report, a request for a quote, and sealed transactions.
+
+Not tested here: the door against a real guest, and anything about HTTPS, which the door leaves to
+whatever stands in front of it.
+"""
+import base64, importlib.machinery, importlib.util, json, os, socket, socketserver, struct, sys, threading
+import http.client
+
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.dont_write_bytecode = True
+loader = importlib.machinery.SourceFileLoader("door", os.path.join(here, "builder/door"))
+door = importlib.util.module_from_spec(importlib.util.spec_from_loader("door", loader))
+loader.exec_module(door)
+
+KEY, BUILDER, REPORT, QUOTE = bytes(range(32)), bytes(range(100, 148)), bytes([7]) * 1024, b"a quote, for this test" * 100
+seen = []
+state = {"quote": True, "up": True}
+
+
+class StandIn(socketserver.BaseRequestHandler):
+    def handle(self):
+        while True:
+            head = self.take(4)
+            if head is None:
+                return
+            request = self.take(struct.unpack(">I", head)[0])
+            if request is None:
+                return
+            seen.append(request)
+            if request[:5] == b"JATT1" and request[37:] == b"JSEK1":
+                answer = KEY + REPORT
+            elif request[:5] == b"JATT1" and request[37:] == b"JKEY1":
+                answer = BUILDER + REPORT
+            elif request[:5] == b"JQUO1" and request[5:] == REPORT:
+                answer = b"\0" + QUOTE if state["quote"] else b"\1the host has no quoting service"
+            elif request[:5] in (b"JSEA1", b"JSEA2"):
+                # The byte after the kind's name, as the status, so that a case can ask for each.
+                answer = bytes([request[5]])
+            else:
+                answer = b"\5" + bytes(32)
+            self.request.sendall(struct.pack(">I", len(answer)) + answer)
+
+    def take(self, n):
+        got = b""
+        while len(got) < n:
+            piece = self.request.recv(n - len(got))
+            if not piece:
+                return None
+            got += piece
+        return got
+
+
+class Listening(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def ask(port, method, path, body=None, headers=None):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request(method, path, body=body, headers=headers or {})
+    reply = conn.getresponse()
+    text = reply.read()
+    conn.close()
+    try:
+        said = json.loads(text) if text else None
+    except ValueError:
+        said = text[:80]
+    return reply.status, said, dict(reply.getheaders())
+
+
+def main():
+    guest = Listening(("127.0.0.1", 0), StandIn)
+    threading.Thread(target=guest.serve_forever, daemon=True).start()
+
+    def serve(each=6, everybody=30, quotes=6, forwarded=False, guest_port=None):
+        d = door.Door(door.Guest("127.0.0.1", guest_port or guest.server_address[1]), each, everybody, quotes)
+        server = door.Server(("127.0.0.1", 0), door.handler_for(d, forwarded))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        return server.server_address[1], d
+
+    failed = []
+
+    def check(name, good, got=None):
+        print(f"{'ok  ' if good else 'FAIL'}  {name}")
+        if not good:
+            failed.append(name)
+            if got is not None:
+                print(f"      got {got!r}")
+
+    port, d = serve()
+    sealed = lambda status, kind=b"JSEA1", size=200: kind + bytes([status]) + os.urandom(size)
+
+    got = ask(port, "GET", "/key")
+    check("the key, with a quote", got[0] == 200 and got[1]["key"] == KEY.hex() and base64.b64decode(got[1]["quote"]) == QUOTE
+          and len(bytes.fromhex(got[1]["challenge"])) == 32, got[:2])
+    check("  and any page may read the answer", got[2].get("Access-Control-Allow-Origin") == "*", got[2])
+    first = got[1]["challenge"]
+    before = len(seen)
+    got = ask(port, "GET", "/key")
+    check("the key again within the minute, without asking the guest", got[1]["challenge"] == first and len(seen) == before, got[:2])
+    mine = os.urandom(32)
+    got = ask(port, "POST", "/key", json.dumps({"challenge": mine.hex()}))
+    check("the key for a challenge of the caller's", got[0] == 200 and got[1]["challenge"] == mine.hex()
+          and seen[-2] == b"JATT1" + mine + b"JSEK1" and seen[-1] == b"JQUO1" + REPORT, got[:2])
+    for name, body in (("a challenge of 31 bytes", json.dumps({"challenge": "00" * 31})), ("a challenge that is not hexadecimal", json.dumps({"challenge": "zz" * 32})),
+                       ("a body that is not JSON", "challenge"), ("JSON that is not an object", "[1]")):
+        before = len(seen)
+        got = ask(port, "POST", "/key", body)
+        check(f"refused, and the guest not asked: {name}", got[0] == 400 and len(seen) == before, got[:2])
+    got = ask(port, "GET", "/builder")
+    check("the key for bids, with a quote", got[0] == 200 and got[1]["key"] == BUILDER.hex() and got[1]["question"] == "JKEY1"
+          and base64.b64decode(got[1]["quote"]) == QUOTE, got[:2])
+    got = ask(port, "POST", "/builder", json.dumps({"challenge": mine.hex()}))
+    check("the key for bids for a challenge of the caller's", got[0] == 200 and got[1]["key"] == BUILDER.hex()
+          and seen[-2] == b"JATT1" + mine + b"JKEY1", got[:2])
+    got = ask(port, "GET", "/key")
+    check("  and the sealing key is still the sealing key", got[1]["key"] == KEY.hex() and got[1]["question"] == "JSEK1", got[:2])
+    state["quote"] = False
+    got = ask(port, "POST", "/key", json.dumps({"challenge": mine.hex()}))
+    check("a host that makes no quote is said to make none", got[0] == 502 and "no quote" in got[1]["error"], got[:2])
+    state["quote"] = True
+
+    for status in range(5):
+        message = sealed(status)
+        got = ask(port, "POST", "/sealed", message)
+        check(f"a sealed transaction the guest answers {status}", got[0] == 200 and got[1]["status"] == status
+              and got[1]["means"] == door.MEANS[status] and seen[-1] == message, got[:2])
+    port, d = serve()
+    message = sealed(0, b"JSEA2", 100000)
+    got = ask(port, "POST", "/sealed", message)
+    check("one with proofs, of 100,000 bytes", got[0] == 200 and seen[-1] == message, got[:2])
+    most = door.MOST[b"JSEA1"]
+    message = sealed(0, size=most - 6)
+    got = ask(port, "POST", "/sealed", message)
+    check("one of the largest size", got[0] == 200 and seen[-1] == message, got[:2])
+    port, d = serve()
+    before = len(seen)
+    got = ask(port, "POST", "/sealed", sealed(0, size=most - 5))
+    check("refused: one byte larger", got[0] == 413 and len(seen) == before, got[:2])
+    got = ask(port, "POST", "/sealed", sealed(0, b"JSEA2", door.MOST[b"JSEA2"] - 5))
+    check("refused: with proofs, one byte larger than that kind may be", got[0] == 413 and len(seen) == before, got[:2])
+    got = ask(port, "POST", "/sealed", b"JSEA1" + bytes(40))
+    check("refused: too short to be one", got[0] == 400 and len(seen) == before, got[:2])
+    # Every other request the guest knows: none may pass, as a body or with a sealed one's name in front.
+    for kind in (b"JBLD1", b"JBLF1", b"JWIT1", b"JWIF1", b"JBLK1", b"JBID2", b"JSND1", b"JKEY1", b"JSEK1", b"JFOL1", b"JATT1", b"JQUO1"):
+        got = ask(port, "POST", "/sealed", kind + bytes(200))
+        check(f"refused, and the guest not asked: {kind.decode()}", got[0] == 400 and len(seen) == before, got[:2])
+    for method, path in (("GET", "/sealed"), ("POST", "/"), ("GET", "/api/run"), ("POST", "/key/"), ("PUT", "/sealed"), ("DELETE", "/key")):
+        try:
+            got = ask(port, method, path, b"JSEA1" + bytes(200) if method != "GET" else None)
+        except (http.client.HTTPException, OSError) as error:
+            got = (0, str(error), {})
+        check(f"refused, and the guest not asked: {method} {path}", got[0] in (404, 501) and len(seen) == before, got[:2])
+    got = ask(port, "OPTIONS", "/sealed")
+    check("a browser's question before it posts", got[0] == 204 and "POST" in got[2].get("Access-Control-Allow-Methods", ""), got)
+
+    # A body with no length, and one that says it is larger than any may be: neither is read.
+    for name, head in (("no length", b"POST /sealed HTTP/1.1\r\nHost: x\r\n\r\n"),
+                       ("a length of a gigabyte", b"POST /sealed HTTP/1.1\r\nHost: x\r\nContent-Length: 1073741824\r\n\r\n")):
+        with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
+            s.sendall(head)
+            reply = s.recv(4096)
+        check(f"refused unread: {name}", reply.split(b" ")[1] in (b"411", b"413") and len(seen) == before, reply[:60])
+
+    # How many a minute.
+    port, d = serve(each=3, everybody=5)
+    answers = [ask(port, "POST", "/sealed", sealed(0))[0] for _ in range(4)]
+    check("the fourth in a minute from one address is turned away", answers == [200, 200, 200, 429], answers)
+    port, d = serve(each=3, everybody=5, forwarded=True)
+    answers = [ask(port, "POST", "/sealed", sealed(0), {"X-Forwarded-For": f"203.0.113.9, 198.51.100.{n}"})[0] for n in range(6)]
+    check("the sixth in a minute from everybody is turned away, each from another address", answers == [200] * 5 + [429], answers)
+    port, d = serve(each=3, forwarded=True)
+    answers = [ask(port, "POST", "/sealed", sealed(0), {"X-Forwarded-For": f"198.51.100.{n}, 203.0.113.9"})[0] for n in range(4)]
+    check("an address the sender wrote in front of the real one does not count as another", answers == [200, 200, 200, 429], answers)
+    port, d = serve(quotes=2)
+    answers = [ask(port, "POST", "/key", json.dumps({"challenge": os.urandom(32).hex()}))[0] for _ in range(3)]
+    check("the third new quote in a minute is turned away", answers == [200, 200, 429], answers)
+    pace = door.Pace(2, 60)
+    check("a minute later there is room again", [pace.allows("a", 0), pace.allows("a", 1), pace.allows("a", 59), pace.allows("a", 60.5)] == [True, True, False, True])
+
+    # A guest that is not there, and one that comes back.
+    spare = socket.socket(); spare.bind(("127.0.0.1", 0)); nowhere = spare.getsockname()[1]; spare.close()
+    port, d = serve(guest_port=nowhere)
+    got = ask(port, "POST", "/sealed", sealed(0))
+    check("no guest: said so", got[0] == 502, got[:2])
+    got = ask(port, "GET", "/key")
+    check("no guest: no key made up", got[0] == 502 and "key" not in got[1], got[:2])
+    port, d = serve()
+    ask(port, "POST", "/sealed", sealed(0))
+    d.guest.link.close()                      # the kept connection gone stale
+    d.guest.link = socket.socket()            # (a socket that is not connected fails as a dead one does)
+    got = ask(port, "POST", "/sealed", sealed(0))
+    check("a kept connection that has died is made again", got[0] == 200, got[:2])
+
+    allowed = all(r[:5] in (b"JSEA1", b"JSEA2") or (r[:5] == b"JATT1" and r[37:] in (b"JSEK1", b"JKEY1") and len(r) == 42)
+                  or (r[:5] == b"JQUO1" and len(r) == 1029) for r in seen)
+    check(f"of the {len(seen)} requests that reached the guest, every one is a sealed transaction, one of the two keys with a report, or a quote", allowed)
+    if failed:
+        sys.exit(f"door-check: {len(failed)} cases failed")
+    print("door-check: all as it should be")
+
+
+if __name__ == "__main__":
+    main()

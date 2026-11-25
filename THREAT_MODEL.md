@@ -477,6 +477,22 @@ read a sealed transaction or sign with the builder's key, which never leave the 
 what the machine sends to relays goes inside TLS to names checked against the roots in the
 image.
 
+**A door for everybody else** (`evm/builder/door`, 2026-11-25; written and tried against a guest,
+not yet run where the public can reach it). The port cannot be opened to all, since whoever reaches
+it can have the builder build and bid. The door is a program on the untrusted side that listens for
+HTTP and passes on to the guest's port only this: the guest's two keys asked for with a report, a
+report to be made a quote, and a sealed transaction. Everything else it refuses itself. When it
+runs somewhere, that machine's address is let in to the port beside the feeder's, and whoever
+holds that machine can then do what the feeder can. What the door adds for a stranger: they can
+have the guest ask its host for a quote (a few a minute, each a tenth of a second in which the
+guest does nothing else), and they can fill the 64 places the guest has for sealed transactions,
+or the door's own allowance for a minute, and so keep others' out. What a sender shows the door:
+their address, the time, and how long the sealed message is. The door can drop a message or
+hold it back until the slot sealed inside has passed; it cannot open one. The key it serves is
+believed for the quote that comes with it, which the sender checks, not for the door's word.
+While a sealed transaction is kept, the feeder is told nothing of the blocks built
+(`Evm/Send.lean`), so its own check of those blocks against its node is not made.
+
 **The input.** Anyone who can reach TCP port 5005 can send a request of up to 32 MiB, which is what a block
 of mainnet with its witness needs room for (the largest seen was 22 MB). `Evm/Service.lean`
 reads it in Lean, with every length checked against what is left of the request; Jaune's own decoder then

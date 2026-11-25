@@ -116,8 +116,8 @@
       <li>The builder tries it in every block it builds until the time you chose runs out, then drops it.
         The time is sealed in with the transaction, so nobody who carries it can have it built in later.</li>
       <li><strong>It lands only if one of this builder's blocks is the one a proposer takes, and that is rare.</strong>
-        The builder sees the public pool and nothing else, and its blocks have been worth under a third of the
-        ones that win. What your transaction pays the block's builder counts towards its bid; a tip large enough
+        The builder sees the public pool and nothing else, and its blocks have been worth a third or less of
+        the ones that win. What your transaction pays the block's builder counts towards its bid; a tip large enough
         to make the difference changes the odds, and nothing else here does.</li>
       <li>Nothing tells you here whether it went in. Watch the transaction's sender on a block explorer.</li>
       <li>If you also send it elsewhere, whichever lands first uses up its number, and the other can no longer
@@ -133,9 +133,15 @@
         them sees that, when you sent them, and from what address.</li>
       <li><strong>Which accounts it touches becomes known to the machine that feeds the builder.</strong> The
         builder holds no state of the chain. For a transaction sealed as this page seals it, it asks its feeder
-        for proofs of the accounts and storage the transaction reads, and so the feeder learns which those are,
-        though not amounts, call data, or what the transaction does. A command in the repository
-        (<code>evm/scripts/seal-with-proofs</code>) seals the proofs in with it, and then nobody is asked.</li>
+        for proofs of the accounts and storage the transaction reads, and so the feeder learns which those are.
+        A command in the repository (<code>evm/scripts/seal-with-proofs</code>) seals the proofs in with it,
+        and then nobody is asked.</li>
+      <li><strong>Whoever feeds the builder can find out what it does, without reading it.</strong> The feeder
+        chooses the other transactions of the block and may write them: one put before yours sets the state
+        yours runs in, one put after reads what yours changed, and the relays publish each bid's gas and
+        value. A few such blocks can show which contract it touched and which way it moved a price. What
+        stays hidden until the block is in the chain is the transaction itself: its bytes, its sender, its
+        signature. The feeder is this project's machine; this is what it could do, not what it does.</li>
       <li><strong>The relays see the block</strong>, as with every builder, and publish what each bid paid.</li>
       <li><strong>The door can lose it.</strong> It can drop what you hand in or hold it back until its time has
         run out. It cannot open it or change it.</li>

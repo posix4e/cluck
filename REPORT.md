@@ -1,9 +1,11 @@
 # A block builder in a trust domain, with far less inside it
 
 A report on [`evm/`](evm/README.md), for people who build Ethereum blocks in trusted execution
-environments. Written 2026-11-24. Every number is from a run whose command and record are in
-[TODO.md](TODO.md). What is weak is said here in short and in [THREAT_MODEL.md](THREAT_MODEL.md) at
-length; where the two differ, that one is right.
+environments. Written 2026-11-24 and revised on the 25th. The numbers are from runs that
+[TODO.md](TODO.md) records with their commands; the records of the runs themselves are files on the
+machine that made them and are not published. What is weak is said here in short. It is said at length
+in the part of [THREAT_MODEL.md](THREAT_MODEL.md) headed "The EVM service", which is kept as a dated
+record and is right where the two differ; the rest of that file is about the same OS on other machines.
 
 ## The claim
 
@@ -25,12 +27,15 @@ pool, signs its bids with a key drawn inside the trust domain, and posts them it
 Ultrasound, Aestus and Titan. Anyone can follow one of those bids from a relay's public list back to
 the source it was built from; how is below.
 
-Two things it is not. It is not a competitive builder: it sees only the public pool, and its blocks
-were worth 29% of the winning ones at the median. And it is not the same shape as a builder with its
-node inside: here the node is outside the trust domain and hands the guest transactions with proofs of
+Three things it is not. It is not a competitive builder: it sees only the public pool, and its blocks
+were worth between a fifth and a third of the winning ones at the median (18%, 29% and 34% in three
+measurements) and less summed. It guards nothing private yet: the instance that is running holds a key
+for signing bids, which guards no money, and no way is open for anybody outside to send it a sealed
+transaction. And it is not the same shape as a builder with its node inside: here the node is outside the trust domain and hands the guest transactions with proofs of
 the state they touch. That is what lets the inside be small. It also means the machine that feeds it
 sees the public flow and chooses what the builder sees of it. Private flow has to be sealed to the
-guest, which is shown here for single transactions and has limits said below.
+guest, which is shown here for single transactions that this project sent to itself, and has limits
+said below.
 
 ## What is inside
 
@@ -47,16 +52,19 @@ The image as it runs on Google Cloud, counted from the linker's map and the file
 | C | 29,683 | 0.8% | 2,875 lines printed at build time from programs kept as data in Lean (`Mini/`), 1,266 by hand |
 | Counted | 3,922,591 | | the file is 4,000,256 bytes |
 
-About 15,000 lines of Lean written here are in it: the OS's network and drivers, the builder, the
-execution engine, TLS and its cryptography. The C is the allocator and reference counting that compiled
+About 15,000 lines of Lean written here are in it (66 modules, 14,660 lines with their comments): the
+OS's network and drivers, the builder, the execution engine, TLS and its cryptography. The C is the allocator and reference counting that compiled
 Lean stands on, the entry from firmware, the primitives the drivers call to reach a device's registers
 and memory, and the TDX calls for a report and a quote. It moves bytes and addresses that come from
 firmware and from devices; it interprets none that come over the network.
 
 What that count leaves out or flatters:
 
-- **Firmware is not in it**, is far larger than the image, and stays underneath the whole time. See
-  the next section.
+- **Firmware is not in it**, and stays underneath the whole time. The firmware built from source where
+  this was developed is a file of 4 MB, as large as the image, of compressed C; Google's cannot be
+  looked into. See the next section.
+- **No Linux image was measured for comparison.** "Far less" is a claim about kinds of thing, a
+  kernel and what runs on it against one program, and not a count of somebody else's bytes.
 - **Jaune is someone else's code, a fifth of the image, and still does part of the work.** The
   interpreter that runs transactions was written here and is held to Jaune by tests; Jaune's own
   interpreter went out of the image on 2026-11-25 (the image was 4.9 MB with it, and a request could
@@ -65,6 +73,12 @@ What that count leaves out or flatters:
   and hashes, and the tries of transactions, withdrawals and receipts are still Jaune's. The fork
   used differs from upstream, in three places by code that nothing proves equal to the specification.
 - **The compilers are trusted**: Lean's, and the C compiler and linker behind it.
+- **Two things under the Lean are not sound, and neither is mended.** The program runs on a stack of
+  64 MiB with nothing below it to stop it: recursion past the end would write into the image, and how
+  deep a hostile request can drive it has not been worked out. And seven of mathlib's start-up
+  routines, which Jaune's modules draw in for the sake of proofs, are replaced by ones that do
+  nothing: code that read a constant one of them would have built would read memory nothing has
+  written. That the test suites pass is all that stands behind either.
 - **Nothing proved covers the builder.** Parts of the runtime have proofs. The network stack and the
   builder are tested: the cryptography against OpenSSL's, the engine against Ethereum's own suites
   (4,723 files) and against Jaune, the blocks against reth's validator. That is evidence, not proof.
@@ -79,13 +93,17 @@ On Google Cloud:
    is measured (MRTD), and Google signs a statement for that measurement, which is checked. What it
    does is Google's word; nobody else builds it. On a machine of one's own the firmware can be built
    from source, as it is where this was developed, and making it small would be the next reduction.
-3. **The image**, measured into RTMR1, which anyone can work out from the image's file.
+3. **The image**, measured into RTMR1 together with the partition table of the disk it starts from.
+   Anyone can work that value out from the image's file.
 4. **Four certificate roots** the image holds for the relays' names, and every authority under them.
+5. **What built the image**: Lean's compiler, the C compiler and linker that come with it, and the
+   ready-made modules of mathlib it is linked against. That the image is the same file wherever it is
+   built says the build can be repeated, and nothing about those.
 
 Not trusted, and what it can still do: the host, the cloud's network, and the machine that feeds the
 builder. The feeder runs an ordinary node and hands the guest pending transactions, the parent block's
 header and proofs of the state they touch; the guest checks every proof against the state root in that
-header.
+header. The header itself is the feeder's word: the guest does not know what the chain's head is.
 
 - The feeder can starve the builder, choose what it sees of the public pool, and add transactions of
   its own.
@@ -94,10 +112,21 @@ header.
   inputs that are not the chain's is for a relay to refuse.
 - It cannot have the guest sign anything but a bid for a block the guest has just built, and it cannot
   get the key.
-- It does not see a transaction sealed to the guest. It can still learn about one: the relays publish
-  each bid's gas and value, so a host that sets out to can find out whether a sealed transaction went
-  in and what it paid; and unless the sender brings the proofs, the host is asked for them and so
-  learns which accounts and storage the transaction touches.
+- It does not see a transaction sealed to the guest, and can still learn much about one.
+  - Unless the sender brings the proofs, the host is asked for them and so learns which accounts and
+    storage the transaction touches.
+  - The relays publish each bid's gas, value and count of transactions, so the host can tell whether
+    a sealed transaction went in and what it paid.
+  - A host that works at it can find out what the transaction does without reading it. It chooses
+    the other transactions of the block and may write them. One of its own put before the sealed one
+    sets the state the sealed one runs in; one put after reads what the sealed one changed; the
+    relay's figures say how each fared. A few such blocks over a few slots can show which contract
+    it touched and which way and how far it moved a price, which is most of what a trade is hidden
+    for. No rule about order mends this (THREAT_MODEL.md has the ones thought through). None of this
+    asking has been tried here.
+  - What sealing still keeps from such a host: the bytes, the sender and the signature, until the
+    block is in the chain; and the transaction cannot be changed, or built in after the last slot its
+    sender named.
 
 ## What it does
 
@@ -118,50 +147,62 @@ here, before Google Cloud.
 away, bidding at four relays with nothing paid for a win:
 
 - It has bid since 2026-11-24 18:30 UTC, and on the image described above since 2026-11-25 04:27.
-  These are the first hours, not a long record; the hours below are from the image before, which
-  differs in what it holds and not in how it builds.
-- **The hour from 19:58 UTC**, 300 slots: 1,540 blocks built and 1,490 sent. Of the 50 not sent, 31
-  paid no more than one already sent for the slot, 18 were for proposers no relay had a registration
-  from, and one was too late. Every block sent was judged valid by reth's validator on the feeding
-  machine.
-- **What the relays said**: of 4,840 answers, 3,344 were 200, 1,495 were 202 and one post went
+  These are the first hours, not a long record.
+- **Its first two hours on that image**, from 04:28 UTC, 600 slots: 3,172 blocks built and 3,102
+  sent. Of the 70 not sent, 42 were for proposers no relay had a registration from, 26 paid no more
+  than one already sent for the slot, and two were too late. Every block sent was judged valid by
+  reth's validator on the feeding machine.
+- **What the relays said**: of 9,934 answers, 7,024 were 200, 2,907 were 202 and three posts went
   unanswered in the 1.5 s allowed. None was a refusal. A 202 says the bid was below the relay's floor
-  and the block was not checked, so only the 200s say a relay ran the block; the relays' lists mark
-  these bids as not optimistic. In the hour before, on the image before this one: 3,465 of 3,468
-  answered 200 or 202, three unanswered.
-- **Timing**: in this hour no bid was answered after its slot began, and the last of a slot was in
-  0.78 s before it at the median. In the hour before, two of 1,088 were answered after, the later by
-  0.03 s. Five builds a slot, 1.15 s apart: 0.15 s for the request (1.5 MB) to arrive, 0.45 s to
-  build, 0.07 s to post to four relays and have their answers, and the rest the feeder gathering
-  transactions and proofs.
-- **It began again by itself three times in six hours** (22:58 and 23:58 UTC on the 24th, 01:59 on
-  the 25th), each time at a request to have a quote made, with nothing on its console. Every start
-  draws new keys, so for three hours its bids at the relays were under keys this repository did not
-  name. Bidding went on through each, some slots later. What set it off: the firmware keeps a timer
-  interrupt going every 10 ms, and with one due while Google's host was making the quote, about one
-  such call in ten never returned and the trust domain was started afresh. Why the host does that
-  is not known here; a Linux guest, which does not run the firmware's timer, got 350 quotes of 350.
-  The image now stops that timer for the call: 818 requests since on Google's machines, no start.
-  The feeder, which asked every hour, asks once for each start.
+  and the block was not checked, so only the 200s say a relay ran the block. Flashbots' and
+  Ultrasound's public lists give these bids with `optimistic_submission` false.
+- **Timing**: two of the 3,102 bids had their round end after the slot began, by 0.6 s and 0.8 s,
+  both in rounds in which one relay gave no answer in the time allowed. The last bid of a slot was in
+  0.81 s before it at the median. Five builds a slot, 1.1 s apart: about 0.35 s of each is the feeder
+  gathering transactions and proofs, and the rest is the request (2.2 MB late in a slot) crossing the
+  internet, the build, and the posts to four relays with their answers. Measured apart on the image
+  before this one, those three took 0.15 s, 0.45 s and 0.07 s.
+- **On the images before it**, ten hours from 18:30 UTC on the 24th, the same picture. The hour from
+  19:58, for one: 1,540 blocks built and 1,490 sent, all valid; 4,840 answers, of them 3,344 200,
+  1,495 202 and one unanswered; no bid answered after its slot began.
+- **Until this image, Google's host reset the trust domain on about one request in ten for a
+  quote.** Three times in six hours (22:58 and 23:58 UTC on the 24th, 01:59 on the 25th) the guest
+  asked to have a quote made, the call never returned, and the trust domain was started afresh with
+  nothing on its console. Every start draws new keys, so for more than three hours that night its
+  bids at the relays were under keys this repository did not name; the bidding went on, some slots
+  later each time. The cause was found by trial: the firmware keeps a timer interrupt going every
+  10 ms, and the resets came when one fell due while the host was making the quote. Why the host does
+  that is not known here. A Linux guest, which does not run the firmware's timer, got 350 quotes of
+  350. The image now stops that timer for the call: 818 requests since on Google's machines (768 on
+  a test machine, 50 on the running one) and no reset. The feeder, which asked every hour, now asks
+  once for each start.
 - **No proposer took one**, and none was expected to.
 - The machine costs about 23 cents an hour.
 
-**On one machine** (Xeon Gold 6526Y; guest in TDX; a stand-in relay beside it):
+**On one machine** (Xeon Gold 6526Y; guest in TDX; in place of the relays a test relay beside it,
+which takes and writes down whatever it is sent, and reth's validator to judge each block):
 
-- 1,000 slots in a row on the image now live as it was one small change earlier (its twin that knows
-  the stand-in for its relay; the change after is to how a quote is asked for): every slot with a
+- 1,000 slots in a row on the same code as the image now live, but for one later change to how a
+  quote is asked for, and built to post to the test relay and not the real ones: every slot with a
   block sent, 6,790 blocks sent, every one judged valid by reth's validator and accepted by the
   stand-in, none late. Seven builds a slot, 0.75 s apart; 0.35 s of the guest's work for each.
 - The same on the two images before it: 999 slots each (each run joined its first slot too late),
   7,017 and 6,415 blocks, all valid, none late.
 - Three runs of 1,000 slots on earlier images: two with a block for every slot, one with 998.
 
-**Against the blocks proposers took** (one machine, 875 slots, 2026-11-23): ours were worth 29% of
-theirs at the median, and less summed, since their best blocks are far above their median. Ours held
-94% by fees of what theirs held that was public a second before the slot. At real relays, in an
-earlier hour, 18% at the median. From Google Cloud, the hour from 04:28 UTC on 2026-11-25, over the 267
-of 300 slots for which a relay lists the block that was taken: ours 34% of theirs at the median, 80% at
-best, never more; summed, 0.53 ETH against 1.70 (31%).
+**Against the blocks proposers took**, as relays' public lists give what each paid. Measured three
+times:
+
+- From Google Cloud at the real relays (the hour from 04:28 UTC on 2026-11-25, 267 slots with a
+  figure): ours 34% of theirs at the median and 31% summed; 80% at best, never more.
+- On one machine against the test relay (2026-11-23, 875 slots): 29% at the median. In the run before
+  it (864 slots) 29% at the median and 19% summed.
+- On one machine at the real relays (2026-11-24, 253 slots): 18% at the median and 4.5% summed, in an
+  hour when the taken blocks were worth twice what they had been the night before.
+
+The summed figure is the truer one: the slots that pay are far above the median, and in those ours is
+furthest behind. Of what the taken blocks held that was public a second before the slot, ours held 94%
+by fees (the 875 slots); what it lacks is what was never public.
 
 **How fast the parts are.** Building a block takes the guest 0.3 s on the machine it was developed on
 and 0.45 s on Google's; reth imports a block in 0.04 s. A request of 1.5 MB crosses the internet into
@@ -177,8 +218,9 @@ the key is its own. So a bid can be followed back to source with nothing from us
 2. **The key is the guest's.** `docs/live/builder.quote` is the guest's answer to "what is your key",
    quoted by the machine it runs on. <https://posix4e.github.io/cluck/live.html> checks it in a browser,
    as far as a page can: it takes the image's measurement from a file of ours.
-3. **The guest is this program, on Google's firmware.** Build the image and run the command in
-   `docs/live/builder.txt`. `scripts/gce-check` asks five things: that the quote's signatures lead to
+3. **The guest is this program, on Google's firmware.** Check out the commit `docs/live/builder.txt`
+   names (the repository has usually moved on from it), build the image, and run the command given
+   there. `scripts/gce-check` asks five things: that the quote's signatures lead to
    Intel's root; that Intel, asked today, calls the platform's microcode, TDX module and quoting
    enclave up to date and has withdrawn none of the certificates; that RTMR1 in the quote is what
    Google's firmware measures for that image file; that Google signed for the firmware in MRTD; and
@@ -201,12 +243,14 @@ Where this is thinner than it looks:
   Nothing looks for a statement of Google's since withdrawn.
 - RTMR0, the machine's configuration as the firmware measured it, was the same on every start seen
   and is not worked out from anything.
-- The guest's port is open to the feeding machine alone, so you cannot ask it for a fresh quote
-  yourself; the one in the repository is from when it started. A program that would stand between
-  (`evm/builder/door`) is written and runs nowhere yet.
+- The guest's port is plain TCP that asks nobody who they are, and a firewall rule of Google's lets in
+  the feeding machine's address alone. So you cannot ask it for a fresh quote yourself; the one in
+  the repository is from when it started. A program to stand in front of the port and pass on only
+  requests for a key with its quote, and sealed transactions (`evm/builder/door`), is written and
+  runs nowhere yet.
 - A guest that starts again has new keys, and the record here is written by hand after a start.
   The feeder says when the two differ; until someone acts on that, the page names a key the guest
-  no longer has, as it did for three hours on 2026-11-25.
+  no longer has, as it did for more than three hours in the night of 2026-11-24.
 
 ## What is not done
 
@@ -232,6 +276,7 @@ Where this is thinner than it looks:
 The image:
 
     git clone https://github.com/posix4e/cluck && cd cluck/evm
+    # for the very file that is running, first: git checkout the commit docs/live/builder.txt names
     # fetch mathlib's ready-made modules first: the command is in evm/README.md
     lake build
     scripts/build-efi tdx                 # .lake/build/efi/tdx/evm-os/BOOTX64.EFI

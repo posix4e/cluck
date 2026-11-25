@@ -1014,6 +1014,30 @@ by the guest itself.
     and 3 did not come in time; two bids were answered after their slot began, one by 0.79 s; six
     builds a slot, 1.08 s apart. Not done: what the taken blocks held that was public (the
     watcher that says so was not running).
+  - **The first two hours on that image together** (04:28 to 06:28 UTC, 600 slots; the feed's
+    records `20261125-042803.jsonl` and `20261125-052810.jsonl`, counted by a few lines of Python
+    over their rounds; REPORT.md's figures are these): 3,172 blocks built, 3,102 sent, all judged
+    valid here. Of the 70 not sent: 42 in the nine slots whose proposer no relay had a registration
+    from, 26 the guest kept for paying no more than one sent, 2 too late. 9,934 answers from
+    relays: 7,024 were 200, 2,907 were 202, 3 did not come in 1.5 s. Two bids' rounds ended after
+    the slot began (by 0.6 s and 0.79 s; the rounds took 2.95 s and 2.51 s), each a round in which
+    one relay gave no answer; whether the posts to the other relays in those rounds were late is
+    not in the record. Last bid of a slot 0.81 s before it at the median; five rounds a slot, 1.1 s
+    a round; of the last round of a slot 0.08 s gathering, 0.27 s proofs, 0.98 s asking the guest
+    (request 2.2 MB). Flashbots' and Ultrasound's lists of bids received
+    (`/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=`) give the guest's bids with
+    `"optimistic_submission":false` (looked at 2026-11-25, a few rows of each).
+  - **Counted for REPORT.md** (2026-11-25): the modules of this project with a start-up routine in
+    the image's map (`initialize_evm_…`, `initialize_silo_x2dos_…`) are 66 files of 14,660 lines,
+    comments and blank lines included (48 under `evm/`, 10,540 lines; 18 of the OS, 4,120). The
+    818 quote requests since the fix are 768 on a test machine and 50 on the running one.
+  - **REPORT.md was read by a reviewer told to doubt it** (2026-11-25; a separate session that
+    checked its figures against this file and the records). Mended from that: what a host can
+    learn about a sealed transaction by putting its own around it was missing; the steps for
+    checking did not say to check out the commit the record names; the hours given were not the
+    running image's; the stack with no guard and the start-up routines that do nothing were not
+    mentioned; the share of winning blocks was one figure of three. Not mended: no size is given
+    for a Linux builder's image, none having been measured here.
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about nine dollars by 2026-11-25 04:30 UTC (of the
     500 a month agreed); the builder's machine is 23 cents an hour. A subnet (`silo-10-0-2`), a

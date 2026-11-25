@@ -1,15 +1,15 @@
-The builder's guest on Google Compute Engine, as it has run since 2026-11-25 01:59 UTC
+The builder's guest on Google Compute Engine, as it has run since 2026-11-25 04:27 UTC
 (c3-standard-4 with TDX, us-central1). A guest draws its key when it starts, so these are of this
 start and no other; when the guest is started again these files are written again (scripts/gce-live).
 
-source      commit 865fdf7 of this repository, or the one before it that changed what goes in the image
+source      commit 16922ef of this repository, or the one before it that changed what goes in the image
 image       evm/scripts/build-efi tdx  ->  evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI
-            4,898,304 bytes, SHA-256 bfd47e1db9ec4152b814a401512069ee9c7291ea64ff212e25c66fb8e0629dde
-RTMR1       30adead3c0211d36084a811e97cf6a72413844b35e621d462844ef9950e52dadd4a778dcfe1b0c92a4b415607ab44375
+            4,000,256 bytes, SHA-256 e2010f125df509278d82f72ba3e7f8493b96d88a68ac60f1343775aeb9e0e3b4
+RTMR1       c426b958210ce3a904229706b01f7e728481ac1570836593b13312047d0c6063b28312a33b14e8cfc525c769ede724d6
             (what Google's firmware measures for that file: scripts/gce-measure)
-builder key 0x999e5d1ebf3f8fc6c5a3de2e59ed8f659b2a3adc5d83d936a24bc29d64e20ce12976948107551a3021a77e6e4b9a7703
-challenge   0x0ded500786b382cf32f80a6c19c8fa17ef04f30e5df845955af6bdbaea47ab9c
-            (the hash of mainnet block 26489065, so the quote is no older than that block)
+builder key 0x928980a909925197c1cd07b1ebdc451c7297cb529df3382b038a88d2d9dd1c8eef5b6a2f6fe91f339a5cd7758f9ff6e8
+challenge   0x1eedc7180a18f192e8ffa137f65c39e8d447387f4896ac9a2a6e31604b0c1fd3
+            (the hash of mainnet block 26489804, so the quote is no older than that block)
 quote       builder.quote, 8,000 bytes: the guest's answer to "what is your key for bids", asked with
             that challenge, quoted by the machine it runs on
 
@@ -19,9 +19,9 @@ Without taking the record's word for the image, from the repository's root, with
 installed and the image built:
 
     scripts/gce-check evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI docs/live/builder.quote \
-      0x999e5d1ebf3f8fc6c5a3de2e59ed8f659b2a3adc5d83d936a24bc29d64e20ce12976948107551a3021a77e6e4b9a7703 \
-      0x0ded500786b382cf32f80a6c19c8fa17ef04f30e5df845955af6bdbaea47ab9c
+      0x928980a909925197c1cd07b1ebdc451c7297cb529df3382b038a88d2d9dd1c8eef5b6a2f6fe91f339a5cd7758f9ff6e8 \
+      0x1eedc7180a18f192e8ffa137f65c39e8d447387f4896ac9a2a6e31604b0c1fd3
 
 The bids it has sent, as a relay lists them:
 
-    https://boost-relay.flashbots.net/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=0x999e5d1ebf3f8fc6c5a3de2e59ed8f659b2a3adc5d83d936a24bc29d64e20ce12976948107551a3021a77e6e4b9a7703
+    https://boost-relay.flashbots.net/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=0x928980a909925197c1cd07b1ebdc451c7297cb529df3382b038a88d2d9dd1c8eef5b6a2f6fe91f339a5cd7758f9ff6e8

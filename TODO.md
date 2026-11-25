@@ -1080,6 +1080,25 @@ by the guest itself.
         at 15732481 is on the one before (26492535). The bid built on the old parent four
         seconds in was the right one, and the later rounds, on the late block, were not. A
         builder that wanted both would build on both parents; this one follows its node.
+        **The feed stopped itself at 15:04 UTC, over one relay's 503s, and was started again
+        at 15:07 with a different rule.** Ultrasound's relay (`relay-builders-
+        us.ultrasound.money`) answered "503 Service Temporarily Unavailable", a page of
+        nginx's, to every post of three separate stretches of about a minute: 13:20 (16
+        answers), 14:57 (25) and 15:03 (19). Before and after each it answered 200 and 202
+        as ever, there had been none in the twenty hours before, and the other three relays
+        answered as ever throughout. Its public list has other builders' bids for those
+        slots (2,099 from 27 builders for 15732885), so it was serving; what it had against
+        these posts is not known. Nothing in the rate fits: five to seven posts a slot
+        before each stretch, and other builders are listed with some eighty a slot. The feed
+        counted a 503 as a refusal, and at 39 of 659 answers stopped all four, as it was
+        written to. Fifteen slots went by without a bid. Changed (`builder/shadow`,
+        `builder/feed`): an answer of 500 or more is a relay saying it cannot serve; that
+        relay is left alone for ten minutes, twice as long each time it says so again, at
+        most eighty, and the blocks go to the others; the feed no longer counts it a
+        refusal, and still stops for refusals proper (400s) above one answer in twenty.
+        `scripts/round-check` holds the rule (40 cases). **Not run:** a relay answering 503
+        since; the rule has only its test. **Not known:** whether Ultrasound limits builders
+        it does not know; nobody there was asked.
       - Recovering signers is 30% of what is left, and three fifths of that is one inverse
         modulo the curve's order by Euclid's algorithm on whole numbers (Jaune's
         `FinField.inv`), about 0.35 ms a signature. Not changed.

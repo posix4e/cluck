@@ -12,7 +12,10 @@
 # It stops by itself, leaving DIR/STOPPED saying why, when something is wrong that a person should look at
 # before another bid goes out: more than one in twenty of the answers from relays were refusals, or more
 # than one in twenty of the blocks sent were not judged valid by the node here. That is looked at once a
-# minute over the last fifty slots, and over the whole hour at its end. A guest that cannot be reached is
+# minute over the last fifty slots, and over the whole hour at its end. A relay's answer of 500 or more
+# is not counted a refusal: it says the relay cannot serve, builder/shadow then leaves that relay alone
+# for a while, and the blocks go to the others. (Until 2026-11-25 it was counted, and three minutes of
+# 503 from one relay stopped the bids to all four.) A guest that cannot be reached is
 # tried again every minute. A guest whose key for bids is no longer the one docs/live names (it began
 # again) is said after each hour and noted in DIR/BEGAN-AGAIN; the feed goes on. A block of ours that
 # becomes the chain's head ends that hour's run early, as builder/shadow does, and the next begins.
@@ -62,7 +65,9 @@ def account(rows):
     answers = collections.Counter()
     for x in rounds:
         for status, text in x.get("relay") or []:
-            answers["took it" if status in (200, 202) else "no answer" if status == "no answer" else f"refused ({status}): {text.strip()[:60]}"] += 1
+            answers["took it" if status in (200, 202) else "no answer" if status == "no answer" else
+                    f"could not serve ({status})" if isinstance(status, int) and status >= 500 else
+                    f"refused ({status}): {text.strip()[:60]}"] += 1
     return rounds, judged, answers
 rounds, judged, answers = account(rows)
 if how == "hour":

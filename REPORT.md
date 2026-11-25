@@ -285,11 +285,16 @@ Where this is thinner than it looks:
   on Google Cloud, builds a full pool's block in 55% to 70% of the time, by putting the transactions
   in order less wastefully. The pool filled again an hour and a half later and three times after:
   with the feeder's change every such slot had a bid, on Google Cloud (29 slots with 300 or more
-  pending) and here (40), though in a third of the fullest only one, ready five seconds early. Transactions that call those precompiles are simply not
+  pending) and here (40), though in a third of the fullest only one, ready five seconds early. (The
+  feeder judged a second round by what the first had cost. It no longer does; in 40 slots here since,
+  three of them full, every slot's last block was ready within 1.5 s of the slot.) Transactions that call those precompiles are simply not
   built in, and one made to reach them only inside a block would still cost a slot.
-- **After a slot with no block it does not bid.** The feeder asks for a block when the chain has a
-  new one. When a proposer proposes nothing, the next slot is built on the same parent by builders
-  that win; this one sits it out. Three slots in a thousand, in the last run here.
+- **After a slot with no block it has not been seen to bid.** The feeder asked for a block only when
+  the chain had a new one, so when a proposer proposed nothing this builder sat the next slot out:
+  three slots in a thousand in the last run here, and the same in every number above. The feeder now
+  builds for the next slot on the same parent once a slot is four seconds old with no block. That was
+  tried by pretending slots were empty (115 blocks, all valid by reth's validator); no relay has yet
+  taken one built after a slot that really was.
 - **One feeder, at somebody's home.** When that machine or its link stops, the builder stops.
 - **Side channels.** The key's field arithmetic was written to take the same steps whatever the key,
   and a script reads its machine code for conditional jumps (`evm/scripts/check-secret-code`). The

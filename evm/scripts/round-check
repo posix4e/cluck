@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Tests how builder/shadow decides how many transactions a round carries (`most_for`, `learn_pace`).
+"""Tests how builder/shadow decides how many transactions a round carries (`most_for`, `learn_pace`),
+whether and when another round is begun for the same head (`need_of`, `begin_at`), and which slot is
+built for when a slot goes by with no block (`slots_gone`).
 
     scripts/round-check [FILE]           (from evm/; FILE is builder/shadow unless said)
 
 builder/shadow is loaded as it would be started for a guest somewhere else; nothing is asked of a node
 or a guest and no round is run. The cases are the arithmetic: that a round is given what fits in its
 time, best paying first; that what was proposed before for the same head costs no gathering again; that
-a later round never gets fewer than the one before with a few more; and that what rounds cost is
-learned from several and not from one.
+a later round never gets fewer than the one before with a few more; that what rounds cost is learned
+from several and not from one; and that a slot's last round is begun so as to end when the block is
+wanted, also after a first round that was slow.
 
 Not tested here: that rounds with fewer transactions make for more and earlier bids when the pool is
 full, which needs a guest and a full pool (TODO.md says what was run).
@@ -67,6 +70,46 @@ check("a round of a few transactions teaches nothing", shadow.pace == kept, shad
 shadow.learn_pace(100, 100, 0.0, 0.1)
 check("a cost is never taken for nothing", min(shadow.pace["guest"]) >= 0.0005 and min(shadow.pace["gather"]) >= 0.0005, shadow.pace)
 check("no more than three rounds are remembered", len(shadow.pace["guest"]) == 3 and len(shadow.pace["gather"]) == 3, shadow.pace)
+
+# Whether another round is begun for the same head, and when (`need_of`, `begin_at`).
+near = lambda a, b: a is not None and abs(a - b) < 1e-9
+shadow.later[:] = [0.3, 0.35, 0.6]
+full = {"inputs_and_trace": 1.49, "proofs": 2.28, "guest": 0.83}        # slot 15731104, 2026-11-25
+got = shadow.need_of(full, False)
+check("a round needs what the one before took, the guest's part and a little over", near(got, 3.77 + 1.15 * 0.83 + 0.05), got)
+got = shadow.need_of(full, True)
+check("  after a head's first round, the gathering is the later rounds': the middle of three and half again", near(got, 0.525 + 1.15 * 0.83 + 0.05), got)
+got = shadow.need_of({"inputs_and_trace": 0.1, "proofs": 0.2, "guest": 0.5}, True)
+check("  unless the first round's own was less", near(got, 0.3 + 0.575 + 0.05), got)
+got = shadow.need_of({}, False)
+check("  a round that left no times is taken for an ordinary one", near(got, 1.0 + 0.69 + 0.05), got)
+check("time for many rounds: the next begins now", shadow.begin_at(100.0, 110.0, 1.5) == 100.0)
+got = shadow.begin_at(100.0, 103.2, 1.5)
+check("time for two and little over: one, begun as late as it can be", near(got, 101.7), got)
+got = shadow.begin_at(100.0, 103.5, 1.5)
+check("  2.3 times: begun now, and there is time for another after it", got == 100.0, got)
+check("time for exactly one: now", near(shadow.begin_at(100.0, 101.5, 1.5), 100.0))
+check("less than one: no more rounds", shadow.begin_at(100.0, 101.4, 1.5) is None)
+# That slot's first round was over 5.11 s before the slot, the block wanted 0.7 s before it.
+check("a full pool's slow first round is followed by a second", shadow.begin_at(0.0, 4.41, shadow.need_of(full, True)) == 0.0
+      and shadow.begin_at(0.0, 4.41, shadow.need_of(full, False)) is None)
+
+# Which slot is built for when no block has come (`slots_gone`): the head's slot began at 1000.
+head = {"timestamp": hex(1000)}
+check("a head two seconds old: the slot after it", shadow.slots_gone(head, 1002.0) == 0)
+check("  until that slot is four seconds old with no block", shadow.slots_gone(head, 1015.9) == 0)
+check("  then the one after, on the same parent", shadow.slots_gone(head, 1016.0) == 1 and shadow.slots_gone(head, 1027.9) == 1)
+check("  and so on", shadow.slots_gone(head, 1028.0) == 2 and shadow.slots_gone(head, 1100.0) == 8)
+shadow.rebid = False
+check("without --rebid nothing is built on an old head", shadow.slots_gone(head, 1100.0) == 0)
+shadow.rebid = True
+kept = shadow.kept_of({"hash": "0xaa"})
+kept.update(slot_inputs=1, system=2, round=3, proposed={"0x01"})
+kept["proofs"]["0xbb"] = "proven"
+again = shadow.kept_of({"hash": "0xaa"}, 1)
+check("the same parent for a later slot: its proofs are kept, what the slot fixed is asked again",
+      again["proofs"] == {"0xbb": "proven"} and again["proposed"] == {"0x01"} and not {"slot_inputs", "system", "round"} & set(again), sorted(again))
+check("  and another parent starts with nothing", shadow.kept_of({"hash": "0xcc"})["proofs"] == {})
 
 if failed:
     sys.exit(f"round-check: {len(failed)} cases failed")

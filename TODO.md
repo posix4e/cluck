@@ -1002,8 +1002,39 @@ by the guest itself.
         15731490, 15731831) came after a slot with no block, and the feeder builds once for
         each new head, for the slot after it. When that slot's proposer does not propose,
         nothing is built for the next one on the same parent. That is so of every run and
-        every live hour recorded here; it was not counted before. Not mended.
+        every live hour recorded here; it was not counted before. Mended in the feeder the
+        same day (next point).
         One slot in five had its last block ready more than 2 s before it (199 of 999).
+      - **Three things the feeder did between rounds and at empty slots, mended**
+        (`builder/shadow`, 2026-11-25 12:12 UTC; the feed on Compute Engine has it from its
+        next hourly run). All three are the untrusted side's; the image is the same.
+        *A second round after a slow first.* Whether another round fits was judged by what
+        the round before had taken, gathering and all. A head's first round proves every
+        account anew, 2 to 4 s with a full pool, and later rounds only what is new, a third
+        of a second, so after a full pool's first round there was often no second. Now the
+        gathering of the round after a head's first is taken from later rounds (the middle
+        one of the last three, and half again). And the last round is begun as late as it
+        can be when there is time for fewer than 2.3 rounds, where it was 2: a round outgrew
+        the one before by a sixth one time in ten, and then no last round fitted.
+        *Nothing waited for between rounds.* After each block the node's judgement of it
+        and the check of its signature were waited for, a third of a second, before the
+        next round began. They are now done behind the next round, in order, and waited for
+        when the slot's rounds are over. A block the node could not be asked about stands
+        in the record as "unchecked".
+        *The slot after an empty one.* A slot four seconds old with no block is taken to
+        have none, and the slot after it is built for on the same parent, with the
+        withdrawals the beacon node expects for that slot (they differ across an epoch's
+        end). A block that comes later all the same is a new head like any other.
+        Tried here in TDX against the stand-in, the twin of the image above. 40 slots
+        (`next1`): all with a block sent, 327 blocks all valid, nine rounds a slot for
+        eight, 0.01 s between rounds for 0.33, and no slot's last block more than 1.43 s
+        before it, three slots with 400 pending among them (three rounds each). Then 50
+        records with slots taken for empty 7.5 s before they began, there being no way to
+        make one empty (`SHADOW_EMPTY_AFTER=-7.5`, `next2`): 115 blocks built for the slot
+        after on the old parent, all judged valid by reth's validator and signed, beside
+        230 ordinary ones. `scripts/round-check` holds the three rules (34 cases).
+        **Not shown:** a relay taking a block built after a slot that was really empty,
+        which is what says the withdrawals and the randao were the right ones.
       - Recovering signers is 30% of what is left, and three fifths of that is one inverse
         modulo the curve's order by Euclid's algorithm on whole numbers (Jaune's
         `FinField.inv`), about 0.35 ms a signature. Not changed.

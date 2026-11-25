@@ -985,6 +985,25 @@ by the guest itself.
         twin `a5e5ba1c…`, `evm-os-spec` `0c7e20f5…`; in TDX here `run-fixtures tdx --limits
         --key --quotes 30`, `--spec`, `check-secret-code` and `run-ask` pass. Not on Compute
         Engine.
+        **1,000 slots on the twin of that image** (2026-11-25 08:36 to 11:56 UTC, blocks
+        26491041 on, `/data/eth/shadow/gate1000m`, with the feeder's limit on rounds): 999
+        slots with a block sent, the one without being the first, which the run joined 1.3 s
+        before it. 7,189 blocks built, 7,039 sent, all judged valid and the same at the
+        stand-in; 143 kept for paying no more; in seven rounds the witness fell short and
+        the next round mended it; none ended too late, the guest never replaced, every post
+        but the first on a kept connection. Eight rounds a slot, 0.72 s a round, the guest's
+        own work 0.33 s at the median; the last block of a slot 0.87 s before it at the
+        median. The pool held 300 or more in 40 of the slots and 400 in twelve (09:01,
+        10:44, 10:50 and 10:53 UTC), and every one of those had a block sent; the guest took
+        0.96 s over the last round of such a slot at the median and 1.41 s at most, where
+        the image before took two. In four of the twelve the first round was the only one
+        (next point but one).
+        What the count of 1,000 leaves out: **1,003 slots went by.** Three (15731099,
+        15731490, 15731831) came after a slot with no block, and the feeder builds once for
+        each new head, for the slot after it. When that slot's proposer does not propose,
+        nothing is built for the next one on the same parent. That is so of every run and
+        every live hour recorded here; it was not counted before. Not mended.
+        One slot in five had its last block ready more than 2 s before it (199 of 999).
       - Recovering signers is 30% of what is left, and three fifths of that is one inverse
         modulo the curve's order by Euclid's algorithm on whole numbers (Jaune's
         `FinField.inv`), about 0.35 ms a signature. Not changed.

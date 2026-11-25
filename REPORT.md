@@ -195,6 +195,14 @@ which takes and writes down whatever it is sent, and reth's validator to judge e
   stand-in, none late. Seven builds a slot, 0.75 s apart; 0.35 s of the guest's work for each.
 - 1,000 slots on the image after it (the firmware's timer stopped for good): 998 with a block sent,
   6,627 blocks, all valid. The two slots without were in the three minutes of a full pool, below.
+- 1,000 slots on the next image (the one that orders a full pool faster; not yet on Google Cloud),
+  with the feeder's limit on what a round carries: 999 with a block sent, the one without being the
+  first, which the run joined 1.3 s before it. 7,039 blocks, all valid, none late; eight builds a
+  slot, 0.33 s of the guest's work for each. The pool was full (400 pending) in twelve of those
+  slots and every one had a block sent.
+- What "1,000 slots" means in all of these: slots this was asked to build for. The feeder asks once
+  for each new block of the chain, for the slot after it. In the last run 1,003 slots went by; the
+  three not counted followed a slot whose proposer proposed nothing, and nothing was built for them.
 - The same on the two images before it: 999 slots each (each run joined its first slot too late),
   7,017 and 6,415 blocks, all valid, none late.
 - Three runs of 1,000 slots on earlier images: two with a block for every slot, one with 998.
@@ -275,8 +283,13 @@ Where this is thinner than it looks:
   size, and the guest looks at its clock between transactions and not inside one. The feeder now
   leaves such transactions out and gives a round no more than fits its time. The next image, not yet
   on Google Cloud, builds a full pool's block in 55% to 70% of the time, by putting the transactions
-  in order less wastefully. A full pool has not come again to show what any of this is worth, and
-  transactions that call those precompiles are simply not built in.
+  in order less wastefully. The pool filled again an hour and a half later and three times after:
+  with the feeder's change every such slot had a bid, on Google Cloud (29 slots with 300 or more
+  pending) and here (40), though in a third of the fullest only one, ready five seconds early. Transactions that call those precompiles are simply not
+  built in, and one made to reach them only inside a block would still cost a slot.
+- **After a slot with no block it does not bid.** The feeder asks for a block when the chain has a
+  new one. When a proposer proposes nothing, the next slot is built on the same parent by builders
+  that win; this one sits it out. Three slots in a thousand, in the last run here.
 - **One feeder, at somebody's home.** When that machine or its link stops, the builder stops.
 - **Side channels.** The key's field arithmetic was written to take the same steps whatever the key,
   and a script reads its machine code for conditional jumps (`evm/scripts/check-secret-code`). The

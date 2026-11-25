@@ -435,6 +435,15 @@ Where this is thinner than it looks:
   measured; work outside precompiled contracts is bounded by gas alone, which was not measured against
   time; a transaction left out costs its quarter second again every round, since the feeder is not told;
   and transactions that need those contracts for longer than that are still not built in at all.
+- **When the proposer's own account spends in the block, it does not bid.** A block's worth is counted
+  as what the proposer's fee recipient holds after it over what it held before, and the block names that
+  account as the one fees go to; there is no payment transaction. In slot 15734425 (19:38 UTC on
+  2026-11-25) that account sent 0.06 ETH of its own in a transaction that was in the public pool; this
+  builder put it in, as it puts in any, the account ended the block with less than it began, and nine
+  valid blocks of up to 72 transactions counted as paying nothing and were not sent. One slot of 8,690
+  built for from Google Cloud. A smaller spend would not stop a bid and would make it too low; how often
+  that happened is not counted. The remedies are a payment signed inside, or leaving that account's
+  transactions out; neither is done.
 - **After a slot with no block it has bid once.** The feeder asked for a block only when the chain had a
   new one, so when a proposer proposed nothing this builder sat the next slot out: three slots in a
   thousand in the run here on the code of 12:47, and the same in every number before it. Since 12:28 UTC

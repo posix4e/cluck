@@ -1446,6 +1446,22 @@ by the guest itself.
     that needs a build or a run, the Lean and C behind the security statements, the threat model
     outside the EVM section, most of this file.
   - Not done there: a look at how often the guest leaves the trust domain there.
+  - [ ] **A proposer whose fee recipient spends in the block gets no bid, or too low a one**
+    (found 2026-11-25, looking at why slot 15734425 had nine valid blocks of 15 to 72
+    transactions, each counted as paying nothing and kept by the guest). `Evm.Build` counts a
+    block's worth as the recipient's balance after it less its balance before, and the block's
+    fees go to that account directly. The recipient there (`0x8aef3921…`, no code, 15,416 ETH,
+    91,862 transactions sent) had one of its own in the pool, sending 0.06 ETH; the feeder
+    proposed it, it went in, and the account ended lower than it began though the first block's
+    fifteen transactions tipped it 0.0002 ETH. Checked on this box's node: the account's nonce
+    and balance before and after block 26494472, and that transaction in our list. One slot of
+    the 8,690 the feed's records on Compute Engine have rounds for had a block of five or more
+    transactions paying nothing; slots where the recipient spent less than it was tipped, and
+    the bid was only too low, were not looked for (the records do not keep the recipient).
+    Not done: leaving that account's transactions out in the feeder (a choice of whose
+    transactions go in, which this builder has not made so far), or fees to an account of the
+    guest's own and a last transaction signed in the guest that pays the proposer (new code
+    inside, and that transaction's gas comes out of every bid).
   - Spent so far on Compute Engine for this: about thirteen dollars by 2026-11-25 18:45 UTC (of
     the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine
     is 23 cents an hour, about 170 dollars a month, and the door's about ten a month. A subnet (`silo-10-0-2`), a

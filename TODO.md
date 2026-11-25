@@ -1331,8 +1331,8 @@ by the guest itself.
       model says they would not: the guest shows the feeder no block while it holds a sealed
       transaction. Anybody can now bring that about for up to an hour at a time; what is
       left for those slots is the relays' answers. Counted apart from here on.
-      Not done: a real transaction through the door (it would be a spend); the page from
-      GitHub's server in a browser, Firefox, Safari; anything that tells a sender their
+      Then the page as GitHub serves it, in the same Chrome: the same checks held.
+      Not done: a real transaction through the door (it would be a spend); Firefox, Safari; anything that tells a sender their
       transaction went in; a name of the project's own in place of `sslip.io`'s; the
       door's machine is not kept up to date by anything but Debian's own unattended
       upgrades, which were not checked to be on.

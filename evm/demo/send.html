@@ -181,7 +181,8 @@
     const reply = await fetch("live/door.json", { cache: "no-store" });
     if (!reply.ok) throw new Error("none");
     door = String((await reply.json()).door || "").replace(/\/+$/, "");
-    if (!/^https:\/\//.test(door)) throw new Error("none");
+    // Over HTTPS, or on this very machine, for trying the page beside a door of one's own.
+    if (!/^(https:\/\/|http:\/\/(127\.0\.0\.1|localhost)(:\d+)?$)/.test(door)) throw new Error("none");
   } catch (error) {
     return say("The door is not open yet.", "", "The builder is running and bidding; the way in for sealed transactions from outside has no address yet. The builder's own quote is on the other page.");
   }

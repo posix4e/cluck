@@ -974,7 +974,14 @@ by the guest itself.
       `demo/test-send.mjs`, in CI, runs that on answers kept from a real guest
       (`verify/vectors/door/`) and refuses twelve wrong ones; run against a door in front of
       a guest on Compute Engine it had a sealed message kept by the guest, and one sealed to
-      another key answered "does not open". Not looked at in a browser yet.
+      another key answered "does not open". Looked at in a headless Chrome (2026-11-25, by
+      hand, nothing kept in CI), wide and at a phone's width, light and dark, with the kept
+      record and a stand-in door that gives the kept answer for everybody: the eleven checks
+      held and a sealed message of the right length reached the stand-in; with a record
+      naming another program the page said which check fails and sent nothing; with no door
+      named it said the door is not open. For that the page takes a door on
+      `http://127.0.0.1` or `localhost` as well as one over HTTPS. Not seen in a browser:
+      a quote made for the page's own asking (the stand-in can make none), Firefox, Safari.
     - **A sealed transaction is kept an hour at most** (2026-11-25, `Seal.farthest`; in the
       same image as the clock, not yet on Compute Engine): one whose last slot is more than
       300 on from the slot a block is asked for is dropped when the block is asked for, as one

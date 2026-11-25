@@ -1120,6 +1120,16 @@ by the guest itself.
         slot 15733290, ten minutes after, Ultrasound was posted to again and answered 200
         or 202 to every post since (646 by 16:52). One 503 and one rest; the doubling has
         only its test.
+        **Twice more in the hour from 17:12 UTC** (`20261125-171250.jsonl`), and not only
+        Ultrasound. Titan gave no answer in the time allowed to one block for slot
+        15733569 and 503 with nothing in its body to the next slot's, was left alone for
+        slots 15733571 to 15733620 and has answered 200 to every post since. Ultrasound
+        answered 503 (its web server's page, as before) to the first block for slot
+        15733716, was left alone to 15733764, and has answered 200 or 202 since. In each
+        of the two rests 49 of the 50 slots had a bid at the other relays, and the fiftieth
+        was a proposer no relay held a registration for. Three rests in all, each after
+        one 503, each ten minutes: a relay saying it again when next asked has not
+        happened.
       - Recovering signers is 30% of what is left, and three fifths of that is one inverse
         modulo the curve's order by Euclid's algorithm on whole numbers (Jaune's
         `FinField.inv`), about 0.35 ms a signature. Not changed.
@@ -2411,7 +2421,8 @@ times, and the block from the relay. Six stages:
     - Not done: the precompiled contracts and the decoders are still Jaune's.
   - Not done: a bid can still be answered after its slot
     has begun when the parent comes very late (one in 1,432 at the real relays); the builders
-    that win go on to the slot's start or past it, and ours stops half a second short on purpose;
+    that win go on to the slot's start or past it, and ours stops short of it on purpose (half a
+    second in these runs; 0.7 s in the feed on Compute Engine, `builder/feed`);
     transactions with blobs are left out; Ethereum's suites were not run again for these images
     (the engine did not change); what delayed the host's answer to the guest for three seconds,
     once in 6,532, is not known.

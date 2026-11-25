@@ -1216,6 +1216,18 @@ by the guest itself.
         the second thing of its kind seen around quotes (the first: an answer that had not
         arrived after 60 s, above). Whether the guest or the way to it was deaf for those
         seconds is not known; nothing was looking at the wire.
+        Looked for and not found again, on a second trust domain with the same image
+        (`silo-quote-test`, 17:16 to 17:24 UTC, then deleted): 300 connections asking for
+        the key and 100 for quotes; the same test eight times over (some 900 connections);
+        and three fresh starts, each with the test and 200 more quote connections as soon as
+        the port answered. About 2,300 connections, every one made, from 2,300 different
+        local ports. What the code says could do it and was not shown to: TCP's table holds
+        32 connections and a SYN that finds it full is dropped without a word
+        (`Tcp.listen`), and one that finds its own address and port still in the table from
+        a connection not yet forgotten is answered with that connection's ACK or not at all
+        (`Endpoint.receive`). Neither should arise from one client making one connection
+        at a time, and the test's ports do not repeat. The guest does not say how full its
+        table is; if this is seen again, that is the first thing to have it say.
       - Not done: BLS12-381 written for the purpose, so that those transactions can go in;
         sending only what is new each round, where now every round sends and the guest
         recovers and proves everything again.

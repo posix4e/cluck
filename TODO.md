@@ -2737,8 +2737,24 @@ What it stands on that is not sound yet:
       Jaune's modules import mathlib for proofs, which is what this repository's own rule forbids in code
       that runs. Nothing proves that no constant those routines would have built is read; the fixtures
       agreeing is the evidence. The repair is in Jaune: proofs out of the modules that run.
-- [ ] **`main` runs on a 64 MiB stack with nothing under it** (`evm/boot/stack.c`). Firmware's stack is too
-      small for Jaune's recursion, and how deep a hostile block can make it recurse has not been measured.
+- [ ] **`main` runs on a 64 MiB stack; there is a hole under it now, in images built from 2026-11-25
+      20:30 UTC on, and not yet in the one running on Compute Engine** (`evm/boot/stack.c`, the OS's
+      `boot/efi/guard.c`). The lowest 1 MiB of the stack is taken out of firmware's page tables before
+      anything runs on it, and a page fault and a double fault are given a stack of their own, so that
+      a stack which runs out stops the machine with a line saying so, where before it wrote on into the
+      image. 199 lines of C by hand, 1,946 bytes in the image (`4,016,640` bytes, `e5273d96…`; the
+      stand-in's twin `d4fc5e9e…`).
+      **Run:** `scripts/stack-check dev` and `tdx` (a program on that stack recurses a million deep
+      and comes back, then without end: stopped at the top of the hole, said so, halted) and the same
+      image on a TDX machine of Compute Engine through `scripts/gce-try`, read by eye, the same three
+      lines; on the builder's image in a trust domain here, `run-fixtures tdx --limits --key`,
+      `check-secret-code tdx`, `run-ask tdx`, all as before.
+      **Not run yet:** 1,000 slots on this image; anything on Compute Engine but the stack's own
+      test; CI builds nothing of `evm/`, so `stack-check` is run by hand.
+      **Not done:** how deep a hostile block can make it recurse has still not been measured (what
+      that depth can now do is stop the builder, not write on the image); firmware's own stack,
+      which the OS's other images run on, is as firmware made it; the tables are written by C by
+      hand, where the Nitro target's are decided by a program in the small language.
 - [ ] **The three runtime functions it adds are in `evm/rt/`, not in `rt/`**, and are held to Lean's runtime
       only by `evm-test` (212 cases of `powMod`) and by the fixtures. If the service stays, they go through
       what every other runtime function went through.

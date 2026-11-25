@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Whether a stack that runs out stops the machine, and says so.
+
+    scripts/stack-check dev|tdx        (from evm/, after: scripts/build-efi dev|tdx evm-stack-test)
+
+Starts the image whose program only uses up its stack (StackTest.lean) and reads its console. `main` there
+runs on the same stack as the builder's, made the same way (boot/stack.c): 64 MiB with its lowest 1 MiB taken
+out of the mapping (the OS's boot/efi/guard.c). The program first recurses a million deep and comes back,
+then recurses without end. Status 0 only if the console shows, in this order: the million came back; the
+machine said its stack ran out, at an address in the megabyte the image named for the hole; and it stopped.
+And if it never shows the line the program prints should the endless recursion return.
+
+`dev` is an emulated processor under OVMF; `tdx` a trust domain, which needs what the OS's TDX.md says and
+SILO_TDVF. The two have firmware that lays out its page tables differently, and Compute Engine's is a third:
+there the image is started with the OS's scripts/gce-try, which prints the console, and the same lines are
+looked for by eye.
+"""
+import os, re, shutil, subprocess, sys, time
+
+if len(sys.argv) != 2 or sys.argv[1] not in ("dev", "tdx"):
+    sys.exit(__doc__)
+mode, name = sys.argv[1], "evm-stack-test"
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+system = os.path.dirname(here)
+image = os.path.join(here, ".lake/build/efi", mode, name, "BOOTX64.EFI")
+if not os.path.exists(image):
+    sys.exit(f"stack-check: no {image} (run: scripts/build-efi {mode} {name})")
+# The OS's launcher looks for an image under its own build directory, by name.
+slot = os.path.join(system, ".lake/build/efi", mode, name)
+os.makedirs(slot, exist_ok=True)
+shutil.copyfile(image, os.path.join(slot, "BOOTX64.EFI"))
+log = os.path.join(here, ".lake/build/efi", mode, name, "serial.log")
+guest = subprocess.Popen([os.path.join(system, "scripts/run-efi"), mode, name], cwd=system,
+                         env=dict(os.environ, SILO_HOST_PORT=os.environ.get("SILO_HOST_PORT", "5016")),
+                         stdout=open(log, "wb"), stderr=subprocess.STDOUT, start_new_session=True)
+def console():
+    return re.sub(r"\x1b\[[0-9;=?]*[A-Za-z]", "", open(log, errors="replace").read()).replace("\r", "")
+try:
+    limit = time.time() + (600 if mode == "dev" else 120)
+    while time.time() < limit and "EFI service stopped" not in console() and guest.poll() is None:
+        time.sleep(0.5)
+finally:
+    os.killpg(guest.pid, 15)
+said = console()
+hole = re.search(r"stack ran out: it reached the hole under it at 0x([0-9a-f]{16}), in code at 0x[0-9a-f]{16} with its stack at 0x([0-9a-f]{16})", said)
+checks = [
+    ("a million calls deep, and back", "stack-test: a million deep and back: 1000000" in said),
+    ("the endless recursion did not come back", "now down without end" in said and "it came back" not in said),
+    ("the machine said its stack ran out, in the hole", hole is not None),
+    # The fault is in the page the stack pointer had reached, or the one below it.
+    ("at the hole's top, where a stack going down meets it first",
+     hole is not None and 0 <= int(hole.group(2), 16) - int(hole.group(1), 16) < 8192),
+    ("and stopped", said.rstrip().endswith("silo: EFI service stopped (3)")),
+]
+for what, ok in checks:
+    print(("ok    " if ok else "FAILED") + "  " + what)
+if not all(ok for _, ok in checks):
+    print("the console:\n" + said[-3000:])
+    sys.exit(1)
+print(next(line for line in said.splitlines() if "stack ran out" in line))

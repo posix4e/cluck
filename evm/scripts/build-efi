@@ -5,7 +5,7 @@
 #
 # The OS's scripts/build-efi, with what Jaune makes necessary: the other packages and Lean's own library are
 # offered as archives and their start-up routines replaced (rt/start.c, and scripts/build-min says why),
-# three names are supplied (rt/names.c), and `main` runs on a larger stack (boot/stack.c).
+# three names are supplied (rt/names.c), and `main` runs on a larger stack with a hole under it (boot/stack.c).
 #
 # The image is .lake/build/efi/<profile>/<executable>/BOOTX64.EFI. `dev` runs anywhere UEFI does; `tdx`
 # refuses to start outside an Intel TDX trust domain.
@@ -56,6 +56,8 @@ compile "$os/boot/efi/platform.c" -DREQUIRE_TDX="$require_tdx" -Dmain=evm_main_o
   -Wall -Wextra -Werror
 # The OS's way to a device from Lean, for the card driver the service takes its frames from.
 compile "$os/boot/efi/hw.c" -Wall -Wextra -Werror
+# The hole under the stack of boot/stack.c, and where the processor goes when the stack reaches it.
+compile "$os/boot/efi/guard.c" -Wall -Wextra -Werror
 offered=()
 while IFS= read -r arg; do
   arg="${arg#\"}"; arg="${arg%\"}"

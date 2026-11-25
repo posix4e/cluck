@@ -13,7 +13,8 @@ This target runs as a single x86-64 EFI application inside a trust domain. The f
 Nitro-specific claims about isolation, vsock, PCRs, page tables and the Secure Module apply to
 the Nitro target. The TDX target depends on Intel's hardware, TDX module, TDVF and its boot
 services, including its PCI, FAT and virtio drivers. Firmware owns the page tables, exceptions,
-device-facing memory and network queues for the lifetime of the application. The patched network driver checks completion counts, lengths and descriptor
+device-facing memory and network queues for the lifetime of the application (the builder's image
+changes two things in them, for a hole under its stack: `efi_guard`, below). The patched network driver checks completion counts, lengths and descriptor
 IDs at runtime and selects DMA buffers from driver-owned records. Its code processes
 I/O below the Lean Ethernet parser. The Nitro boot stub's W^X and stack-guard checks do not
 exercise this path.
@@ -119,6 +120,28 @@ the way:
   started it afresh with new keys (`TODO.md` has the trials; why the host does that is not known
   here). What it leans on: the firmware's word that the service does what its name says. Where
   firmware has none, or refuses, the console says so and the image runs as it would have.
+- `efi_guard` (`boot/efi/guard.c`, 2026-11-25; in the builder's images, not in the running one
+  until it is deployed, which `TODO.md` says) makes a hole under the stack the builder runs on,
+  and is the first thing here to change what firmware set up instead of asking firmware. It
+  walks firmware's page tables from the processor's root to the entry of each page of the hole;
+  where firmware mapped that memory as part of a 1 GiB or 2 MiB page it puts in a table of 512
+  smaller pages saying what the large one said (from eight pages of the image's own), and it
+  marks the hole's pages absent. It clears the bit of CR0 that makes read-only pages read-only to
+  the machine itself for as long as it writes, since some firmware keeps its tables so. And it
+  copies firmware's table of segments, with a task segment added, and firmware's table of
+  exception handlers, with the entries for a page fault and a double fault pointing at 20 lines
+  of its own on a stack of their own, and has the processor use the copies. Every other
+  exception goes to firmware as before, the one a trust domain takes when it touches a device
+  among them. What it reads is firmware's own tables, never a byte from outside the machine; an
+  entry it cannot follow is refused and the image stops, saying so. What it leans on: that
+  firmware goes on working with its segments and handlers in a copy (it did, on the three
+  firmwares tried: OVMF emulated, TDVF in a trust domain here, Google's), and that nothing of
+  firmware's later maps the hole back in. What is new to go wrong: a mistake in the tables it
+  writes is a machine that stops, or memory mapped that should not be, with nothing but
+  `scripts/stack-check` and the fixtures to say it is right; it was written by hand, in C, 199
+  lines, and is not printed from the small language as the Nitro target's mapping is. A page
+  fault from any cause now ends in this file's handler, which says where and stops, where
+  firmware's would have printed the registers and hung.
 - `silo_hw_store32` writes four bytes of the memory shared with a device in one go, checked as the
   other stores are; the driver's copies to and from that memory are made by `rep movsb` in
   `boot/efi/hw.c` and not by the runtime's `memcpy`. Neither reads anything.
@@ -464,9 +487,18 @@ service reaches reads a constant one of them would have built, it reads memory n
 the rule "nothing that is not there may pass for something that is" broken on purpose, and the fixtures
 agreeing is all that stands behind it.
 
-**A stack with no guard.** `evm/boot/stack.c` moves `main` to 64 MiB of the image's own memory. Recursion
-past the end of it writes into the image. How deep Jaune recurses depends on the request, and no bound on
-that depth has been worked out.
+**A stack with a hole under it** (2026-11-25; before that, and in the image running until the next is
+deployed, nothing: recursion past the end wrote into the image). `evm/boot/stack.c` moves `main` to
+64 MiB of the image's own memory, and the lowest 1 MiB of it is taken out of the mapping first
+(`boot/efi/guard.c`, above). Recursion that uses up the other 63 MiB reaches the hole, and the machine
+says its stack ran out and stops; it starts again only if whoever runs it starts it, with new keys.
+So what a request could do by driving recursion deep is stop the builder, which a sender to its port
+can do in other ways, and not write over the image. How deep a request can drive it has still not been
+worked out. A function with a frame larger than the hole could step over it: the largest frame in the
+image is under 6 KiB. `scripts/stack-check` runs a program that recurses without end on that stack:
+on OVMF emulated, in a trust domain here, and on Compute Engine it stopped at the top of the hole and
+said so. The firmware's own stack, which firmware's code and the OS's other images run on, has
+whatever firmware gave it.
 
 **Where the port is reachable from.** On the machine it was made on, the port is forwarded by
 QEMU from the host's loopback, and whoever can reach it is on that host. On Compute Engine
@@ -780,7 +812,7 @@ this target is the processor's, and is trusted.
 *Where the key lies.* In the machine's memory, as four words in a Lean object, for as long as it runs. The
 runtime zeroes a block when it frees it, but this one is never freed. Nothing here stops the firmware,
 which shares the address space, from reading it; and the request reader, the trie decoder and Jaune all
-run in that same space on bytes the sender chose, with a stack that has no guard (above). A flaw in any of
+run in that same space on bytes the sender chose (the stack has a hole under it, above). A flaw in any of
 them that let a sender read memory would give up the key.
 
 **A branch of Jaune.** The image now holds `posix4e/jaune`, twelve commits ahead of the upstream commit

@@ -80,6 +80,11 @@ lean_exe «evm-os-spec» where
   root := `EfiSpec
   moreLinkObjs := #[platformHosted, efiHosted, secretHosted]
 
+/-- A machine that only uses up its stack, to show the hole under it stops that (`scripts/stack-check`). -/
+lean_exe «evm-stack-test» where
+  root := `StackTest
+  moreLinkObjs := #[platformHosted]
+
 /-- Turns one case of a blockchain-test fixture into a request and the response the fixture calls for.
 Runs on Lean's own runtime only: it reads JSON. -/
 @[default_target]

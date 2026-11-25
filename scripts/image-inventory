@@ -30,6 +30,8 @@ sources = sorted(glob.glob(os_root + "/rt/*.c")) + sorted(glob.glob(obj + "/prin
 if in_evm:
     sources += sorted(glob.glob(here + "/rt/*.c")) + sorted(glob.glob(here + "/boot/*.c"))
 sources += [os_root + "/rt/bare/libc.c", os_root + "/rt/bare/platform.c", os_root + "/boot/efi/platform.c", os_root + "/boot/efi/hw.c"]
+if in_evm:
+    sources += [os_root + "/boot/efi/guard.c"]
 
 sizes, by_file = collections.Counter(), collections.defaultdict(collections.Counter)
 entry = re.compile(r"^\s*[0-9a-f]+\s+[0-9a-f]+\s+([0-9a-f]+)\s+\d+\s+(\S+?):\((\.[^)]*)\)")

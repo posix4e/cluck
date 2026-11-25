@@ -1075,6 +1075,18 @@ by the guest itself.
         feed has it from its run of 15:45 UTC. `scripts/round-check` has the new number.
         **Not run:** the second question to the beacon node, other than by the feed from
         then on.
+        Where an epoch's first block loses its time, measured on four of them from the
+        beacon node's events and by asking both nodes every 50 ms (15:12 UTC): the block
+        reaches the beacon node about 2 s into the slot, as others do; the beacon node calls
+        it the head at 1.8 to 3.7 s; its HTTP API then answers nothing for 1.6 to 1.8 s and
+        still names the old head when it does; and reth's newest block changes at 4.8 s, 2.3
+        s after the beacon node's head. For other blocks the two are 0.4 s apart at most. So
+        it is this machine's beacon node (Lighthouse as it comes, no settings changed) at
+        the turn of an epoch, not the network. Left as it is: the slot after an epoch's
+        first gets its first round two seconds later than it could, and still five or six
+        rounds. A feeder that built on the beacon node's head, asking reth for state at a
+        block it has run and not yet been told is the newest, would have those two seconds
+        back; not tried.
         One case goes the other way and is left as it is. At 15732480 a block came late,
         this machine's node took it for the head, and the chain then dropped it: the block
         at 15732481 is on the one before (26492535). The bid built on the old parent four

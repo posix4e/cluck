@@ -97,9 +97,9 @@ check("a full pool's slow first round is followed by a second", shadow.begin_at(
 # Which slot is built for when no block has come (`slots_gone`): the head's slot began at 1000.
 head = {"timestamp": hex(1000)}
 check("a head two seconds old: the slot after it", shadow.slots_gone(head, 1002.0) == 0)
-check("  until that slot is four seconds old with no block", shadow.slots_gone(head, 1015.9) == 0)
-check("  then the one after, on the same parent", shadow.slots_gone(head, 1016.0) == 1 and shadow.slots_gone(head, 1027.9) == 1)
-check("  and so on", shadow.slots_gone(head, 1028.0) == 2 and shadow.slots_gone(head, 1100.0) == 8)
+check("  until that slot is seven seconds old with no block", shadow.slots_gone(head, 1018.9) == 0)
+check("  then the one after, on the same parent", shadow.slots_gone(head, 1019.0) == 1 and shadow.slots_gone(head, 1030.9) == 1)
+check("  and so on", shadow.slots_gone(head, 1031.0) == 2 and shadow.slots_gone(head, 1100.0) == 7)
 # A block that came late is the beacon node's head before it is the execution node's.
 at = {"slot": (1000 - shadow.GENESIS_TIME) // 12}
 shadow.get = lambda base, path, timeout=20: {"data": {"header": {"message": {"slot": str(at["slot"])}}}}

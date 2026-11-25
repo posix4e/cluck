@@ -293,12 +293,16 @@ Where this is thinner than it looks:
   three of them full, every slot's last block was ready within 1.5 s of the slot.) Transactions that
   call those precompiles are simply not built in, and one made to reach them only inside a block
   would still cost a slot.
-- **After a slot with no block it has not been seen to bid.** The feeder asked for a block only when
-  the chain had a new one, so when a proposer proposed nothing this builder sat the next slot out:
-  three slots in a thousand in the last run here, and the same in every number above. The feeder now
-  builds for the next slot on the same parent once a slot is four seconds old with no block. That was
-  tried by pretending slots were empty (115 blocks, all valid by reth's validator); no relay has yet
-  taken one built after a slot that really was.
+- **After a slot with no block it has bid once.** The feeder asked for a block only when the chain
+  had a new one, so when a proposer proposed nothing this builder sat the next slot out: three slots
+  in a thousand in the last run here, and the same in every number above. The feeder now builds for
+  the next slot on the same parent once a slot is seven seconds old with no block. That was tried by
+  pretending slots were empty (115 blocks, all valid by reth's validator), and on 2026-11-25 a slot
+  stayed empty while the builder on Google Cloud was bidding (15732467): it built three blocks for
+  the slot after, and all four relays answered 200 to the first two. One slot is not a rate. And a
+  block that comes late looks the same as none until it comes: about one head in 370 reaches the
+  feeder's node later than seven seconds, and for those a bid on the old parent can still go out,
+  which a relay that has the late block refuses.
 - **One feeder, at somebody's home.** When that machine or its link stops, the builder stops.
 - **Side channels.** The key's field arithmetic was written to take the same steps whatever the key,
   and a script reads its machine code for conditional jumps (`evm/scripts/check-secret-code`). The

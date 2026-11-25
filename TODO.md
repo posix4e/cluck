@@ -1054,7 +1054,32 @@ by the guest itself.
         This time with the old parent's own randao and the withdrawals for the later slot,
         and Flashbots, Aestus and Titan each answered 200, which is a relay having run the
         block. So relays take a block built two slots on from its parent with these inputs.
-        A slot that stayed empty has still not come.
+        **A slot that stayed empty came at 13:24 UTC** (15732467; the beacon chain has no
+        block there). Three rounds were built for 15732468 on the block before, ready 6.1 s,
+        4.4 s and 0.6 s before the slot. All four relays answered 200 to the first two, and
+        to the third Aestus and Titan 200, Flashbots and Ultrasound that it was below their
+        floor. The block the chain has at 15732468 is on the same parent with the same
+        number (26492523). So a relay does take a block built after a slot that was empty.
+        **And blocks that come late are common here, at the start of an epoch above all.**
+        Of 5,981 heads in two days of the feed's logs, 205 were first built on more than
+        four seconds into their slot, and 181 of those were an epoch's first block, of which
+        there were 187; 95 more than five seconds, 47 more than six, 16 more than seven.
+        With the wait at four seconds a block on the old parent was begun for most of them,
+        and where the late block arrived during that round it was sent: in the feed's runs
+        of 12:48 and 13:47 UTC five such bids, at the first slot of five epochs, to which
+        Aestus said "unknown parent hash" (it had the late block), Flashbots and Ultrasound
+        that the bid was below their floor, and Titan 200. No harm done and no use to
+        anybody. Changed at 15:10 UTC: the wait is seven seconds, and the beacon node is
+        asked once more for a later block when a round's gathering is done, just before the
+        guest is asked; if there is one the round ends there, "skipped" in the record. The
+        feed has it from its run of 15:47 UTC. `scripts/round-check` has the new number.
+        **Not run:** the second question to the beacon node, other than by the feed from
+        then on.
+        One case goes the other way and is left as it is. At 15732480 a block came late,
+        this machine's node took it for the head, and the chain then dropped it: the block
+        at 15732481 is on the one before (26492535). The bid built on the old parent four
+        seconds in was the right one, and the later rounds, on the late block, were not. A
+        builder that wanted both would build on both parents; this one follows its node.
       - Recovering signers is 30% of what is left, and three fifths of that is one inverse
         modulo the curve's order by Euclid's algorithm on whole numbers (Jaune's
         `FinField.inv`), about 0.35 ms a signature. Not changed.

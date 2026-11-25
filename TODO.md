@@ -833,7 +833,18 @@ by the guest itself.
       from the same site as its files.
       Three relays answer for the key's bids (Flashbots, Ultrasound, Aestus); Titan's list
       answered 408.
-    - Not run: 1,000 slots on this image.
+    - **1,000 slots on this image** (the stand-in's twin of it, `85087c4a…`; 2026-11-24 21:09 to
+      2026-11-25 00:29 UTC, blocks 26487615 to 26488614, in TDX on this machine against the
+      stand-in relay, `builder/shadow --guest-sends --rebid --ready 0.7 --finishing 0.25
+      --relay-wait 1500 --slots 1000`, record in `/data/eth/shadow/gate1000j`). 999 slots with
+      a block sent; the first was joined 10.2 s in and its block was not sent. 7,175 rounds:
+      7,017 sent, each judged valid by the node, the same at the stand-in as here, and signed;
+      153 kept back by the guest for paying no more than one it had sent; 5 stopped at a
+      witness that fell short (status 6). No answer from the stand-in other than 200, none
+      missing, no block ready after its slot began. 7,016 of the 7,017 posts went on the
+      connection kept from the post before. Eight rounds a slot at the median, a round 0.73 s
+      (0.30 s the guest's own work at the median, 0.59 s the host's wait for it); the last
+      block of a slot ready 0.97 s before it at the median, 0.74 s at the 10th centile.
   - **The image built twice is the same file** (2026-11-24). The repository copied to another
     directory, its own build products and Jaune's removed, and `scripts/build-efi tdx evm-os`
     run there: three minutes, and the same SHA-256 as the image built in place

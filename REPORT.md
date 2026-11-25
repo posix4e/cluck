@@ -135,11 +135,12 @@ away, bidding at four relays with nothing paid for a win:
 
 **On one machine** (Xeon Gold 6526Y; guest in TDX; a stand-in relay beside it):
 
-- 1,000 slots in a row on the image before this one: 999 with a block sent (the run joined the first
-  too late), 6,415 blocks, every one judged valid by reth's validator, none late. Seven builds a slot;
-  0.34 s of the guest's work for each, on a request of 2.6 MB.
+- 1,000 slots in a row on the image now live (its twin that knows the stand-in for its relay): 999
+  with a block sent (the run joined the first too late), 7,017 blocks sent, every one judged valid by
+  reth's validator and accepted by the stand-in, none late. Eight builds a slot, 0.73 s apart; 0.30 s of
+  the guest's work for each.
+- The same on the image before it: 999 slots, 6,415 blocks, all valid, none late.
 - Three runs of 1,000 slots on earlier images: two with a block for every slot, one with 998.
-- 300 slots on the image now live: 2,041 blocks, all valid, none late.
 
 **Against the blocks proposers took** (one machine, 875 slots, 2026-11-23): ours were worth 29% of
 theirs at the median, and less summed, since their best blocks are far above their median. Ours held

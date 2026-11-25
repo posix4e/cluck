@@ -1422,9 +1422,11 @@ by the guest itself.
       and three (slots 15732467 and 15732348). The builder was dated to the 19th, when `evm/`
       began as a service that checks blocks; building and bids are of the 21st.
     - Not mended: the records the Google Cloud totals were counted from are still not published,
-      so nobody else can recount them; the tools that compare with proposers' blocks
-      (`/data/eth/shadow/tools/`) are not in the repository; what the taken blocks held that was
-      public was not measured on Google Cloud.
+      so nobody else can recount them; what the taken blocks held that was public was not
+      measured on Google Cloud. The programs that count the records are now in the repository
+      (`evm/builder/tools/`: `health.py`, `live.py`, `intake.py`, `gap.py`, `seen.py`,
+      `cover.py`; where this file says `/data/eth/shadow/tools/`, those are the ones), as they
+      were used, each with what it does in its heading.
     The reviewer did not check: anything outside this machine, the records themselves, anything
     that needs a build or a run, the Lean and C behind the security statements, the threat model
     outside the EVM section, most of this file.

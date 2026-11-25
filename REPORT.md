@@ -4,7 +4,7 @@ A report on [`evm/`](evm/README.md), for people who build Ethereum blocks in tru
 environments. Written 2026-11-24 and revised on the 25th. The runs the numbers come from are recorded in
 [TODO.md](TODO.md), most with their commands; some figures were counted from the runs' own records for
 this report and stand nowhere else. Those records are files on the machine that made them and are not
-published. What is weak is said here in short. It is said at length in the part of
+published; the programs that count them are (`evm/builder/tools/`). What is weak is said here in short. It is said at length in the part of
 [THREAT_MODEL.md](THREAT_MODEL.md) headed "The EVM service", which is kept as a dated record and is
 right where the two differ; the rest of that file is about the same OS on other machines.
 

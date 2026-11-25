@@ -1061,9 +1061,17 @@ by the guest itself.
       `scripts/press-check`, in CI: 34 cases of that rule with a wallet made for the test
       and no node (what a press must say, that it pays once, that a file written by hand
       gets no further than the limits). It is for a person to press: nothing here does.
-      Not run: a block with a press's payment in it, in a guest against the stand-in (to be
-      done on this machine before the feed is given a key); the feed with `--button`; a
-      press against the running builder, which spends. Not built: a page with the button on
+      **Tried here against the stand-in** (2026-11-25 08:31 UTC, 16 slots in TDX on the image
+      `a5e5ba1c…`, `--button` with the test wallet's key; nothing left this machine): a press
+      of 0.01 ETH for three slots, made while the fifth slot was being built. Every block of
+      those three slots but the round under way at the press carried the payment and was
+      worth 0.0101 to 0.0135 ETH where the slots around were worth 0.001 to 0.005; all 120
+      blocks sent were judged valid and were the same at the stand-in; no slot before or
+      after carried one. Nothing took a block, so nothing was paid, and afterwards the
+      button said nothing was armed and nothing spoken for. The stand-in's copies of those
+      blocks, which hold the signed payments, were removed.
+      Not run: the feed with `--button`; a press against the running builder, which spends;
+      a press that is taken, and the feed going on after it. Not built: a page with the button on
       it (it is a command), and anything that tells a sender their transaction went in.
     - Not done: where the door runs and under what name, which needs HTTPS in front for a
       page to use it and is to be decided.

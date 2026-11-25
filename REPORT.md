@@ -186,6 +186,8 @@ which takes and writes down whatever it is sent, and reth's validator to judge e
   quote is asked for, and built to post to the test relay and not the real ones: every slot with a
   block sent, 6,790 blocks sent, every one judged valid by reth's validator and accepted by the
   stand-in, none late. Seven builds a slot, 0.75 s apart; 0.35 s of the guest's work for each.
+- 1,000 slots on the image after it (the firmware's timer stopped for good): 998 with a block sent,
+  6,627 blocks, all valid. The two slots without were in the three minutes of a full pool, below.
 - The same on the two images before it: 999 slots each (each run joined its first slot too late),
   7,017 and 6,415 blocks, all valid, none late.
 - Three runs of 1,000 slots on earlier images: two with a block for every slot, one with 998.
@@ -259,6 +261,14 @@ Where this is thinner than it looks:
   code inside.
 - **It is not fast.** One core, one block at a time, about a second a round, and it stops 0.7 s short
   of the slot. Builders that win bid until the slot begins.
+- **A full pool, or one transaction, can keep it from bidding.** For three minutes on 2026-11-25 the
+  node had 400 transactions pending; rounds took 6 to 12 s where they take one, and on Google Cloud
+  five slots in a row went by with nothing sent. One call to the point evaluation precompile cost the
+  guest 3 s: that arithmetic, and BLS12-381's, is still the third-party library's on numbers of any
+  size, and the guest looks at its clock between transactions and not inside one. The feeder now
+  leaves such transactions out and gives a round no more than fits its time, and the guest orders a
+  full pool in a third of the time it took. A full pool has not come again to show what that is
+  worth, and transactions that call those precompiles are simply not built in.
 - **One feeder, at somebody's home.** When that machine or its link stops, the builder stops.
 - **Side channels.** The key's field arithmetic was written to take the same steps whatever the key,
   and a script reads its machine code for conditional jumps (`evm/scripts/check-secret-code`). The

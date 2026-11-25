@@ -1072,9 +1072,9 @@ by the guest itself.
         anybody. Changed at 14:47 UTC: the wait is seven seconds, and the beacon node is
         asked once more for a later block when a round's gathering is done, just before the
         guest is asked; if there is one the round ends there, "skipped" in the record. The
-        feed has it from its run of 15:45 UTC. `scripts/round-check` has the new number.
-        **Not run:** the second question to the beacon node, other than by the feed from
-        then on.
+        feed has it from 15:07 UTC, when it was started again (below). `scripts/round-check`
+        has the new number. **Not run:** the second question to the beacon node, other than
+        by the feed from then on.
         Where an epoch's first block loses its time, measured on four of them from the
         beacon node's events and by asking both nodes every 50 ms (15:12 UTC): the block
         reaches the beacon node about 2 s into the slot, as others do; the beacon node calls
@@ -1111,6 +1111,15 @@ by the guest itself.
         `scripts/round-check` holds the rule (40 cases). **Not run:** a relay answering 503
         since; the rule has only its test. **Not known:** whether Ultrasound limits builders
         it does not know; nobody there was asked.
+        **The rule then ran once, as written** (16:08 UTC, the feed's log
+        `20261125-160658.jsonl`). Ultrasound answered 503 to the first block for slot
+        15733240. The slot's second block and those of the next 49 slots went to the other
+        three relays, and the records say which relay was left alone. 49 of those 50 slots
+        had a bid; the one without (15733241) was the guest finding a proof short and the
+        mended block coming too late to send, which has nothing to do with relays. From
+        slot 15733290, ten minutes after, Ultrasound was posted to again and answered 200
+        or 202 to every post since (646 by 16:52). One 503 and one rest; the doubling has
+        only its test.
       - Recovering signers is 30% of what is left, and three fifths of that is one inverse
         modulo the curve's order by Euclid's algorithm on whole numbers (Jaune's
         `FinField.inv`), about 0.35 ms a signature. Not changed.
@@ -1166,6 +1175,36 @@ by the guest itself.
         closely, and it was not measured); the feeder is not told which transactions were
         left out for this, so each costs its quarter second again every round; the four
         BLS12-381 contracts that were not measured are guessed above those that were.
+        **1,000 slots' worth on the twin of that image, with the feeder's own filter
+        off** (2026-11-25 13:45 to 17:02 UTC, blocks 26492580 to 26493564,
+        `/data/eth/shadow/gate1000n`, `SHADOW_SLOW=none`, so that transactions reaching the
+        slow contracts were proposed and the guest's limit was what stood in the way). 987
+        slots went by and the feeder built 1,000 times: 13 slots twice, since this run still
+        waited four seconds before taking a slot for empty and their blocks came later than
+        that. 8,271 blocks built, 8,133 sent, all judged valid and the same at the stand-in;
+        136 kept for paying no more than one sent; none ended after its slot began; every
+        post on a kept connection. Nine rounds a slot, 0.79 s a round, the last block of a
+        slot 0.79 s before it at the median and 0.51 s at the least.
+        **The guest's longest round was 1.38 s of 8,296** (its own count, from its serial
+        line), 73 over a second; the feeder kept no request for taking two seconds, where
+        the last run with no filter anywhere (`gate1000l`) kept seventeen. The pool was full far more than in
+        any run before: 300 or more pending in 116 of the feeder's builds and 400 in 67.
+        The feed on Compute Engine, on the same node's pool with its filter on, left out 32
+        transactions in 29 of these slots for reaching those contracts; this run proposed
+        the like and nothing took long. How many the guest's limit left out is not counted:
+        the guest does not say.
+        Two slots had no block that could have been used. In 15733241 (400 pending) the
+        witness fell short of a transaction after 4.8 s of gathering, and the mended round
+        had 0.3 s left: an empty block, which the guest does not send. The guest on Compute
+        Engine lost the same slot the same way. In 15733394 the head came 8.9 s into its
+        slot (and the one before it 9.1 s into its own: this machine's nodes, with two
+        feeders asking them), one round fitted, the guest had 0.19 s of it and built an
+        empty block. A block had been sent for that slot five seconds earlier, on the old
+        parent, of no use. Both are the feeder's time and not the guest's; a first round
+        that was given less to gather would have left the second something.
+        Two slots were empty in truth (15733082 and 15733403): a block was sent for the
+        slot after each.
+        One slot in eight had its last block ready more than 2 s before it (127 of 998).
       - Not done: BLS12-381 written for the purpose, so that those transactions can go in;
         sending only what is new each round, where now every round sends and the guest
         recovers and proves everything again.

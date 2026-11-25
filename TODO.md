@@ -1231,8 +1231,9 @@ by the guest itself.
       - Not done: BLS12-381 written for the purpose, so that those transactions can go in;
         sending only what is new each round, where now every round sends and the guest
         recovers and proves everything again.
-    - GitHub's machine built the image before this one to the same file too (run 45617452239 of
-      `image.yml`, for `e3faec94…` at commit af9f94d, 2026-11-25).
+    - GitHub's machine built the two images since to the same files too (runs 45617452239 of
+      `image.yml`, for `e3faec94…` at commit af9f94d, and 45662445514, for `93068517…` at
+      46a5cfe, both 2026-11-25), and `gce-check` passed there on each running guest's quote.
     - Not done: `docs/live` is still written by hand after a start. Google logs every quote a
       guest asks for in the project's own log (`tdxLaunchAttestationReportEvent`), which is
       where the times above are from.

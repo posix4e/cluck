@@ -106,6 +106,16 @@ the way:
   what is in the run: Lean wrote the request there and reads the answer (`Kernel/Quote.lean`).
   What is new for the host: nothing it could not do before, since the arena is memory it can
   already read and write at will; it is told which part to write an answer in.
+  Since 2026-11-25 it stops the firmware's clock for the length of that call and sets it going
+  again after, through the firmware's own service for it (the timer protocol, looked up each
+  time). The firmware keeps a timer interrupt going every 10 ms for as long as the image runs,
+  and on Compute Engine, where the host makes the quote before the call returns, about one call
+  in ten with that interrupt due meanwhile ended the trust domain and started it afresh, with
+  new keys (`TODO.md` has the trials; why the host does that is not known here). What the
+  stopping costs: one more service of the firmware's is called, twice a quote, on the
+  firmware's word that it does what its name says; and between the two the firmware's timed
+  events do not run, which nothing in the image waits on. A host that never returns from the
+  call leaves the machine standing with its clock stopped, which a host can do to it anyway.
 - `silo_hw_store32` writes four bytes of the memory shared with a device in one go, checked as the
   other stores are; the driver's copies to and from that memory are made by `rep movsb` in
   `boot/efi/hw.c` and not by the runtime's `memcpy`. Neither reads anything.
@@ -145,7 +155,9 @@ the host's word (twice, until two readings agree; cut to the room there is), and
 bytes for someone else to check. A host can refuse, be slow, or write nonsense. The machine
 waits up to five seconds and does nothing else meanwhile, so whoever can reach its port can
 have it stand still that long a request, as they can by other requests; a host that takes a
-request and never finishes it gets no more. What is asked for is a quote of a report handed
+request and never finishes it gets no more. (A host that makes the quote before it returns
+from the call, as Compute Engine's does in some 40 ms, holds the machine for as long as it
+takes, whatever the five seconds.) What is asked for is a quote of a report handed
 in, and reports are made by the machine only of answers it gave, so nothing can be quoted
 that the machine did not say; a report made by another trust domain on the same host could be
 handed in and would be quoted, which lends out the host's quoting service and nothing of this

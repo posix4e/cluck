@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Boots the service as an EFI guest, puts fixture requests to it over TCP, and checks each answer.
 
-    scripts/run-fixtures dev|tdx [--spec] [--limits] [--key] [--from DIR] [name...]   (from evm/, after: scripts/build-efi dev|tdx)
+    scripts/run-fixtures dev|tdx [--spec] [--limits] [--key] [--quotes N] [--from DIR] [name...]   (from evm/, after: scripts/build-efi dev|tdx)
 
 `dev` is an emulated processor and OVMF, and runs anywhere QEMU does. `tdx` is an Intel TDX trust domain,
 and needs what the OS's TDX.md says a host needs, with SILO_TDVF naming the firmware built there. The
@@ -28,12 +28,19 @@ get its answer afterwards. It sends some 60 MB, which an emulated processor take
 and has `bid-verify` check the bid's signature under that key from outside (lake build bid-verify). The
 key is drawn when the guest starts, so no answer here can be a fixture.
 
+`--quotes N` then asks the guest N times over for its key with a report and to have the report made a
+quote by its host (`Evm/Attest.lean`, "JQUO1"). Each must come back a quote of that report, and the key
+must be one key throughout: a guest that began again while asked has another. (On Google's machines one
+such request in ten ended the guest, until the firmware's clock was stopped for the call: TODO.md.) A
+guest started here has a host that makes quotes only when SILO_TDX_QGS names the quoting service's
+socket (the OS's scripts/run-efi).
+
 For each request it prints the time from the first byte sent to the answer, and how much of that the guest
 says it spent on the request; the rest is the request on its way in.
 
 SILO_HOST_PORT is the loopback port the guest's port 5005 is forwarded to (default 5015).
 
-    scripts/run-fixtures dev|tdx --tap [--delay MS] [--limits] [--key] [--from DIR] [name...]
+    scripts/run-fixtures dev|tdx --tap [--delay MS] [--limits] [--key] [--quotes N] [--from DIR] [name...]
 
 With `--tap` the guest is not behind the emulator's own network, which ends every TCP connection beside
 the guest and so hides what the guest's TCP does over a distance. It gets a tap device in a network of
@@ -41,7 +48,7 @@ this program's own making (a user and network namespace: no root), with the kern
 it, and the requests go from Linux's TCP straight to the guest's at 10.0.2.15. `--delay` holds every
 frame from Linux back so many milliseconds, which is then the round trip.
 
-    scripts/run-fixtures dev|tdx --at HOST [--limits] [--key] [--from DIR] [name...]
+    scripts/run-fixtures dev|tdx --at HOST [--limits] [--key] [--quotes N] [--from DIR] [name...]
 
 With `--at` no guest is started: the requests go to one already running at HOST, port 5005 (on a
 machine somewhere else, say), and its console is not read, so the guest's own share of each time is not
@@ -77,6 +84,9 @@ if limits:
 keyed = names[:1] == ["--key"]
 if keyed:
     names = names[1:]
+quotes = 0
+if names[:1] == ["--quotes"] and len(names) > 1:
+    quotes, names = int(names[1]), names[2:]
 given = names[:1] == ["--from"] and len(names) > 1
 if given:
     fixtures, names = os.path.abspath(names[1]), names[2:]
@@ -237,6 +247,32 @@ try:
         failed += not ok
         print(f"a bid for a block built from a fixture, {took:.2f} s: "
               f"{'signed by that key, and the signature verifies' if ok else 'NOT VERIFIED: ' + checked.stdout.strip()}")
+    if quotes:
+        # A quote is 48 bytes of heading and then the trust domain's report as the quote has it, whose
+        # last 64 bytes are the report data; in the report the guest made they are 128 bytes in.
+        first, made, why = None, 0, ""
+        for n in range(quotes):
+            try:
+                answer = exchange(b"JATT1" + os.urandom(32) + b"JKEY1", 60)[4:]
+                if len(answer) != 48 + 1024:
+                    why = f"at the {n + 1}th, no report came with the key ({len(answer)} bytes)"
+                    break
+                first = first or answer[:48]
+                if answer[:48] != first:
+                    why = f"at the {n + 1}th the key was another: THE GUEST BEGAN AGAIN"
+                    break
+                report = answer[48:]
+                quote = exchange(b"JQUO1" + report, 60)[4:]
+            except OSError as error:
+                why = f"at the {n + 1}th: {error}"
+                break
+            if quote[:1] != b"\0" or len(quote) < 1 + 48 + 584 or quote[1 + 48 + 520:1 + 48 + 584] != report[128:192]:
+                why = f"the {n + 1}th was no quote of the report: {quote[:1].hex()} {quote[1:120].decode(errors='replace')!r}"
+                break
+            made += 1
+        ok = made == quotes
+        failed += not ok
+        print(f"{quotes} quotes asked for, one after another: {'each a quote of its report, under one key' if ok else 'FAILED, ' + why}")
 finally:
     if guest is not None:
         try:

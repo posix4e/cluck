@@ -230,6 +230,14 @@ lean_obj_res silo_efi_report(b_lean_obj_arg challenge) {
 // address with the bit set that says host-visible, which the TDX module is asked for
 // (TDG.VP.INFO: the width of a guest address, whose top bit that is). What comes back is the host's
 // word on whether it took the request: 0 when it did.
+//
+// The firmware's clock is stopped for the length of the call and set going again after it. Firmware
+// keeps a timer interrupt going for as long as its boot services are there (every 10 ms on those seen),
+// which nothing here needs. A host may serve this call before it returns, as Compute Engine's does,
+// in some 40 ms; and there, with that interrupt falling due while the processor was away, about one
+// call in ten never returned and the trust domain was started afresh, with nothing said (TODO.md has
+// the trials). With the clock stopped, none in 300. Whether the clock is there to stop is the
+// firmware's to say; where it is not, the call is made as it was.
 extern uint8_t *silo_hw_shared(uint64_t address, size_t size);
 uint64_t silo_efi_quote_ask(uint64_t address, uint64_t size) {
 #if REQUIRE_TDX
@@ -241,6 +249,12 @@ uint64_t silo_efi_quote_ask(uint64_t address, uint64_t size) {
                       : : "rdx", "r8", "r9", "r10", "r11", "cc", "memory");
     width &= 63;
     if (leaf != 0 || width < 32 || width > 52) return ~(uint64_t)0;
+    static const Guid timer_guid = {0x26baccb3, 0x6f42, 0x11d4, {0xbc, 0xe7, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81}};
+    Timer *timer = NULL;
+    uint64_t period = 0;
+    if (system_table->boot->locate_protocol(&timer_guid, NULL, (void **)&timer) != 0 || !timer ||
+        timer->get_period(timer, &period) != 0 || period == 0 || timer->set_period(timer, 0) != 0)
+        timer = NULL;
     register uint64_t said __asm__("r10") = 0;                 // a call the specification defines
     register uint64_t which __asm__("r11") = 0x10002;          // GetQuote
     register uint64_t where __asm__("r12") = place | ((uint64_t)1 << (width - 1));
@@ -249,7 +263,9 @@ uint64_t silo_efi_quote_ask(uint64_t address, uint64_t size) {
     __asm__ volatile (".byte 0x66,0x0f,0x01,0xcc"
                       : "+a"(call), "+c"(shown), "+r"(said), "+r"(which), "+r"(where), "+r"(bytes_)
                       : : "cc", "memory");
-    return call != 0 ? ~(uint64_t)0 : said;
+    uint64_t result = call != 0 ? ~(uint64_t)0 : said;
+    if (timer) timer->set_period(timer, period);
+    return result;
 #else
     (void)address; (void)size;
     return ~(uint64_t)0;

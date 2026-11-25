@@ -884,22 +884,16 @@ by the guest itself.
       here. Not possible here: a test with a certificate Intel has really revoked. Not in the
       page: a browser cannot ask Intel (the page says so). "Up to date" is Intel's word on the
       day asked, and the answers are good for thirty days.
-  - **The guest there began again by itself three times in six hours, each time at a request for
-    a quote; the cause is not known** (found 2026-11-25 02:00 UTC, on the image `bfd47e1d…e0629dde`
-    started 19:57 UTC the day before).
+  - **The guest there began again by itself at one request for a quote in ten; the firmware's
+    clock was what set it off, and the image now stops it for the call** (found 2026-11-25
+    02:00 UTC on the image `bfd47e1d…e0629dde`, started 19:57 UTC the day before; the trials
+    02:10 to 03:20).
     - What was seen. The feed's hourly records of the guest's keys did not agree with each
       other. The guest's console (the last megabyte Google keeps) twice shows "request of 1029
       bytes", which is a request for a quote, with no line after it and then the firmware
-      starting the image. Google's log of the instance has a start's two integrity events at
-      22:58:02, 23:58:36 and 01:59:00 UTC, and no operation on the instance by anybody since it
-      was made. At 01:58:57.6 a first quote was made; the request for the second came within a
-      second, and the guest was starting again at 01:59:00.6, so it ended about two seconds
-      into that request. At 22:58 and 23:58 it was the hour's first request that ended it.
-      Twelve other requests for a quote in those hours were answered.
-    - What it is not: one of this program's own stops, which say why on the console before
-      they stop. So a fault the firmware took, or the host ending the trust domain. On this
-      machine, where QEMU serves the same request, it has not happened; how often it was asked
-      here is small.
+      starting the image. Google's log of the instance has a start at 22:58:02, 23:58:36 and
+      01:59:00 UTC, and no operation on the instance by anybody since it was made. Twelve other
+      requests for a quote in those hours were answered.
     - What it did. A guest draws its keys when it starts. Bids went out under
       `0x94ab682b…` from 19:58 to 22:58 UTC, `0xb2423801…` to 23:58, `0x820f042a…` to 01:59 and
       `0x999e5d1e…` since, and `docs/live` named the first until this was found: for three hours
@@ -908,18 +902,48 @@ by the guest itself.
       Bidding went on through each start, some slots later: the feed makes its connection again.
       The feed's line for an hour said "guest replaced 0 times" each time, because the guest
       was lost while its keys were being asked for, before any slot.
-    - Done about it, short of the cause. The feed asked for both quotes every hour; it now asks
-      once for each start of the guest and keeps what it has while the keys are the same
-      (`quoted_before` in `builder/shadow`), asks all of it again when the connection was lost
-      while it asked (one record no longer holds keys of two starts), and says after each hour,
-      and notes in `BEGAN-AGAIN`, when the guest's key is not the one `docs/live` names
-      (`builder/feed`). `scripts/gce-live` takes the commit an image was built from, and
-      `docs/live` is written again for the start of 01:59, with the image as GitHub's machine
-      built it (the same SHA-256) and `scripts/gce-check` holding on all five. Tried: the feed
-      started again at 02:08 UTC took the kept quotes and asked for none.
-    - Not done: finding the cause, for which the image needs to say on its console how far a
-      request for a quote got, on a test machine asked many times. `docs/live` is still
-      written by hand after a start.
+    - Done at once. The feed asked for both quotes every hour; it now asks once for each start
+      of the guest and keeps what it has while the keys are the same (`quoted_before` in
+      `builder/shadow`), asks all of it again when the connection was lost while it asked (one
+      record no longer holds keys of two starts), and says after each hour, and notes in
+      `BEGAN-AGAIN`, when the guest's key is not the one `docs/live` names (`builder/feed`).
+      `scripts/gce-live` takes the commit an image was built from, and `docs/live` was written
+      again for the start of 01:59, with the image as GitHub's machine built it.
+    - The trials, on a second trust domain of the same kind (`silo-quote-test`, in a network
+      of its own, `silo-test2`, since the guest's address is fixed), asked for quotes one after
+      another from here:
+      - As the image was: 4 of 30, 6 of 40, 7 of 60 requests ended the guest. Marks printed
+        around the call (in C, in a copy of the tree) showed where: the call to the host
+        (TDG.VP.VMCALL, GetQuote) is made and never returns.
+      - Not what is asked: the same report asked again was sometimes quoted and sometimes
+        ended the guest. Not how it is asked: with the buffer of 8 KB, zeroed, and the
+        registers shown that Linux shows, 6 of 40.
+      - Not interrupts being taken: with them off around the call, 4 of 40. Not the other
+        processors, which sit in the firmware: with one processor, 8 of 100. Not what the
+        guest had just done: with a tenth of a second of nothing before the call, 8 of 100.
+        Not where in the firmware's 10 ms the call begins: begun just after a tick, 8 of 100.
+      - Not Google's machines as such: Ubuntu 24.04 (Linux 7.0) in a trust domain of the same
+        kind got 150 quotes of 150 through the same call, and 200 of 200 with all four
+        processors busy. There the call returns with the quote made, after some 40 ms: the
+        host does the work before it returns.
+      - **With the firmware's clock stopped for the call: 300 of 300**, and then, on the image
+        built as it is to run, 768 requests for a quote and no start. Firmware keeps a timer
+        interrupt going every 10 ms for as long as its boot services are there, which a guest
+        that has left the firmware behind, as Linux has, does not have.
+    - What is not known: why a timer interrupt of the firmware's coming due during those 40 ms
+      ends a trust domain on Google's host about one time in ten. It is somebody else's
+      program on the far side of the call, and nothing here can look into it.
+    - The change: `silo_efi_quote_ask` (`boot/efi/platform.c`) finds the firmware's timer
+      protocol, sets its period to nothing before the call and back after.
+      `scripts/run-fixtures … --quotes N` asks N times over and fails if a quote does not come
+      or the key changes.
+    - Seen once in those 768 and not explained: an answer of 8,005 bytes that had not arrived
+      after 60 s, the guest having made the quote and gone on to answer what came next.
+    - Not done: stopping the firmware's clock for good when the image starts, which would
+      also keep the firmware's handler from running a hundred times a second under the
+      program; that touches every run and wants the long tests again. `docs/live` is still
+      written by hand after a start. Google logs every quote a guest asks for in the project's
+      own log (`tdxLaunchAttestationReportEvent`), which is where the times above are from.
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
     A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone

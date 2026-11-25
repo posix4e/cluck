@@ -33,7 +33,15 @@ typedef struct {
     Status (EFIAPI *open_protocol)(Handle, const Guid *, void **, Handle, Handle, uint32_t);
     void *close_protocol, *open_protocol_information, *protocols_per_handle;
     Status (EFIAPI *handles)(uint32_t, const Guid *, void *, size_t *, Handle **);
+    Status (EFIAPI *locate_protocol)(const Guid *, void *, void **);
 } BootServices;
+
+// The firmware's clock: what makes its timer interrupt, and how often (in units of 100 ns; 0 for never).
+typedef struct Timer {
+    void *register_handler;
+    Status (EFIAPI *set_period)(struct Timer *, uint64_t);
+    Status (EFIAPI *get_period)(struct Timer *, uint64_t *);
+} Timer;
 
 typedef struct {
     uint8_t header[24];
@@ -97,5 +105,6 @@ _Static_assert(offsetof(PciIo, attributes) == 120, "x64 PCI IO protocol");
 _Static_assert(offsetof(BootServices, disconnect) == 272, "x64 boot services");
 _Static_assert(offsetof(SystemTable, boot) == 96, "x64 system table");
 _Static_assert(offsetof(BootServices, handles) == 312, "x64 boot services");
+_Static_assert(offsetof(BootServices, locate_protocol) == 320, "x64 boot services");
 _Static_assert(offsetof(Network, mode) == 120, "x64 simple network protocol");
 _Static_assert(offsetof(NetworkMode, address) == 552, "current MAC address");

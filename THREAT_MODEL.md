@@ -480,6 +480,19 @@ read a sealed transaction or sign with the builder's key, which never leave the 
 what the machine sends to relays goes inside TLS to names checked against the roots in the
 image.
 
+That was not all the firewall let in until 2026-11-25 18:30 UTC. The machine is on the project's
+`default` network, which comes with rules of Google's making that let anyone reach every
+machine on it by ICMP and on TCP 22 and 3389, and this project had one more for TCP 8080. So
+for its first day and a half on a public address the guest took packets from anywhere: it
+answered pings, and it answered a SYN to one of those ports with a reset, as it does for any
+port but its own (`Tcp.listen`), keeping nothing. What that exposed to everybody was the code
+that reads a frame, an IP header with its pieces put together, ICMP and a TCP header; not the
+request port, and nothing that reads a request. Nobody looked at what came in that way, and
+the guest keeps no count. Since then a second rule (`silo-test-deny-rest`, ahead of Google's)
+drops everything for this machine that the feeder's rule does not allow; tried from the
+feeder's address, where those three ports were refused before it and are silent after. Tried
+from no other address.
+
 **A door for everybody else** (`evm/builder/door`, 2026-11-25; written and tried against a guest,
 not yet run where the public can reach it). The port cannot be opened to all, since whoever reaches
 it can have the builder build and bid. The door is a program on the untrusted side that listens for

@@ -12,7 +12,8 @@
 # What it takes from the surroundings: gcloud, signed in, with a project set; SILO_GCE_ZONE (us-central1-a);
 # SILO_GCE_MACHINE (c3-standard-4); SILO_GCE_NET, what follows --network-interface (nic-type=GVNIC; a
 # subnet, a private address and a reserved public one, address=NAME, go here); SILO_GCE_TAGS, network
-# tags for firewall rules to name. The image is marked as one firmware may start without Secure Boot,
+# tags for firewall rules to name (this script makes no rule and checks none: a project's `default`
+# network lets anyone in by ICMP and on TCP 22 and 3389 unless a rule of yours says otherwise). The image is marked as one firmware may start without Secure Boot,
 # for Google's card, for TDX. The machine is given no service account: nothing in it would use one. A
 # trust domain is not moved when its host is seen to: it is ended, and Compute Engine starts it again
 # (which is its default), as a new machine with new keys.

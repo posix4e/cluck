@@ -1352,6 +1352,18 @@ by the guest itself.
     firewall rule for this machine's address alone (`silo-test-from-home`), a second network
     for a test machine beside the running one (`silo-test2`, its subnet and its rule), a few
     images and their disk files remain, which cost cents a month.
+  - **The firewall let more in than was meant, until 2026-11-25 18:30 UTC.** The project's
+    `default` network has Google's own rules for ICMP and TCP 22 and 3389 from anywhere, and
+    one of this project's for 8080; the running guest answered pings and refused those ports to
+    anybody (`THREAT_MODEL.md`, where the port is reachable from). Found while reading the
+    guest's console for the connection that was not made (the console, which
+    `gcloud compute instances get-serial-port-output` gives, has a line for each request and
+    shows the guest never saw that one; it has no times, so it says no more). Closed with a
+    rule of lower number than Google's, `silo-test-deny-rest` (900, deny all, for the tag
+    `silo-test`), and `silo-test-from-home` moved to 800. The feed went on through the change.
+    The second network never had those rules. **Not done:** `scripts/gce-try` does not make
+    or check either rule; whoever starts a guest on a `default` network of their own has the
+    same opening until they close it.
 
 ## Ethereum block import, as a service (`evm/`)
 

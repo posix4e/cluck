@@ -455,6 +455,8 @@ On a machine with TDX and a TDVF built from source (`TDX.md`; `SILO_TDVF` names 
 On Google Cloud, `../scripts/gce-try` starts the same file on a TDX machine. The guest takes the
 address 10.0.2.15 with its gateway at 10.0.2.1, so it needs a subnet of 10.0.2.0/24, a public address,
 and a firewall rule that lets the feeder reach TCP 5005; the script's heading says how each is given.
+A project's `default` network there also lets anyone reach every machine by ICMP and on TCP 22 and
+3389, which a second rule has to close (`THREAT_MODEL.md` says what was open here, and until when).
 
 To feed it you need a synced reth with the `txpool`, `flashbots` and `debug` APIs and the patch in
 `evm/builder/reth-state-witness.patch`, and a beacon node:

@@ -31,3 +31,16 @@ with `scripts/tdx-standing QUOTE --keep`, and checked in the test as of 17955648
 
 The levels, the identity and the first list say they are good until 2026-12-24. Checked as of a later day
 they are refused, as they should be, which is one of the test's cases.
+
+## `door/`: what the builder's door served for one guest
+
+The answers of `evm/builder/door`, run here on 2026-11-25 in front of a guest in a trust domain on
+Compute Engine that ran the builder's image `e2010f12…e0e3b4`: for `evm/demo/test-send.mjs`, which
+checks them as the page for sealed transactions would, as of 04:00 UTC that day.
+
+| File | What it is |
+|---|---|
+| `sealing.json` | The door's answer to `GET /key`: the guest's sealing key, the challenge the door asked with, and the quote. |
+| `builder.json` | The same for `GET /builder`, the guest's key for bids. |
+| `builder.quote` | The quote out of `builder.json`, as `docs/live/` keeps one. |
+| `record.json` | What `docs/live/builder.json` would say of that guest: RTMR1 as `scripts/gce-measure` works it out for the image, the key for bids, the challenge. |

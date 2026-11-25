@@ -108,6 +108,11 @@ jobs:
       # what it serves, and that nothing else it is sent reaches the guest.
       - name: The builder's public door
         run: python3 -I evm/scripts/door-check
+      # What the page for sealed transactions does with the door's answer, on answers kept from a real
+      # guest: the key is taken only on a quote that holds, and twelve wrong ones are refused.
+      - name: The page that seals a transaction, on kept answers
+        working-directory: evm
+        run: node demo/test-send.mjs
       # What the live code needs from a runtime, next to the list in the repository (taken on a Mac, where
       # the C start-up symbols differ). Printed, not enforced.
       - name: Runtime symbols the demo service keeps live

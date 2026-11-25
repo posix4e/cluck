@@ -950,7 +950,7 @@ by the guest itself.
     the key for bids; a quote made at most once a minute for all comers, or for a caller's own
     challenge a few times a minute) and sealed transactions (`POST /sealed`), with limits on
     size and on how many a minute. Nothing else reaches the guest.
-    - `scripts/door-check`, in CI: 50 cases against a stand-in for the guest's port, among them
+    - `scripts/door-check`, in CI: 52 cases against a stand-in for the guest's port, among them
       every other kind of request the guest knows, each of which must be refused without the
       guest hearing of it.
     - Tried against a guest in a trust domain on Compute Engine, from here: both keys came
@@ -960,9 +960,19 @@ by the guest itself.
     - What it would give once it runs somewhere: anyone can ask for a quote no older than
       they like (REPORT.md says they cannot now), a page could show the guest's key as it is
       and not as a file says it was, and strangers can hand in sealed transactions.
-    - Not done: where it runs and under what name, which needs HTTPS in front for a page to
-      use it and is to be decided; the page; a limit in the guest on how far ahead a sealed
-      transaction's last slot may be (it keeps one as long as its sender says).
+    - **The page that uses it is written and not published** (`evm/demo/send.html`, with
+      `send.js`, `seal.js` and `verify.js`): it asks the door for the sealing key with random
+      bytes of its own, takes the key only if the quote holds, is of that key and that
+      asking, and is of the program `docs/live` names on the firmware of the quote kept
+      there; seals a pasted signed transaction with a last slot up to an hour on; hands it in.
+      `demo/test-send.mjs`, in CI, runs that on answers kept from a real guest
+      (`verify/vectors/door/`) and refuses twelve wrong ones; run against a door in front of
+      a guest on Compute Engine it had a sealed message kept by the guest, and one sealed to
+      another key answered "does not open". Not looked at in a browser yet.
+    - Not done: where the door runs and under what name, which needs HTTPS in front for a
+      page to use it and is to be decided; a limit in the guest on how far ahead a sealed
+      transaction's last slot may be (it keeps one as long as its sender says); the button
+      that adds a payment to the proposer.
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
     A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone

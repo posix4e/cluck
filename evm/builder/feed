@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Feeds a builder's guest that runs somewhere else, for as long as this is left running:
 #
-#   builder/feed ADDRESS DIR [--hold]          (from evm/)
+#   builder/feed ADDRESS DIR [--hold | --button KEY.pem]          (from evm/)
 #
 # It runs builder/shadow against the guest at ADDRESS an hour of slots at a time (300), live, the guest
 # posting its blocks itself to the four relays its image has, unpaid; with --hold, posting to none. Each
@@ -17,14 +17,26 @@
 # again) is said after each hour and noted in DIR/BEGAN-AGAIN; the feed goes on. A block of ours that
 # becomes the chain's head ends that hour's run early, as builder/shadow does, and the next begins.
 #
+# With --button KEY.pem a person can have bids paid up for a few slots: builder/press writes a press into
+# DIR/button.jsonl, and builder/shadow, which is given the wallet's key for that, signs a payment to the
+# proposer into each block of the slots the press names, until one is taken. Without a press nothing is
+# signed. The limits (0.01 ETH a press, 0.05 ETH in 24 hours) are builder/shadow's, and its heading says
+# what they rest on. Without --button this program is given no key that can pay.
+#
 # Requests that were slow are kept whole by builder/shadow (DIR/slow), megabytes each: those older than a
 # day are removed here.
 #
 # This is the untrusted host's side. It never goes in an image.
 set -uo pipefail
-[[ $# -ge 2 ]] || { echo "usage: builder/feed ADDRESS DIR [--hold]" >&2; exit 2; }
-address="$1"; dir="$2"; hold="${3:-}"
-[[ -z "$hold" || "$hold" == --hold ]] || { echo "usage: builder/feed ADDRESS DIR [--hold]" >&2; exit 2; }
+usage() { echo "usage: builder/feed ADDRESS DIR [--hold | --button KEY.pem]" >&2; exit 2; }
+[[ $# -ge 2 ]] || usage
+address="$1"; dir="$2"; hold=""; button=()
+case "${3:-}" in
+  "") [[ $# -eq 2 ]] || usage ;;
+  --hold) [[ $# -eq 3 ]] || usage; hold=--hold ;;
+  --button) [[ $# -eq 4 && -r "$4" ]] || usage; button=(--button "$dir/button.jsonl" --wallet "$4") ;;
+  *) usage ;;
+esac
 here="$(cd "$(dirname "$0")/.." && pwd)"
 relays=https://boost-relay.flashbots.net,https://relay-builders-us.ultrasound.money,https://aestus.live,https://us-global.titanrelay.xyz
 mkdir -p "$dir"
@@ -80,7 +92,7 @@ while true; do
   log="$dir/$(date -u +%Y%m%d-%H%M%S).jsonl"
   # shellcheck disable=SC2086
   python3 -I builder/shadow --guest "$address" --live --guest-sends $hold --rebid --ready 0.7 --finishing 0.25 \
-    --relay-wait 1500 --relays "$relays" --slots 300 --log "$log" > /dev/null 2> "$log.err" &
+    --relay-wait 1500 --relays "$relays" --slots 300 --log "$log" "${button[@]}" > /dev/null 2> "$log.err" &
   child=$!
   trap 'kill "$child" 2>/dev/null' EXIT
   waited=0

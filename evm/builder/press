@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# The button: has the builder's bids paid up for a few slots, from a wallet of one's own.
+#
+#   builder/press DIR KEY.pem                  what is armed, and what the last 24 hours came to
+#   builder/press DIR KEY.pem ETH [SLOTS]      (from evm/)
+#
+# DIR is the directory builder/feed was given, with --button KEY.pem. For the next SLOTS slots (5 unless
+# said, 300 at most) every block the guest is asked for carries a payment of ETH (0.01 at most) from the
+# wallet to the slot's proposer, so the bid is worth that much more. The payment is good only in a block
+# of that slot for that proposer, and all the copies signed share one place in the wallet's order of
+# transactions, so one press pays once at most: when a block with it is taken. Nothing is paid for a
+# press whose slots go by without that. Presses come to 0.05 ETH in 24 hours at most.
+#
+# This spends real ether when it works. It is for a person to run, and nothing in this repository runs it.
+set -euo pipefail
+[[ $# -ge 2 && $# -le 4 ]] || { sed -n '2,6p' "$0" >&2; exit 2; }
+here="$(cd "$(dirname "$0")/.." && pwd)"
+exec python3 -I "$here/builder/shadow" --press "${3:-0}" --press-slots "${4:-5}" --button "$1/button.jsonl" --wallet "$2"

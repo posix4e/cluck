@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Tests the button of builder/shadow (--button, --press): when a payment may be signed and when not.
+
+    scripts/press-check            (from evm/)
+
+builder/shadow is loaded as it would be started for a guest somewhere else, and given a button, a wallet
+made here that holds nothing, and a node that is a few lines of this file. Nothing is asked of a real node
+or a guest, and no run is started. The cases are about the rule alone: what a press must say for a slot
+to be paid for, that a press pays once, and that the limits (0.01 ETH a press, 300 slots, 0.05 ETH in 24
+hours) hold whatever the file says.
+
+Not tested here: a block built with the payment in it, which needs a guest (TODO.md says what was run).
+Where Python has no Keccak (neither pycryptodomex nor an OpenSSL that knows it), the wallet is an address
+with no key and the one case that signs is left out, and said to be.
+"""
+import importlib.machinery, importlib.util, json, os, sys, tempfile
+
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.dont_write_bytecode = True
+work = tempfile.mkdtemp(prefix="press-check-")
+key_path, button = os.path.join(work, "wallet.pem"), os.path.join(work, "button.jsonl")
+sys.argv = ["shadow", "--guest", "127.0.0.1:1", "--live", "--guest-sends", "--rebid", "--relays", "https://aestus.live",
+            "--log", os.path.join(work, "log.jsonl")]
+loader = importlib.machinery.SourceFileLoader("shadow", os.path.join(here, "builder/shadow"))
+shadow = importlib.util.module_from_spec(importlib.util.spec_from_loader("shadow", loader))
+loader.exec_module(shadow)
+shadow.button_path = button
+try:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    with open(key_path, "wb") as f:
+        f.write(ec.generate_private_key(ec.SECP256K1()).private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    shadow.presser = shadow.Wallet(key_path)
+    signs = True
+except Exception as error:
+    shadow.presser = type("NoKey", (), {"address": "0x" + "ab" * 20})()
+    signs = False
+
+chain = {"count": 7, "holds": 10**18}
+def node(method, params, timeout=60):
+    assert params[0] == shadow.presser.address
+    return hex(chain["count"] if method == "eth_getTransactionCount" else chain["holds"])
+shadow.rpc = node
+
+failed = []
+def check(name, good, got=None):
+    print(f"{'ok  ' if good else 'FAIL'}  {name}")
+    if not good:
+        failed.append(name)
+        if got is not None:
+            print(f"      got {got!r}")
+
+me = shadow.presser.address
+NOW = shadow.GENESIS_TIME + 12 * 1000000 + 3          # three seconds into slot 1,000,000
+SLOT = 1000000
+ETH = 10**18
+def lines():
+    return shadow.presses(button)
+def may(slot, count=None, now=NOW):
+    p = shadow.press_for(lines(), me, chain["count"] if count is None else count, slot, now)
+    return p["wei"] if p else 0
+def write(*made):
+    with open(button, "w") as f:
+        for p in made:
+            f.write((p if isinstance(p, str) else json.dumps(p)) + "\n")
+def press(wei=ETH // 100, first=SLOT + 1, last=SLOT + 5, count=7, at=NOW, wallet=None):
+    return {"wei": wei, "first": first, "last": last, "count": count, "wallet": wallet or me, "at": at}
+
+check("no file: nothing is paid", may(SLOT + 1) == 0)
+said, wrote = shadow.press_now("0", 5, NOW)
+check("asked what is armed, with no file: nothing, and nothing written", not wrote and "nothing armed" in said and not os.path.exists(button), said)
+
+said, wrote = shadow.press_now("0.01", 5, NOW)
+check("a press of 0.01 ETH for five slots is written", wrote and len(lines()) == 1 and lines()[0] == press(), (said, lines()))
+check("  the next slot is paid for, and the fifth", may(SLOT + 1) == ETH // 100 and may(SLOT + 5) == ETH // 100)
+check("  the slot under way at the press is not, nor the sixth after", may(SLOT) == 0 and may(SLOT + 6) == 0)
+check("  once the wallet's count has moved, nothing more is", may(SLOT + 2, count=8) == 0)
+check("  nor at a count before the press's", may(SLOT + 2, count=6) == 0)
+check("  nor for another wallet", shadow.press_for(lines(), "0x" + "11" * 20, 7, SLOT + 1, NOW) is None)
+said, wrote = shadow.press_now("0", 5, NOW)
+check("  asked what is armed: this press, and nothing more written", not wrote and "armed: 0.01 ETH" in said and len(lines()) == 1, said)
+
+for name, eth, slots in (("more than 0.01 ETH", "0.0100001", 5), ("less than nothing", "-0.01", 5), ("no slots", "0.01", 0),
+                         ("301 slots", "0.01", 301), ("not a number", "lots", 5)):
+    before = len(lines())
+    said, wrote = shadow.press_now(eth, slots, NOW)
+    check(f"refused, nothing written: a press for {name}", not wrote and said.startswith("shadow:") and len(lines()) == before, said)
+chain["holds"] = ETH // 100
+said, wrote = shadow.press_now("0.01", 5, NOW)
+check("refused, nothing written: more than the wallet holds with its gas", not wrote and "does not hold" in said and len(lines()) == 1, said)
+chain["holds"] = ETH
+
+# What the file says is judged again for every block: a file written by hand gets no further.
+write(press(wei=ETH // 100 + 1))
+check("a file that says more than 0.01 ETH: nothing is paid", may(SLOT + 1) == 0)
+write(press(last=SLOT + 301))
+check("a file that names 301 slots: nothing is paid, in the first of them either", may(SLOT + 1) == 0 and may(SLOT + 301) == 0)
+write(press(last=SLOT + 300))
+check("  300 slots: paid in the last", may(SLOT + 300) == ETH // 100)
+write(press(at=NOW + 60))
+check("a press dated after now: nothing is paid", may(SLOT + 1) == 0)
+write(press(wei=0))
+check("a press of nothing: nothing is paid", may(SLOT + 1) == 0)
+write('{"wei": "10000000000000000", "first": 1, "last": 2, "count": 7, "wallet": "x", "at": 1}', "not json", "[1, 2]", "{}",
+      json.dumps(dict(press(), wei=1.5)), json.dumps(dict(press(), count=-1)))
+check("lines that are not presses are none", lines() == [] and may(SLOT + 1) == 0, lines())
+write(press(), "torn {")
+check("a torn last line leaves the press before it standing", may(SLOT + 1) == ETH // 100)
+write(press(), press(first=SLOT + 20, last=SLOT + 24))
+check("only the newest press counts for which slots", may(SLOT + 1) == 0 and may(SLOT + 20) == ETH // 100)
+
+# The day. Five presses, each paid (the count moved on after each), are 0.05 ETH.
+hour = 3600
+paid = [press(count=n, at=NOW - (5 - n) * hour, first=1, last=5) for n in range(5)]
+write(*paid)
+chain["count"] = 5
+check("five presses paid in the day come to 0.05 ETH", shadow.spoken_for(lines(), 5, SLOT + 1, NOW) == 5 * ETH // 100)
+said, wrote = shadow.press_now("0.01", 5, NOW)
+check("  a sixth is refused, nothing written", not wrote and "over 0.05" in said and len(lines()) == 5, said)
+write(*paid, press(count=5))
+check("  and one written by hand all the same pays nothing", may(SLOT + 1) == 0)
+write(*paid)
+then = NOW + 19 * hour + 1                             # 24 hours and a second after the first of the five
+later = (then - shadow.GENESIS_TIME) // 12
+said, wrote = shadow.press_now("0.01", 5, then)
+check("  24 hours after the first of them there is room for one", wrote and may(later + 1, now=then) == ETH // 100
+      and "spoken for in the last 24 hours 0.0500" in said, said)
+said, wrote = shadow.press_now("0.01", 5, then + 1)
+check("  pressed again at the same count: written, and the two can pay once between them",
+      wrote and len(lines()) == 7 and shadow.spoken_for(lines(), 5, later + 1, then + 1) == 5 * ETH // 100, said)
+said, wrote = shadow.press_now("0.01", 5, then + 2)
+chain["count"] = 6
+said, wrote = shadow.press_now("0.01", 5, then + 3)
+check("  and once that count has been paid for, the next is refused", not wrote and "over 0.05" in said, said)
+chain["count"] = 5
+# Presses that ran out unpaid are not spent: the count is where it was.
+chain["count"] = 9
+write(*[press(count=9, at=NOW - n * 60, first=1, last=5) for n in range(1, 30)])
+check("29 presses that ran out with nothing paid leave the whole day", shadow.spoken_for(lines(), 9, SLOT + 1, NOW) == 0)
+said, wrote = shadow.press_now("0.01", 5, NOW)
+check("  and the next is taken", wrote and may(SLOT + 1) == ETH // 100, said)
+write(*[press(wei=ETH // 100, count=n, at=NOW - 60, first=1, last=5) for n in range(4)], press(wei=ETH // 200, count=4, at=NOW - 30, first=1, last=5))
+chain["count"] = 5
+said, wrote = shadow.press_now("0.006", 5, NOW)
+check("0.045 ETH paid: a press of 0.006 is refused", not wrote and "over 0.05" in said, said)
+said, wrote = shadow.press_now("0.005", 300, NOW)
+check("  and one of 0.005 for an hour taken", wrote and may(SLOT + 300) == ETH // 200, said)
+
+# The payment itself is the one --top-up makes; that a press's is signed by the same wallet for the same code.
+if signs:
+    tx = shadow.presser.pay(5, 10**9, ETH // 200, 26490000, "0x" + "22" * 20, 2 * 10**9)
+    check("the payment a press leads to is a signed transaction of the wallet's carrying that much",
+          tx["from"].lower() == me.lower() and int(tx["value"], 16) == ETH // 200 and tx["hash"].startswith("0x"), {k: tx.get(k) for k in ("from", "value", "hash")})
+else:
+    print("left out: the case that signs a payment (no Keccak in this Python)")
+
+if failed:
+    sys.exit(f"press-check: {len(failed)} cases failed")
+print("press-check: all as it should be")

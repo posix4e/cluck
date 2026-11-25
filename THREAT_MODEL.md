@@ -671,6 +671,22 @@ block. Which transactions were offered, the proofs, the assembling of the payloa
 making of the quote are the host's as before. The relays learned this machine's address and the builder's
 key; the chain shows the wallet's address.
 
+*A payment a person asks for, on a feed that is always running* (`builder/shadow --button`,
+`builder/press`, 2026-11-25; written, its rule tested, no block built with it yet). Until now a wallet's
+key was read by a run started for one payment, which ended when it was made. With the button the program
+that feeds the guest hour after hour reads the key when each run starts and holds it, so whoever can run
+code as that user on the feeding machine, or write the file of presses, can have payments signed for as
+long as the feed runs. What stands in the way is only this: the program signs nothing without a press in
+the file; it judges every press again for every block (0.01 ETH at most, 300 slots at most, 0.05 ETH in
+24 hours over presses the wallet has paid for or may yet, and only while the wallet's count of
+transactions is what it was at the press, so a press pays once); and each payment is good in one slot
+for one proposer, as before. Those limits are lines of Python on the untrusted side, and somebody who can
+change the file can as well read the key and need no press. So what is at stake is what the wallet holds,
+and the wallet is to hold little. A payment still wins the slot for whatever block the host has the guest
+build: the guest does not know a payment from any other transaction, and nothing here ties a press to a
+sealed transaction being in the block. A leaked copy of a payment costs its gas in another block and
+uses up the press. The feed is not given a key unless it is started with `--button`.
+
 *Time.* The rule is the OS's: a secret never passes through `Nat` or `Int`, and decides no branch, no
 address and no division. Jaune's own BLS code is on `Nat` and is not used on the key. `evm/Evm/Sign/` holds
 field elements as fifteen 26-bit limbs in machine words; where a value decides something, both answers are

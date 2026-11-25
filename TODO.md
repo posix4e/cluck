@@ -987,8 +987,24 @@ by the guest itself.
       300 on from the slot a block is asked for is dropped when the block is asked for, as one
       whose time is up is. Until this a transaction that could never go in held one of the 64
       places for as long as its sender had written. Three checks in `build-test`.
+    - **The button that adds a payment to the proposer is written; no block has been built
+      with it** (2026-11-25; `builder/press DIR KEY.pem ETH [SLOTS]`, `builder/shadow
+      --button`, `builder/feed ADDRESS DIR --button KEY.pem`). A press is a line in a file
+      beside the feed's records: so much more (0.01 ETH at most) on every bid of the next
+      few slots (5 unless said, 300 at most) until one is taken. The feed signs the payment
+      `--top-up` always made, for those slots only, and only while the wallet's count of
+      transactions is what it was at the press, so a press pays once and the feed goes on
+      afterwards. Presses the wallet has paid for or may yet pay for come to 0.05 ETH in 24
+      hours at most; one whose slots went by unpaid costs nothing and is not counted.
+      `scripts/press-check`, in CI: 34 cases of that rule with a wallet made for the test
+      and no node (what a press must say, that it pays once, that a file written by hand
+      gets no further than the limits). It is for a person to press: nothing here does.
+      Not run: a block with a press's payment in it, in a guest against the stand-in (to be
+      done on this machine before the feed is given a key); the feed with `--button`; a
+      press against the running builder, which spends. Not built: a page with the button on
+      it (it is a command), and anything that tells a sender their transaction went in.
     - Not done: where the door runs and under what name, which needs HTTPS in front for a
-      page to use it and is to be decided; the button that adds a payment to the proposer.
+      page to use it and is to be decided.
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about nine dollars by 2026-11-25 04:30 UTC (of the
     500 a month agreed); the builder's machine is 23 cents an hour. A subnet (`silo-10-0-2`), a

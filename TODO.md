@@ -1254,8 +1254,11 @@ by the guest itself.
     learn about a sealed transaction by putting its own around it was missing; the steps for
     checking did not say to check out the commit the record names; the hours given were not the
     running image's; the stack with no guard and the start-up routines that do nothing were not
-    mentioned; the share of winning blocks was one figure of three. Not mended: no size is given
-    for a Linux builder's image, none having been measured here.
+    mentioned; the share of winning blocks was one figure of three. Not mended then: no size is
+    given for a Linux builder's image, none having been measured here. (Since, one published size
+    is given: 326,107,648 bytes for BuilderNet v1.6's TDX image for Azure, which is the
+    `Content-Length` its download server gave for the image file linked from the release notes,
+    asked on 2026-11-25 without fetching the file.)
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about nine dollars by 2026-11-25 04:30 UTC (of the
     500 a month agreed); the builder's machine is 23 cents an hour. A subnet (`silo-10-0-2`), a

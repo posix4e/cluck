@@ -509,7 +509,7 @@ gas than most of what a block does, and nothing here bounds what a sender can ma
 The machine reads no packet while an import runs, so one request holds off every other client for as long
 as it takes, and a sender who wants that can have it (a block built for a bid is the one exception: the
 network is looked at between its transactions, though no other request is begun). Jaune holds byte strings as lists, many bytes of heap
-for each byte of input, on a heap of 256 MiB; a request that needs more stops the machine, which says so.
+for each byte of input, on a heap of 512 MiB; a request that needs more stops the machine, which says so.
 A request is held as the pieces it came in until it is whole and is then joined once, so for a moment it is
 held twice. Eight clients may each be part way through a request, and what is held for all of them together
 is kept to 40 MiB (`maxHeld` in `evm/Evm/Machine.lean`): the client whose bytes would pass that is closed. So

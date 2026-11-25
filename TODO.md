@@ -1049,6 +1049,12 @@ by the guest itself.
         blocks, all valid, randao and withdrawals as the chain's next block had them in all
         15 that could be compared. A block that comes later than four seconds and after
         the round has begun can still cost one refused bid.
+        The second time (15732348, 13:13 UTC, on the image above): again a block that came
+        late, and one round was built on the old parent before the beacon node had it.
+        This time with the old parent's own randao and the withdrawals for the later slot,
+        and Flashbots, Aestus and Titan each answered 200, which is a relay having run the
+        block. So relays take a block built two slots on from its parent with these inputs.
+        A slot that stayed empty has still not come.
       - Recovering signers is 30% of what is left, and three fifths of that is one inverse
         modulo the curve's order by Euclid's algorithm on whole numbers (Jaune's
         `FinField.inv`), about 0.35 ms a signature. Not changed.

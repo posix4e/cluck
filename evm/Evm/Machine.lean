@@ -157,6 +157,8 @@ structure State where
   /-- The last few blocks of the chain this machine has checked for itself (`Evm/Follow.lean`). -/
   chain : Follow.Chain := {}
   relays : Relays.Table
+  /-- Which engines this machine has (`Evm.Serving`). -/
+  serving : Evm.Serving
   anchors : Array Tls.X509.Anchor
   wire : Outbound.Wire
   /-- The network card, when this program drives it itself (`Kernel/Net/Wire.lean`); with none, frames
@@ -524,7 +526,8 @@ of the others. A request for a bid may name the milliseconds it allows for trans
 when its first bytes arrived (`since`); this machine's clock is what says they have run out. Between
 transactions it also looks at the network. -/
 def buildWith (request : ByteArray) (added : ByteArray → Evm.Bid.Extra := fun _ => {}) (since : Nat := 0) : M Evm.Bid.Outcome := do
-  if !Evm.Bid.mine request then return { reply := ← IO.lazyPure fun _ => Evm.serve request }
+  let serving := (← get).serving
+  if !Evm.Bid.mine request then return { reply := ← IO.lazyPure fun _ => serving.rest request }
   let key := (← get).key
   let allowed := Evm.Bid.allowed request
   -- Counted from the request's first bytes when that is known: whoever set the allowance set it when
@@ -534,7 +537,7 @@ def buildWith (request : ByteArray) (added : ByteArray → Evm.Bid.Extra := fun 
   let over : M Bool := do
     let _ ← pump
     if allowed == 0 then pure false else return (← Efi.millis).toNat ≥ stopAt
-  Evm.Bid.buildWith over key request added
+  Evm.Bid.buildWith over key request added serving.other
 
 def serveWith (request : ByteArray) (since : Nat := 0) : M ByteArray := do return (← buildWith request (since := since)).reply
 
@@ -715,8 +718,9 @@ partial def serve (s : State) (quiet : Nat := 0) : IO UInt32 := do
     Efi.idle
     serve s quiet
 
-/-- The machine, talking to the relays of `relays` and to nobody else. -/
-def run (relays : Relays.Table) : IO UInt32 := do
+/-- The machine, talking to the relays of `relays` and to nobody else, with the fast engine alone unless
+it is given more. -/
+def run (relays : Relays.Table) (serving : Evm.Serving := .builder) : IO UInt32 := do
   -- The card is this program's own to drive if it is one it knows; the firmware's driver otherwise.
   let (card, said) ← Kernel.Net.Wire.start
   if card.isSome then Platform.write s!"evm: the network card is driven from here\nevm: it is {said}\n".toUTF8
@@ -749,7 +753,8 @@ def run (relays : Relays.Table) : IO UInt32 := do
     return 2
   let sealing := Seal.Key.of drawn
   Platform.write s!"evm: connects out only to {relays.what}\n".toUTF8
+  Platform.write s!"evm: {serving.what}\n".toUTF8
   Platform.write "evm: Ethernet ready, serving TCP 5005\n".toUTF8
-  serve { key, sealing, relays, anchors, card, wire }
+  serve { key, sealing, relays, serving, anchors, card, wire }
 
 end Evm.Machine

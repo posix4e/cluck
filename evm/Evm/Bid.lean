@@ -186,7 +186,7 @@ past the end of what it proposed. If the block cannot be built with them in it, 
 is built again without them, and the reason is not said: a block must not fail, or name a node of the
 state, because of a transaction the sender is not to know about. -/
 def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input : ByteArray)
-    (added : ByteArray → Extra := fun _ => {}) : m Outcome := do
+    (added : ByteArray → Extra := fun _ => {}) (other : Build.Other := Build.byJaune) : m Outcome := do
   if input == keyMagic then return { reply := key.publicKey }
   let refuse : Outcome := { reply := ({ status := 5 } : Build.Response).encode }
   if input.size < magic.size + 64 || input.extract 0 magic.size != magic then return refuse
@@ -212,9 +212,9 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
           witness := { request.witness with
             block, nodes := request.witness.nodes ++ extra.nodes, codes := request.witness.codes ++ extra.codes.toList } }
       | none => request
-    let (response, _, _) ← Build.runWith over request
+    let (response, _, _) ← Build.runWith over request other
     let (response, request) ← if response.built.isNone && !extra.wires.isEmpty then do
-        let (again, _, _) ← Build.runWith over plain
+        let (again, _, _) ← Build.runWith over plain other
         pure (again, plain)
       else pure (response, request)
     match response.built with

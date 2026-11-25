@@ -67,8 +67,11 @@ it, and continuous integration does not build it. What has been run and what it 
   about it (`scripts/seal-with-proofs` for a sender, `builder/shadow --proofs` for the check,
   `FollowTest.lean` on saved blocks). `EfiMain.lean` is the machine with the four
   real relays (`evm-os`); `EfiShadow.lean` is the machine with a stand-in on the host whose key everyone
-  knows (`evm-os-shadow`, `scripts/standin.py`). `scripts/run-ask dev|tdx [--live]` has the guest ask,
-  and checks every frame that crossed its network.
+  knows (`evm-os-shadow`, `scripts/standin.py`). Both have the fast engine alone: they answer requests
+  to build and to judge by it, and refuse what needs Jaune's interpreter, none of which is linked into
+  them (`Evm.serveBuilder`; `scripts/build-efi` will not make either image if it is). `EfiSpec.lean` is
+  the same machine with every engine (`evm-os-spec`), for the fixtures and for the page below.
+  `scripts/run-ask dev|tdx [--live]` has the guest ask, and checks every frame that crossed its network.
 - `MkRequest.lean`: turns a case of a blockchain-test fixture into a request and the response the fixture
   calls for. The only program here that reads JSON, and it never goes in an image.
 - `EvmTest.lean`: pure tests of the format and of `Evm.powMod`. `TrieTest.lean`: the trie against Jaune's
@@ -142,30 +145,38 @@ scripts/build-min evm-bench
 On an emulated processor, anywhere QEMU and OVMF are installed:
 
 ```
-scripts/build-efi dev
-scripts/run-fixtures dev highGasUsage wallet2outOf3txsRevokeAndConfirmAgain
+scripts/build-efi dev evm-os-spec
+scripts/run-fixtures dev --spec highGasUsage wallet2outOf3txsRevokeAndConfirmAgain
 ```
 
 In an Intel TDX trust domain, on a host set up as [../TDX.md](../TDX.md) describes, with the firmware built
 there:
 
 ```
+scripts/build-efi tdx evm-os-spec
+SILO_TDVF=/path/to/OVMF.fd scripts/run-fixtures tdx --spec
 scripts/build-efi tdx
 SILO_TDVF=/path/to/OVMF.fd scripts/run-fixtures tdx
 ```
 
+There are two images. `evm-os-spec` has every engine and answers the fixtures as they are kept, which is
+what `--spec` sends it. `evm-os`, the image that builds for relays, has the fast engine alone: without
+`--spec` it is sent the requests of `fixtures/build/` and `fixtures/stateless/` marked for that engine,
+which must get the answers kept there, and then one request of each kind that needs Jaune, which it must
+refuse.
+
 `run-fixtures` starts the guest with the OS's `scripts/run-efi`, waits for it to say it is serving, sends each
 request in a frame (a 4-byte big-endian length, then the request), and compares the frame that comes back
-with the expected response. With no names it sends every fixture. The guest prints one line per request on
-its serial port: how long the request was, its status, and how long the import took.
+with the expected response. The guest prints one line per request on its serial port: how long the request
+was, its status, and how long the work took.
 
 To keep a guest running and put requests to it by hand, give the OS's launcher the image under the name it
 looks for, start it, and send the same frame to the forwarded port from another terminal:
 
 ```
-mkdir -p ../.lake/build/efi/dev/evm-os
-cp .lake/build/efi/dev/evm-os/BOOTX64.EFI ../.lake/build/efi/dev/evm-os/
-(cd .. && scripts/run-efi dev evm-os)
+mkdir -p ../.lake/build/efi/dev/evm-os-spec
+cp .lake/build/efi/dev/evm-os-spec/BOOTX64.EFI ../.lake/build/efi/dev/evm-os-spec/
+(cd .. && scripts/run-efi dev evm-os-spec)
 ```
 
 ```
@@ -186,11 +197,12 @@ bytes and the request, followed by the SHA-256 of the response (`Evm/Attest.lean
 generation service signs the report into a quote, as [../TDX.md](../TDX.md) describes, and the quote is what
 a relying party checks. The development guest answers the same frame with the response alone.
 
-`demo/` is that exchange as a web page. The server boots the TDX image, keeps it running and listens on
-loopback port 5172; it needs Python 3 and the host's quote generation service, and nothing else:
+`demo/` is that exchange as a web page. The server boots the TDX image that has every engine, keeps it
+running and listens on loopback port 5172; it needs Python 3 and the host's quote generation service, and
+nothing else:
 
 ```
-scripts/build-efi tdx
+scripts/build-efi tdx evm-os-spec
 SILO_TDVF=/path/to/OVMF.fd demo/server.py record     # boots once and writes down the measurements
 SILO_TDVF=/path/to/OVMF.fd demo/server.py
 node demo/test-verify.mjs                            # from another terminal

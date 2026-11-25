@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A web page in front of the service running in an Intel TDX trust domain.
 
-    demo/server.py            (from evm/, after: scripts/build-efi tdx)
+    demo/server.py            (from evm/, after: scripts/build-efi tdx evm-os-spec)
 
 Boots the TDX image with the OS's scripts/run-efi and keeps it running, serves demo/page.html, and for each
 press of the button puts one attested request (Evm/Attest.lean) to the guest, has this host's quote
@@ -31,7 +31,7 @@ system = os.path.dirname(here)
 demo = os.path.join(here, "demo")
 fixtures_dir = os.path.join(here, "fixtures")
 work = os.path.join(here, ".lake/build/demo")
-image = os.path.join(here, ".lake/build/efi/tdx/evm-os/BOOTX64.EFI")
+image = os.path.join(here, ".lake/build/efi/tdx/evm-os-spec/BOOTX64.EFI")
 listen_port = int(os.environ.get("EVM_DEMO_PORT", "5172"))
 guest_port = int(os.environ.get("SILO_HOST_PORT", "5025"))
 qgs_socket = os.environ.get("EVM_DEMO_QGS", "/var/run/tdx-qgs/qgs.socket")
@@ -160,11 +160,11 @@ class Guest:
     def start(self):
         self.stop()
         # The OS's launcher looks for an image under its own build directory, by name.
-        slot = os.path.join(system, ".lake/build/efi/tdx/evm-os")
+        slot = os.path.join(system, ".lake/build/efi/tdx/evm-os-spec")
         os.makedirs(slot, exist_ok=True)
         shutil.copyfile(image, os.path.join(slot, "BOOTX64.EFI"))
         self.process = subprocess.Popen(
-            [os.path.join(system, "scripts/run-efi"), "tdx", "evm-os"], cwd=system,
+            [os.path.join(system, "scripts/run-efi"), "tdx", "evm-os-spec"], cwd=system,
             env=dict(os.environ, SILO_HOST_PORT=str(guest_port), SILO_TDVF=firmware),
             stdout=open(self.log, "wb"), stderr=subprocess.STDOUT, start_new_session=True)
         began = time.time()
@@ -386,7 +386,7 @@ def record():
 
 def main():
     if not os.path.exists(image):
-        sys.exit(f"demo: no {image} (run: scripts/build-efi tdx)")
+        sys.exit(f"demo: no {image} (run: scripts/build-efi tdx evm-os-spec)")
     if len(sys.argv) == 2 and sys.argv[1] == "record":
         return record()
     if len(sys.argv) != 1:

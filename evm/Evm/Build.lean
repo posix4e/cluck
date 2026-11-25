@@ -298,12 +298,24 @@ structure FastJob where
   /-- The place from which nothing is said of what a transaction lacked. -/
   loud : Nat := 1000000000
 
-/-- How far a request to build has got: answered, or a block still being filled, by Jaune or by the fast
-engine. -/
+/-- How far a request to build has got: answered, or a block still being filled. The fast engine's block
+is here as what it is. Another engine's is here only as what can be asked of it: how many transactions are
+still proposed, the stage after the next piece of work, and the stage with everything still proposed left
+out. So a program that never starts another engine's block has nothing of that engine linked into it;
+Jaune's is made into this by `Job.stage` below, and the image that builds for relays never calls that. -/
 inductive Stage where
   | done (response : Response) (notes : Array Note) (why : String)
-  | going (job : Job)
+  | going (rest : Nat) (step : Unit → Stage) (cut : Unit → Stage)
   | goingFast (job : FastJob)
+
+instance : Inhabited Stage := ⟨.done { status := 4 } #[] ""⟩
+
+/-- An engine other than the fast one, for a request that asks for it: given the request, the fork, the
+parent, the headers before it and the template, the stage the block begins at. -/
+abbrev Other := Request → Fork → Header → List Header → Block → Stage
+
+/-- No other engine. A request that asks for one is then not a request this program knows. -/
+def noOther : Other := fun _ _ _ _ _ => .done { status := 5 } #[] "this program builds with the fast engine only"
 
 /-- An answer that came out of the witness's own monad. -/
 def answered : M (Response × Array Note) → Stage
@@ -344,13 +356,13 @@ def openTemplate (r : Request) (fork : Fork) (parent : Header) (chain : BlockCha
 /-- Everything before the first transaction: the witness checked, the template checked against the parent,
 the two system calls that open a block, and the proposed transactions in the order they will be tried. -/
 def start (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) :
-    M Stage := do
+    M (Except Stage Job) := do
   let rules := fork.ruleSet
   let known ← materialise r.witness parent.stateRoot
   let chain : BlockChain :=
     { blocks := ancestors.map fun h => ⟨h, [], [], []⟩, state := known.state, chainId := r.witness.chainId }
   match openTemplate r fork parent chain template with
-  | .error refused => return refused
+  | .error refused => return .error refused
   | .ok (blank, ordered) =>
     let benv := initBenv fork chain blank
     let opened : Except TransitionError (Benv × BlockAccessListBuilder) := do
@@ -359,9 +371,9 @@ def start (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header
       let (stHistory, bal) ← historyStorageCall rules benvBeacon bal
       pure (benvBeacon.withState stHistory, bal)
     match opened with
-    | .error _ => return .done { status := 4 } #[] ""
+    | .error _ => return .error (.done { status := 4 } #[] "")
     | .ok (begun, bal) =>
-      return .going
+      return .ok
         { fork, known, blank, template, gasCap := min r.gasCap blank.gasLimit,
           paidBefore := (begun.state.bal benv.stat.coinbase).toNat,
           filling := { rest := ordered, benv := begun, bout := { BlockOutput.init with blockAccessListBuilder := bal } } }
@@ -501,8 +513,31 @@ def Job.finish (job : Job) : M (Response × Array Note) := do
     if !agrees.isOk then return ({ status := 4 }, notes)
     return ({ status := 0, built := some ⟨header, header.hash, job.filling.included.toList, value, out.requests⟩ }, notes)
 
-/-- Where a request to build starts: refused, or a block with nothing in it yet. -/
-def begin (r : Request) : Stage :=
+/-- A block being filled by Jaune, as a stage: the next proposed transaction, or, when none is left, the
+end of the block; and the same block with everything still proposed left out, each noted as such. -/
+partial def Job.stage (job : Job) : Stage :=
+  .going job.filling.rest.length
+    (fun _ =>
+      if job.filling.rest.isEmpty then answered job.finish
+      else match job.filling.step job.known job.gasCap with
+        | .ok filling => Job.stage { job with filling }
+        | .error _ => .done { status := 4 } #[] "")
+    (fun _ =>
+      let filling := job.filling
+      Job.stage { job with filling := { filling with
+        rest := [],
+        notes := filling.rest.foldl (fun notes c => notes.push ⟨c.place, false, "out of time"⟩) filling.notes } })
+
+/-- Jaune as the other engine. -/
+def byJaune : Other := fun r fork parent ancestors template =>
+  match start r fork parent ancestors template with
+  | .ok (.ok job) => job.stage
+  | .ok (.error refused) => refused
+  | .error shortfall => answered (.error shortfall)
+
+/-- Where a request to build starts: refused, or a block with nothing in it yet. One that does not ask for
+the fast engine is `other`'s to begin. -/
+def begin (r : Request) (other : Other) : Stage :=
   let only (response : Response) (why : String := "") : Stage := .done response #[] why
   match rlpToBlockE r.witness.block.toList with
   | .error _ => only { status := 5 } "the block does not decode"
@@ -524,28 +559,17 @@ def begin (r : Request) : Stage :=
         if !linked || parent.hash != template.header.parentHash then only { status := 5 } "the headers are not a chain to the parent"
         else if ancestors.length != min 255 template.header.number then only { status := 6 } "too few headers"
         else
-          if r.engine then startFast r fork parent ancestors template else
-          match start r fork parent ancestors template with
-          | .ok stage => stage
-          | .error shortfall => answered (.error shortfall)
+          if r.engine then startFast r fork parent ancestors template else other r fork parent ancestors template
 
 /-- One more piece of work: the next proposed transaction, or, when none is left, the end of the block. -/
 def Stage.step : Stage → Stage
   | .done response notes why => .done response notes why
-  | .going job =>
-    if job.filling.rest.isEmpty then answered job.finish
-    else match job.filling.step job.known job.gasCap with
-      | .ok filling => .going { job with filling }
-      | .error _ => .done { status := 4 } #[] ""
+  | .going _ step _ => step ()
   | .goingFast job => if job.rest.isEmpty then job.finish else .goingFast job.step
 
 /-- Everything still proposed is left out, each noted as such; the block ends with what is in it. -/
 def Stage.cut : Stage → Stage
-  | .going job =>
-    let filling := job.filling
-    .going { job with filling := { filling with
-      rest := [],
-      notes := filling.rest.foldl (fun notes c => notes.push ⟨c.place, false, "out of time"⟩) filling.notes } }
+  | .going _ _ cut => cut ()
   | .goingFast job =>
     .goingFast { job with
       rest := [], notes := job.rest.foldl (fun notes c => notes.push ⟨c.place, false, "out of time"⟩) job.notes }
@@ -553,14 +577,14 @@ def Stage.cut : Stage → Stage
 
 /-- Whether anything is still proposed that has not been tried. -/
 def Stage.filling : Stage → Bool
-  | .going job => !job.filling.rest.isEmpty
+  | .going rest _ _ => rest != 0
   | .goingFast job => !job.rest.isEmpty
   | .done .. => false
 
 /-- How many more steps reach an answer when none is cut: one for each transaction still proposed, and one
 to end the block. -/
 def Stage.left : Stage → Nat
-  | .going job => job.filling.rest.length + 1
+  | .going rest _ _ => rest + 1
   | .goingFast job => job.rest.length + 1
   | .done .. => 0
 
@@ -576,21 +600,24 @@ def Stage.finishWith {m : Type → Type} [Monad m] (over : m Bool) : Nat → Sta
 
 def Stage.answer : Stage → Response × Array Note × String
   | .done response notes why => (response, notes, why)
-  | .going _ | .goingFast _ => ({ status := 4 }, #[], "")
+  | .going .. | .goingFast _ => ({ status := 4 }, #[], "")
 
-/-- The answer to a request to build, when `over` is asked before each transaction whether to stop. -/
-def runWith {m : Type → Type} [Monad m] (over : m Bool) (r : Request) : m (Response × Array Note × String) := do
-  let stage := begin r
+/-- The answer to a request to build, when `over` is asked before each transaction whether to stop. Here and
+below, a request that does not ask for the fast engine is built by `other`: Jaune unless the caller says
+otherwise, and the machine that builds for relays says `noOther` (`Evm/Machine.lean`). -/
+def runWith {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (other : Other := byJaune) :
+    m (Response × Array Note × String) := do
+  let stage := begin r other
   return (← stage.finishWith over stage.left).answer
 
-def runWithNotes (r : Request) : Response × Array Note × String :=
-  Id.run (runWith (pure false) r)
+def runWithNotes (r : Request) (other : Other := byJaune) : Response × Array Note × String :=
+  Id.run (runWith (pure false) r other)
 
-def run (r : Request) : Response := (runWithNotes r).1
+def run (r : Request) (other : Other := byJaune) : Response := (runWithNotes r other).1
 
-def serve (input : ByteArray) : ByteArray :=
+def serve (input : ByteArray) (other : Other := byJaune) : ByteArray :=
   match (request input).run 0 with
-  | some (r, pos) => if pos = input.size then (run r).encode else ({ status := 5 } : Response).encode
+  | some (r, pos) => if pos = input.size then (run r other).encode else ({ status := 5 } : Response).encode
   | none => ({ status := 5 } : Response).encode
 
 end Evm.Build
@@ -604,3 +631,29 @@ def Evm.serve (input : ByteArray) : ByteArray :=
   else if input.extract 0 Evm.Engine.magic.size == Evm.Engine.magic then Evm.Engine.serve input
   else if input.extract 0 Evm.Stateless.magic.size == Evm.Stateless.magic then Evm.Stateless.serve input
   else Evm.Service.serve input
+
+/-- What the machine that builds for relays answers of these: a request to build by the fast engine, and a
+block with its witness to be judged by the fast engine. Anything else gets the answer a request to build
+gets when it is not one (status 5), a request to build by Jaune included. Nothing here calls Jaune's
+interpreter, so none of it is in that machine's image; `scripts/build-efi` refuses to make the image if it
+is. What is still Jaune's on this path is what both engines share: its types for headers, blocks and
+transactions, their decoding, the check of a header against its parent, and the recovery of a signer. -/
+def Evm.serveBuilder (input : ByteArray) : ByteArray :=
+  if input.extract 0 Evm.Build.magic.size == Evm.Build.magic
+      || input.extract 0 Evm.Build.magicFast.size == Evm.Build.magicFast then Evm.Build.serve input Evm.Build.noOther
+  else if input.extract 0 Evm.Engine.magic.size == Evm.Engine.magic then Evm.Engine.serve input
+  else ({ status := 5 } : Evm.Build.Response).encode
+
+/-- Which engines a machine has: what begins a block the fast engine was not asked for, and what answers
+the requests that are neither for a bid, a key, a relay, nor the chain's next block. -/
+structure Evm.Serving where
+  other : Evm.Build.Other
+  rest : ByteArray → ByteArray
+  /-- For the console, when the machine starts. -/
+  what : String
+
+/-- The fast engine alone. The other choice, every engine, is written where it is used (`EfiSpec.lean`)
+and not here: a value kept here would be made when this module starts, in every image, and would bring
+Jaune's interpreter into each of them. -/
+def Evm.Serving.builder : Evm.Serving :=
+  { other := Evm.Build.noOther, rest := Evm.serveBuilder, what := "builds and judges with the fast engine only" }

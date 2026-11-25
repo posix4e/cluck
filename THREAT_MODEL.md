@@ -208,6 +208,30 @@ whoever takes the bid: a flaw in the engine can make a block whose header claims
 give, which a relay's own check then refuses, at the builder's cost and nobody else's. `build-test` has
 Jaune's checker judge every block the engine builds in it.
 
+**The image that builds for relays has only the second way in** (since 2026-11-25). `evm-os`, and its
+twin that knows the stand-in, answer a request to build that begins `JBLF1` and a block to judge that
+begins `JWIF1`, besides what the machine itself answers (bids, keys, sealed transactions, the chain's
+next block, posts to relays). A request for Jaune to import a chain, to judge a block or to build one is
+answered 5, as if it were no request. Jaune's interpreter and its running of a transaction are not in
+that image: nothing the machine calls leads to them (`Evm.serveBuilder`, `Evm.Serving.builder`), the
+linker drops what nothing calls, and `scripts/build-efi` refuses to make the image if the linker's map
+names any of four of Jaune's functions that every way of running a transaction goes through. So "both
+paths are in the image" is now true of `evm-os-spec` alone, the image for the fixtures and for the page
+that shows a guest answering them, which opens connections only to the stand-in and has a measurement of
+its own. What this takes away: whoever feeds the machine could before choose, by five bytes, to have its
+key sign for a block built by code this project has not reviewed, and could reach all of Jaune's rules
+with bytes of their choosing. What it does not: the engine already built every block that was bid, and
+nothing more holds it than did; and nothing in the image compares it with Jaune any longer, which only
+the tests do, elsewhere. What of Jaune is still in the image, 0.76 MB of its 4.0 and reached on every
+request: its types for headers, blocks and transactions and their decoding from RLP; the check of a
+header against its parent; the recovery of a transaction's signer; the roots of a block's transactions
+and withdrawals; its precompiled contracts, all of them, since its table of them is linked whole though
+the engine runs its own for the three on bn254 (SHA-256, RIPEMD-160, BLAKE2, the two secp256 curves,
+modular exponentiation, BLS12-381, KZG); and the public half of the BLS used for bids. The guard is four
+names (the step of a message, the run of plain instructions, the end of a call, the running of a
+transaction): Jaune's code that got in by another road would show in `scripts/image-inventory`, which
+counts it, and not in the build.
+
 On that second way in, three precompiled contracts are this project's too: addition and multiplication on
 bn254 and the pairing check (`Fast/Bn254.lean`), which is what zero-knowledge verifiers on the chain call.
 A pairing check that said yes to a false proof would let a block that accepts the proof look valid only if

@@ -69,5 +69,12 @@ done < ".lake/build/bin/$name.rsp"
 "$prefix/bin/ld.lld" -pie --no-dynamic-linker -z text -z defs --gc-sections -T "$os/boot/efi/link.ld" \
   -Map="$objects/image.map" -o "$objects/image.elf" "${inputs[@]}" \
   --start-group "$objects/offered.a" "$libs/libLean.a" "$libs/libInit.a" "$libs/libStd.a" --end-group
+# The images that build for relays have the fast engine alone (Evm.serveBuilder). If Jaune's interpreter
+# has found its way into one, by a new call or by a value made when a module starts, the image is not made.
+if [[ "$name" != evm-os-spec ]] && grep -E -m 3 '[[:space:]]lp_jaune_Jaune_(MessageOp_step|PlainOp_runCore|processTransaction|HaltOp_run)$' "$objects/image.map"; then
+  echo "build-efi: Jaune's interpreter is linked into $name, which is to have the fast engine alone (see above)" >&2
+  rm -f "$out/BOOTX64.EFI"
+  exit 1
+fi
 python3 "$os/boot/efi/mkefi.py" "$objects/image.elf" "$out/BOOTX64.EFI"
 echo "$out/BOOTX64.EFI"

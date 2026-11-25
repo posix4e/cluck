@@ -166,12 +166,14 @@ try:
         relay = subprocess.Popen([os.path.join(here, "builder/standin-relay"), "--out", took_dir], stdout=subprocess.PIPE, text=True)
         servers.append(relay)
         relay.stdout.readline()
-        build = open(os.path.join(here, "fixtures/build/DelegateCallSpam-1.req"), "rb").read()
+        # Marked for the fast engine: these images have no other.
+        build = b"JBLF1" + open(os.path.join(here, "fixtures/build/DelegateCallSpam-1.req"), "rb").read()[5:]
         proposer = bytes(range(48))
         bid = b"JBID2" + struct.pack(">Q", 15700576) + proposer + bytes(4) + bytes(4) + build
-        def send(relays, seconds=None):
+        def send(relays, seconds=None, slot=15700576):
             """The answer to the bid, and what each relay said: (answered, status, text)."""
-            got = exchange(b"JSND1" + bytes([relays]) + struct.pack(">QI", seconds or int(time.time()), 3000) + bid, 600)
+            asked = b"JBID2" + struct.pack(">Q", slot) + bid[13:]
+            got = exchange(b"JSND1" + bytes([relays]) + struct.pack(">QI", seconds or int(time.time()), 3000) + asked, 600)
             size = struct.unpack(">I", got[:4])[0]
             answer, rest, said, at = got[4:4 + size], got[4 + size:], [], 1
             for _ in range(rest[0]):
@@ -216,7 +218,9 @@ try:
         answer, said = send(1, 1700000000)
         check("the same at a time before the roots were written: not built", answer[:1] == b"\x05" and said == [])
         relay.kill(); relay.wait()
-        answer, said = send(1)
+        # For the slot after: a block that pays no more than one a relay took for the same slot is not
+        # sent again (Evm/Machine.lean), and the first of these was taken.
+        answer, said = send(1, slot=15700577)
         check("the same with no relay listening: built, and the relay's silence reported",
               answer[:1] == b"\0" and len(said) == 1 and not said[0][0], said[0][2].decode(errors="replace") if said else "")
         stand_in()

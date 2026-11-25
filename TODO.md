@@ -1898,7 +1898,39 @@ times, and the block from the relay. Six stages:
     processor's TDX module; inline assembly, which is counted with the C file it is in.
     - Jaune's interpreter and its transaction rules are still in the image (`MessageOp.step`,
       `PlainOp.runCore`, `processTransaction`), though blocks are built with the engine written
-      here: what still calls them, and whether it can go, has not been looked at.
+      here: what still calls them, and whether it can go, has not been looked at. (Looked at
+      and gone, 2026-11-25: below.)
+  - **Jaune's interpreter is out of the image that builds for relays** (2026-11-25). What
+    still called it was the image answering, beside the builder's own requests, every kind the
+    fixtures use: a chain imported by Jaune, a block judged by Jaune, a block built by Jaune.
+    `evm-os` and `evm-os-shadow` now answer by the fast engine only (`Evm.serveBuilder`; a
+    block being built by another engine is in `Build.Stage` as three functions, so that a
+    program which starts none links none), and refuse the rest with status 5. A third image,
+    `evm-os-spec` (`EfiSpec.lean`), has every engine, for `run-fixtures --spec` and the
+    fixture page. `scripts/build-efi` will not make the first two if the linker's map names
+    Jaune's `MessageOp.step`, `PlainOp.runCore`, `HaltOp.run` or `processTransaction`.
+    - The image: 4,000,256 bytes where it was 4,898,304 (`c0f6d492…e4f8321a`; the stand-in's
+      twin `b385e741…c02c4514`). Counted 3,922,422: this package's Lean 1,383,958 (35.3%),
+      Lean's library 1,320,269 (33.7%), Jaune 761,501 (19.4%, from 1,505,013), the OS's Lean
+      365,488 (9.3%), C 29,514 (0.8%). What is left of Jaune: decoding of headers, blocks and
+      transactions from RLP, the check of a header, the recovery of a signer, the roots of
+      transactions and withdrawals, its table of precompiled contracts with the curves and
+      hashes under them (the largest part: about 0.25 MB), and the public half of BLS.
+    - Run on these images, in TDX on this machine: `lake build` and the hosted tests
+      (`evm-test`, `trie-test`, `stateless-test`, `build-test` 850 checks, `bls-test`,
+      `tls-test`), which still put every case to both engines; `run-fixtures tdx --limits
+      --key` (six requests by the fast engine with the answers Jaune gave, three for Jaune
+      refused, the limits, a signed bid); `run-fixtures tdx --spec` (the five chains, by
+      Jaune, as before); `check-secret-code tdx`; `run-ask tdx`; 25 slots against the stand-in
+      (192 rounds, 190 sent, all valid, the same at the stand-in and signed).
+    - `run-ask` had a case that was wrong before this and went unseen: the same bid sent again
+      with no relay listening is no longer sent at all, since a block that pays no more than
+      one a relay took for the slot is held back. The case now asks for the slot after.
+    - Not run: the `dev` images in the emulator; `demo/server.py` on `evm-os-spec`; Ethereum's
+      suites (the engine did not change). Running as this is written: 1,000 slots on the new
+      image (`/data/eth/shadow/gate1000k`). Not yet on Compute Engine, where the image before
+      this one is still the one bidding.
+    - Not done: the precompiled contracts and the decoders are still Jaune's.
   - Not done: a bid can still be answered after its slot
     has begun when the parent comes very late (one in 1,432 at the real relays); the builders
     that win go on to the slot's start or past it, and ours stops half a second short on purpose;

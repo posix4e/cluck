@@ -73,6 +73,13 @@ lean_exe «evm-os-shadow» where
   root := `EfiShadow
   moreLinkObjs := #[platformHosted, efiHosted, secretHosted]
 
+/-- The same machine with Jaune's engine in it as well, answering every kind of request: for the fixtures
+and the page that shows a guest answering them. Not the image that builds for relays. -/
+@[default_target]
+lean_exe «evm-os-spec» where
+  root := `EfiSpec
+  moreLinkObjs := #[platformHosted, efiHosted, secretHosted]
+
 /-- Turns one case of a blockchain-test fixture into a request and the response the fixture calls for.
 Runs on Lean's own runtime only: it reads JSON. -/
 @[default_target]

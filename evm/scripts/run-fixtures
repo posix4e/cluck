@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
 """Boots the service as an EFI guest, puts fixture requests to it over TCP, and checks each answer.
 
-    scripts/run-fixtures dev|tdx [--limits] [--key] [--from DIR] [name...]   (from evm/, after: scripts/build-efi dev|tdx)
+    scripts/run-fixtures dev|tdx [--spec] [--limits] [--key] [--from DIR] [name...]   (from evm/, after: scripts/build-efi dev|tdx)
 
 `dev` is an emulated processor and OVMF, and runs anywhere QEMU does. `tdx` is an Intel TDX trust domain,
-and needs what the OS's TDX.md says a host needs, with SILO_TDVF naming the firmware built there. With no
-names, every request in fixtures/ is sent. `--from DIR` takes the requests and the answers they must get
-from DIR instead (NAME.req, NAME.expected): blocks of mainnet with their witnesses are too large to keep
-here (witness/fetch makes them). The guest is started by the OS's scripts/run-efi and is ended when this is
-done. Exit status 0 only if every answer is byte for byte the one expected.
+and needs what the OS's TDX.md says a host needs, with SILO_TDVF naming the firmware built there. The
+guest is started by the OS's scripts/run-efi and is ended when this is done. Exit status 0 only if every
+answer is byte for byte the one expected.
+
+The guest is the image that builds for relays (`evm-os`), which has the fast engine alone. With no names
+it is sent what that engine answers: the requests to build of fixtures/build/ and the blocks to judge of
+fixtures/stateless/, each marked for the fast engine and not for Jaune, and each has to get the answer
+kept there, which is the one Jaune gave. Then one request of each kind that needs Jaune, as kept, which
+it has to refuse (one byte, 5, and 32 of zero).
+
+With `--spec` the guest is the image with every engine (`evm-os-spec`, scripts/build-efi dev|tdx
+evm-os-spec), and with no names every request in fixtures/ is sent as it is: chains imported whole by
+Jaune. `--from DIR` takes the requests and the answers they must get from DIR instead (NAME.req,
+NAME.expected), as they are, whichever image: blocks of mainnet with their witnesses are too large to keep
+here (witness/fetch makes them).
 
 `--limits` then tries what the guest must refuse: a frame longer than it accepts, and two clients that
 between them hold more of unfinished requests than it keeps. Each must be closed, and a fixture must still
@@ -42,6 +52,10 @@ import glob, os, re, shutil, signal, socket, struct, subprocess, sys, time
 if len(sys.argv) < 2 or sys.argv[1] not in ("dev", "tdx"):
     sys.exit(__doc__)
 mode, names = sys.argv[1], sys.argv[2:]
+spec = names[:1] == ["--spec"]
+if spec:
+    names = names[1:]
+image_name = "evm-os-spec" if spec else "evm-os"
 at = None
 if names[:1] == ["--at"] and len(names) > 1:
     at, names = names[1], names[2:]
@@ -63,23 +77,45 @@ if limits:
 keyed = names[:1] == ["--key"]
 if keyed:
     names = names[1:]
-if names[:1] == ["--from"] and len(names) > 1:
+given = names[:1] == ["--from"] and len(names) > 1
+if given:
     fixtures, names = os.path.abspath(names[1]), names[2:]
-if not names:
-    names = sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(fixtures, "*.req")))
-image = os.path.join(here, ".lake/build/efi", mode, "evm-os/BOOTX64.EFI")
+
+def kept(directory, name):
+    with open(os.path.join(directory, name + ".req"), "rb") as f:
+        request = f.read()
+    with open(os.path.join(directory, name + ".expected"), "rb") as f:
+        return request, f.read()
+
+# What is sent: a name for the line printed, the request, and the answer it must get.
+REFUSED = b"\x05" + bytes(32)
+if names or given or spec:
+    names = names or sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(fixtures, "*.req")))
+    cases = [(name, *kept(fixtures, name)) for name in names]
+else:
+    cases = []
+    for kind, mark in (("build", b"JBLF1"), ("stateless", b"JWIF1")):
+        directory = os.path.join(fixtures, kind)
+        for name in sorted(os.path.basename(p)[:-4] for p in glob.glob(os.path.join(directory, "*.req"))):
+            request, expected = kept(directory, name)
+            cases.append((f"{kind}/{name}, by the fast engine", mark + request[5:], expected))
+    for directory, name in ((fixtures, "highGasUsage"), (os.path.join(fixtures, "stateless"), "highGasUsage-11"),
+                            (os.path.join(fixtures, "build"), "highGasUsage-11")):
+        cases.append((f"{os.path.relpath(os.path.join(directory, name), fixtures)} as kept, for Jaune: to be refused",
+                      kept(directory, name)[0], REFUSED))
+image = os.path.join(here, ".lake/build/efi", mode, image_name, "BOOTX64.EFI")
 if not at and not os.path.exists(image):
-    sys.exit(f"run-fixtures: no {image} (run: scripts/build-efi {mode})")
+    sys.exit(f"run-fixtures: no {image} (run: scripts/build-efi {mode}{' evm-os-spec' if spec else ''})")
 port = int(os.environ.get("SILO_HOST_PORT", "5015"))
-log = os.path.join(here, ".lake/build/efi", mode, "evm-os/serial.log")
+log = os.path.join(here, ".lake/build/efi", mode, image_name, "serial.log")
 os.makedirs(os.path.dirname(log), exist_ok=True)
 guest = None
 if not at:
     # The OS's launcher looks for an image under its own build directory, by name.
-    slot = os.path.join(system, ".lake/build/efi", mode, "evm-os")
+    slot = os.path.join(system, ".lake/build/efi", mode, image_name)
     os.makedirs(slot, exist_ok=True)
     shutil.copyfile(image, os.path.join(slot, "BOOTX64.EFI"))
-    guest = subprocess.Popen([os.path.join(system, "scripts/run-efi"), mode, "evm-os"], cwd=system,
+    guest = subprocess.Popen([os.path.join(system, "scripts/run-efi"), mode, image_name], cwd=system,
                              env=dict(os.environ, SILO_HOST_PORT=str(port), **({"SILO_NET_TAP": "tap0"} if tap else {})),
                              stdout=open(log, "wb"), stderr=subprocess.STDOUT, start_new_session=True)
 where = (at, 5005) if at else ("10.0.2.15", 5005) if tap else ("127.0.0.1", port)
@@ -123,11 +159,7 @@ try:
             sys.exit(2)
         time.sleep(0.25)
     print(f"the guest at {at}" if at else f"guest up after {time.time() - started:.1f} s")
-    for name in names:
-        with open(os.path.join(fixtures, name + ".req"), "rb") as f:
-            request = f.read()
-        with open(os.path.join(fixtures, name + ".expected"), "rb") as f:
-            expected = f.read()
+    for name, request, expected in cases:
         sent = time.time()
         try:
             got = exchange(request, 3600)
@@ -176,10 +208,7 @@ try:
         failed += not ok
         print(f"a second client taking what is held past the limit: {'closed' if ok else 'NOT CLOSED'}")
         first.close()
-        with open(os.path.join(here, "fixtures/highGasUsage.req"), "rb") as f:
-            request = f.read()
-        with open(os.path.join(here, "fixtures/highGasUsage.expected"), "rb") as f:
-            expected = f.read()
+        _, request, expected = cases[0]
         ok = exchange(request, 600) == struct.pack(">I", len(expected)) + expected
         failed += not ok
         print(f"a fixture after that: {'the expected answer' if ok else 'WRONG'}")
@@ -191,11 +220,13 @@ try:
         print(f"the builder's key, asked for twice: {key.hex() if ok else 'NOT ONE KEY'}")
         with open(os.path.join(here, "fixtures/build/DelegateCallSpam-1.req"), "rb") as f:
             build = f.read()
+        if not spec:
+            build = b"JBLF1" + build[5:]      # this image builds with the fast engine alone
         asked = b"JBID2" + struct.pack(">Q", 15700576) + bytes(range(48)) + bytes(4) + bytes(4) + build
         sent = time.time()
         reply = exchange(asked, 600)[4:]
         took = time.time() - sent
-        work = os.path.join(here, ".lake/build/efi", mode, "evm-os")
+        work = os.path.join(here, ".lake/build/efi", mode, image_name)
         with open(os.path.join(work, "bid.req"), "wb") as f:
             f.write(asked)
         with open(os.path.join(work, "bid.reply"), "wb") as f:

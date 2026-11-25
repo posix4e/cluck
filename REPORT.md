@@ -54,15 +54,15 @@ The image as it runs on Google Cloud, counted from the linker's map and the file
 
 | Part | Bytes | Share | Whose |
 |---|---:|---:|---|
-| The builder: engine, trie, TLS, bids, relays | 1,388,281 | 35.4% | this project's Lean |
-| Lean's own library | 1,320,290 | 33.6% | Lean's |
-| What is left of Jaune, an executable specification of the EVM in Lean | 761,501 | 19.4% | a third party's ([skbaek/jaune][jaune]), in a fork with changes made here |
+| The builder: engine, trie, TLS, bids, relays | 1,397,491 | 35.5% | this project's Lean |
+| Lean's own library | 1,320,301 | 33.5% | Lean's |
+| What is left of Jaune, an executable specification of the EVM in Lean | 761,501 | 19.3% | a third party's ([skbaek/jaune][jaune]), in a fork with changes made here |
 | The OS: card drivers, Ethernet to TCP, DNS | 365,488 | 9.3% | this project's Lean |
-| Start-up and constants of compiled modules, relocations, and 1,093 bytes of two libraries (batteries, mathlib) | 61,741 | 1.6% | the compiler's, the linker's, those libraries' |
+| Start-up and constants of compiled modules, relocations, and 1,093 bytes of two libraries (batteries, mathlib) | 61,793 | 1.6% | the compiler's, the linker's, those libraries' |
 | C | 29,622 | 0.8% | 2,875 lines printed at build time from programs kept as data in Lean (`Mini/`), 1,273 by hand |
-| Counted | 3,926,923 | | shares are of this; the file is 4,004,864 bytes, the rest its headers, the linker's own tables and padding |
+| Counted | 3,936,196 | | shares are of this; the file is 4,014,080 bytes, the rest its headers, the linker's own tables and padding |
 
-About 15,000 lines of Lean written here are in it (66 modules, 14,660 lines with their comments): the
+About 15,000 lines of Lean written here are in it (66 modules, 14,776 lines with their comments): the
 OS's network and drivers, the builder, the execution engine, TLS and its cryptography. The C is the
 allocator and reference counting that compiled Lean stands on, the entry from firmware, the primitives
 the drivers call to reach a device's registers and memory, and the TDX calls for a report and a quote.
@@ -179,8 +179,10 @@ Google Cloud, or by the code now running, has been proposed.
 **On Google Cloud** (`c3-standard-4` with TDX, us-central1), fed over the internet from a node 12 ms
 away, bidding at four relays with nothing paid for a win:
 
-- It has bid since 2026-11-24 18:30 UTC, and on the image described above since 2026-11-25 12:47. These
-  are the first hours, not a long record.
+- It has bid since 2026-11-24 18:30 UTC, and on the image described above since 2026-11-25 17:09. These
+  are the first hours, not a long record, and the numbers below are of the images before that one. It
+  differs from the last of them in one thing, a limit on the work one transaction may cost (under what
+  is not done).
 - **All of it, to 15:04 UTC on the 25th**: 6,167 slots went by and a bid of ours was sent to a relay in
   5,973 of them, 96.9%. Of the 194 without: in 94 no relay held a registration from the slot's proposer,
   so there was nobody to send to; 71 were three changes of image, 23 or 24 slots each; seven were the
@@ -208,8 +210,8 @@ away, bidding at four relays with nothing paid for a win:
   stopped at 15:04, and was started again at 15:07 with a rule that leaves such a relay alone for ten
   minutes and longer and goes on with the others. (Two more answers of 500 and 520 came from other
   relays, once each.)
-- **Two hours on one image looked at closely** (the one before that now running; from 04:28 UTC on the
-  25th, 600 slots): 3,172 blocks built and 3,102 sent. Of the 70 not sent, 42 were for proposers no
+- **Two hours on one image looked at closely** (the third of the five there have been; from 04:28 UTC on
+  the 25th, 600 slots): 3,172 blocks built and 3,102 sent. Of the 70 not sent, 42 were for proposers no
   relay had a registration from, 26 paid no more than one already sent for the slot, and two were too
   late. Of 9,934 answers 7,024 were 200, 2,907 were 202 and three were none; none was a refusal.
 - **Timing** in those two hours: two of the 3,102 bids had their round end after the slot began, by 0.6
@@ -234,9 +236,11 @@ away, bidding at four relays with nothing paid for a win:
   while the host was making the quote. Why the host does that is not known here. A Linux guest, which
   does not run the firmware's timer, got 350 quotes of
   350. That image stopped the timer for the call: 818 requests on Google's machines (768 on a test
-  machine, 50 on the running one) and no reset. The one now running stops it once, when it starts:
-  450 requests (400 on a test machine, 50 on the running one) and no reset. The feeder, which asked
-  every hour, now asks once for each start.
+  machine, 50 on the running one) and no reset. The two images since stop it once, when they start:
+  505 requests (400 on a test machine, 105 on the running ones) and no reset. Once in those, the
+  connection for the next request was not made in the ten seconds allowed, with the guest still up
+  and under the same key; that is not explained. The feeder, which asked every hour, now asks once
+  for each start.
 - **No proposer took one of its blocks**, and none was expected to.
 - The machine costs about 23 cents an hour.
 
@@ -251,15 +255,26 @@ relays and their certificates' roots.
   slot, 0.75 s apart; 0.35 s of the guest's work for each.
 - 1,000 slots on the code after it (the firmware's timer stopped for good): 998 with a block sent, 6,627
   blocks, all valid. The two slots without were in the three minutes of a full pool, below.
-- 1,000 slots on the code now running on Google Cloud (it orders a full pool faster), with the feeder's
-  limit on what a round carries: 999 with a block sent, the one without being the first, which the run
-  joined 1.3 s before it. 7,189 blocks built and 7,039 sent, all valid, none late; eight rounds a slot
-  at the median, 0.33 s of the guest's work for each. The feeder had as many transactions as it will
-  propose (400) in twelve of those slots, and every one had a block sent.
-- What "1,000 slots" means in all of these: slots this was asked to build for. The feeder asks once
-  for each new block of the chain, for the slot after it. In the last run 1,003 slots went by; the
-  three not counted followed a slot whose proposer proposed nothing, and nothing was built for them.
-- Before those three, on the two images before them: 999 slots each (each run joined its first slot too
+- 1,000 slots on the code that ran on Google Cloud from 12:47 to 17:05 on the 25th (it orders a full
+  pool faster), with the feeder's limit on what a round carries: 999 with a block sent, the one without
+  being the first, which the run joined 1.3 s before it. 7,189 blocks built and 7,039 sent, all valid,
+  none late; eight rounds a slot at the median, 0.33 s of the guest's work for each. The feeder had as
+  many transactions as it will propose (400) in twelve of those slots, and every one had a block sent.
+- On the code now running on Google Cloud, with the feeder leaving no transaction out for being slow, so
+  that the guest's own limit was what was tried: 987 slots, for which the feeder asked 1,000 times
+  (thirteen twice: it took a slot for empty after four seconds then, and the block came later). 8,271
+  blocks built and 8,133 sent, all valid, none late; nine rounds a slot. The guest's longest round was
+  1.38 s of 8,296, where a round with a slow transaction in it had taken as much as nine. The pool was
+  full far more often than in any run before: 300 or more pending in 116 of the 1,000 and all 400 in 67.
+  Two slots had no block that could be used, both for the feeder's time and not the guest's: once a
+  proof was missing after 4.8 s of gathering and 0.3 s were left to mend it, and once the node had the
+  new head nine seconds into its slot. How many transactions the guest's limit left out is not counted;
+  the guest does not say.
+- What "1,000 slots" means in the runs before that one: slots this was asked to build for. The feeder
+  asked once for each new block of the chain, for the slot after it. In the run on the code of 12:47,
+  1,003 slots went by; the three not counted followed a slot whose proposer proposed nothing, and
+  nothing was built for them.
+- Before those, on the two images before them: 999 slots each (each run joined its first slot too
   late), 7,017 and 6,415 blocks, all valid, none late.
 - Three runs of 1,000 slots on earlier images: two with a block for every slot, one with 998.
 
@@ -337,21 +352,28 @@ Where this is thinner than it looks:
   inside; how much has not been measured.
 - **It is not fast.** One core, one block at a time, about a second a round, and it stops 0.7 s short
   of the slot. Builders that win bid until the slot begins.
-- **A full pool, or one transaction, can keep it from bidding.** For three minutes on 2026-11-25 the
-  feeder had 400 transactions to propose, which is the most it takes from its node's pool; rounds took 6
-  to 12 s where they take one, and on Google Cloud five slots in a row went by with nothing sent. One
-  call to the point evaluation precompile cost the guest 3 s: that arithmetic, and BLS12-381's, is still
-  the third-party library's on numbers of any size, and the guest looks at its clock between
-  transactions and not inside one. The feeder now leaves such transactions out and gives a round no more
-  than fits its time. The image now running puts a full pool's transactions in order less wastefully: of
-  four requests kept from those minutes, three were built in 55% to 70% of the time the image before
-  took, and the fourth, the one with the point evaluation, in 86%. The pool filled again an hour and a
-  half later and three times after: with the feeder's change every such slot had a bid, on Google Cloud
-  (29 slots with 300 or more pending) and here (40), though in a third of the fullest only one bid,
-  ready five seconds before the slot. (The feeder judged a second round by what the first had cost. It
-  no longer does; in 40 slots here since, three of them full, every slot's last block was ready within
-  1.5 s of the slot.) Transactions that call those precompiles are simply not built in, and one made to
-  reach them only inside a block would still cost a slot.
+- **A full pool, or one transaction, has kept it from bidding, and may again.** For three minutes on
+  2026-11-25 the feeder had 400 transactions to propose, which is the most it takes from its node's
+  pool; rounds took 6 to 12 s where they take one, and on Google Cloud five slots in a row went by with
+  nothing sent. One call to the point evaluation precompile cost the guest 3 s: that arithmetic, and
+  BLS12-381's, is still the third-party library's on numbers of any size, and the guest looked at its
+  clock between transactions and not inside one. The feeder now leaves such transactions out and gives a
+  round no more than fits its time. The image of 12:47 that day puts a full pool's transactions in order
+  less wastefully: of four requests kept from those minutes, three were built in 55% to 70% of the time
+  the image before took, and the fourth, the one with the point evaluation, in 86%. The pool filled
+  again an hour and a half later and three times after: with the feeder's change every such slot had a
+  bid, on Google Cloud (29 slots with 300 or more pending) and here (40), though in a third of the
+  fullest only one bid, ready five seconds before the slot. (The feeder judged a second round by what
+  the first had cost. It no longer does; in 40 slots here since, three of them full, every slot's last
+  block was ready within 1.5 s of the slot.) The image now running has a limit of its own, so that this
+  no longer rests on the feeder: a table says what each precompiled contract costs in time for its
+  input, from measurements on the guest's runtime, and a transaction in a block being built gets a
+  quarter of a second of it; a call there is none left for fails without being run and the transaction
+  is left out. With the feeder's filter off, the guest's longest round in 8,296 was 1.38 s (above). What
+  that leaves: the table is an estimate, and for four BLS12-381 contracts a guess above the ones
+  measured; work outside precompiled contracts is bounded by gas alone, which was not measured against
+  time; a transaction left out costs its quarter second again every round, since the feeder is not told;
+  and transactions that need those contracts for longer than that are still not built in at all.
 - **After a slot with no block it has bid once.** The feeder asked for a block only when the chain had a
   new one, so when a proposer proposed nothing this builder sat the next slot out: three slots in a
   thousand in the last run here, and the same in every number above. Since 12:28 UTC on 2026-11-25 the

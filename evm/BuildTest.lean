@@ -1,4 +1,5 @@
 import Evm
+import Evm.Seal
 
 /-! Tests of `Evm.Build` against `Evm.Stateless`, which checks blocks, and against blocks that exist.
 
@@ -189,8 +190,24 @@ def real (engine : Bool) (name : String) (bytes : ByteArray) (step : Nat) (tally
     {smaller} built a different block, each one the checker accepts"
   pure tally
 
+/-- How long a sealed transaction is kept (`Evm/Seal.lean`): to its last slot, and never when that slot is
+more than an hour on from the slot a block is asked for. -/
+def sealedFor (tally : Tally) : IO Tally := do
+  let kept (last : Nat) : Evm.Seal.Kept := { last, wire := ByteArray.mk #[2, 0] }
+  let pool : Evm.Seal.Pool := { kept := #[kept 99, kept 100, kept 250, kept 400, kept 401, kept 100000] }
+  let (after, tried) := pool.forSlot 100
+  let mut tally := tally
+  tally ← tally.expect "a sealed transaction is tried up to its last slot and not past it"
+    ((kept 100).good 100 && (kept 100).good 99 && !(kept 100).good 101)
+  tally ← tally.expect "one whose last slot is an hour on is tried, and one a slot further is not"
+    ((kept 400).good 100 && !(kept 401).good 100 && (kept 401).good 101)
+  tally ← tally.expect "a pool asked for a slot keeps those and drops the rest"
+    (after.kept.map (·.last) == #[100, 250, 400] && tried.size == 3)
+  return tally
+
 def main (args : List String) : IO UInt32 := do
   let mut tally : Tally := {}
+  tally ← sealedFor tally
   -- Every case is put to Jaune's builder and then to the fast engine's.
   for engine in [false, true] do
     for name in ["highGasUsage-11", "wallet2outOf3txsRevokeAndConfirmAgain-8", "DelegateCallSpam-1"] do

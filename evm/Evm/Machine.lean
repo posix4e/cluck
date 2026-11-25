@@ -553,12 +553,13 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) (since
   let refused := ({ status := 5 } : Evm.Build.Response).encode
   let some r := Send.request? request | finish refused #[] "a request that cannot be read"
   if r.seconds < Relays.earliest then return ← finish refused #[] "a time before this image's roots were written down"
-  -- The sealed transactions still good for this slot; those whose time is up are dropped here. Which of
+  -- The sealed transactions still good for this slot; those whose time is up, or whose last slot is
+  -- further on than a sender may name, are dropped here. Which of
   -- them are tried depends on the block built on: those that brought proofs only on the block the
   -- proofs have been kept good at (`Follow.extra`).
   let slot := Evm.Bid.slotOf r.bid
   let (pool, chain) ← modifyGet fun s =>
-    let pool : Seal.Pool := { kept := s.pool.kept.filter (·.last ≥ slot) }
+    let pool : Seal.Pool := { kept := s.pool.kept.filter (·.good slot) }
     ((pool, s.chain), { s with pool })
   let built ← buildWith r.bid (Follow.extra pool chain slot) since
   let now := (← Efi.millis).toNat

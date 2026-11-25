@@ -40,7 +40,6 @@ typedef struct {
 typedef struct Timer {
     void *register_handler;
     Status (EFIAPI *set_period)(struct Timer *, uint64_t);
-    Status (EFIAPI *get_period)(struct Timer *, uint64_t *);
 } Timer;
 
 typedef struct {

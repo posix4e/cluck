@@ -939,11 +939,17 @@ by the guest itself.
       or the key changes.
     - Seen once in those 768 and not explained: an answer of 8,005 bytes that had not arrived
       after 60 s, the guest having made the quote and gone on to answer what came next.
-    - Not done: stopping the firmware's clock for good when the image starts, which would
-      also keep the firmware's handler from running a hundred times a second under the
-      program; that touches every run and wants the long tests again. `docs/live` is still
-      written by hand after a start. Google logs every quote a guest asks for in the project's
-      own log (`tdxLaunchAttestationReportEvent`), which is where the times above are from.
+    - **The clock is now stopped once, when the image starts, and stays stopped** (2026-11-25,
+      `stop_clock`; not yet the image on Compute Engine, which stops it around the call). That
+      also keeps the firmware's handler from running a hundred times a second under the
+      program. Nothing was found to want it: the OS's `scripts/test-efi tdx`, the hosted
+      tests, `run-fixtures tdx --limits --key --quotes 100`, `--spec`, `check-secret-code`,
+      `run-ask`, all in TDX here; and on a trust domain on Compute Engine the fixtures, the
+      key and a bid, and 400 quotes one after another under one key. 1,000 slots on it here
+      are running as this is written (`/data/eth/shadow/gate1000l`).
+    - Not done: `docs/live` is still written by hand after a start. Google logs every quote a
+      guest asks for in the project's own log (`tdxLaunchAttestationReportEvent`), which is
+      where the times above are from.
   - **A door for people who are not the feeder** (`evm/builder/door`, 2026-11-25): written and
     tried, running nowhere yet. It listens for HTTP and passes on to the guest's port the
     guest's two keys asked for with a report and quoted (`/key` the sealing key, `/builder`
@@ -969,10 +975,13 @@ by the guest itself.
       (`verify/vectors/door/`) and refuses twelve wrong ones; run against a door in front of
       a guest on Compute Engine it had a sealed message kept by the guest, and one sealed to
       another key answered "does not open". Not looked at in a browser yet.
+    - **A sealed transaction is kept an hour at most** (2026-11-25, `Seal.farthest`; in the
+      same image as the clock, not yet on Compute Engine): one whose last slot is more than
+      300 on from the slot a block is asked for is dropped when the block is asked for, as one
+      whose time is up is. Until this a transaction that could never go in held one of the 64
+      places for as long as its sender had written. Three checks in `build-test`.
     - Not done: where the door runs and under what name, which needs HTTPS in front for a
-      page to use it and is to be decided; a limit in the guest on how far ahead a sealed
-      transaction's last slot may be (it keeps one as long as its sender says); the button
-      that adds a payment to the proposer.
+      page to use it and is to be decided; the button that adds a payment to the proposer.
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about nine dollars by 2026-11-25 04:30 UTC (of the
     500 a month agreed); the builder's machine is 23 cents an hour. A subnet (`silo-10-0-2`), a

@@ -167,6 +167,7 @@ lean_exe «stateless-test» where
 @[default_target]
 lean_exe «build-test» where
   root := `BuildTest
+  moreLinkObjs := #[secretHosted]
 
 /-- The signing key's arithmetic against `Nat`, and its signatures against `JauneConsensus`'s. -/
 @[default_target]

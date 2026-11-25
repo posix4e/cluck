@@ -106,16 +106,19 @@ the way:
   what is in the run: Lean wrote the request there and reads the answer (`Kernel/Quote.lean`).
   What is new for the host: nothing it could not do before, since the arena is memory it can
   already read and write at will; it is told which part to write an answer in.
-  Since 2026-11-25 it stops the firmware's clock for the length of that call and sets it going
-  again after, through the firmware's own service for it (the timer protocol, looked up each
-  time). The firmware keeps a timer interrupt going every 10 ms for as long as the image runs,
-  and on Compute Engine, where the host makes the quote before the call returns, about one call
-  in ten with that interrupt due meanwhile ended the trust domain and started it afresh, with
-  new keys (`TODO.md` has the trials; why the host does that is not known here). What the
-  stopping costs: one more service of the firmware's is called, twice a quote, on the
-  firmware's word that it does what its name says; and between the two the firmware's timed
-  events do not run, which nothing in the image waits on. A host that never returns from the
-  call leaves the machine standing with its clock stopped, which a host can do to it anyway.
+- `stop_clock` (`boot/efi/platform.c`, 2026-11-25) stops the firmware's clock when the image
+  starts, through the firmware's own service for it (the timer protocol), and never sets it
+  going again. Firmware keeps a timer interrupt going every 10 ms for as long as an image runs
+  under it, and its handler then runs, on the image's stack and between any two of its
+  instructions, whatever firmware has waiting on time. Nothing in the image waits on it: time is
+  the processor's counter, and the one sleep asked of firmware is a counted delay. With it
+  stopped, firmware's code runs when the image calls it or does something only firmware can
+  finish (a device register, the console), and not otherwise. There was a second reason, which
+  is how it was found: on Compute Engine, where the host makes a quote before the call for one
+  returns, about one call in ten with that interrupt due meanwhile ended the trust domain and
+  started it afresh with new keys (`TODO.md` has the trials; why the host does that is not known
+  here). What it leans on: the firmware's word that the service does what its name says. Where
+  firmware has none, or refuses, the console says so and the image runs as it would have.
 - `silo_hw_store32` writes four bytes of the memory shared with a device in one go, checked as the
   other stores are; the driver's copies to and from that memory are made by `rep movsb` in
   `boot/efi/hw.c` and not by the runtime's `memcpy`. Neither reads anything.
@@ -485,7 +488,8 @@ report to be made a quote, and a sealed transaction. Everything else it refuses 
 runs somewhere, that machine's address is let in to the port beside the feeder's, and whoever
 holds that machine can then do what the feeder can. What the door adds for a stranger: they can
 have the guest ask its host for a quote (a few a minute, each a tenth of a second in which the
-guest does nothing else), and they can fill the 64 places the guest has for sealed transactions,
+guest does nothing else), and they can fill the 64 places the guest has for sealed transactions
+(each for an hour at most, since 2026-11-25: one that names a last slot further on is dropped),
 or the door's own allowance for a minute, and so keep others' out. What a sender shows the door:
 their address, the time, and how long the sealed message is. The door can drop a message or
 hold it back until the slot sealed inside has passed; it cannot open one. The key it serves is

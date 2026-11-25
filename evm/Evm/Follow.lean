@@ -147,7 +147,7 @@ def handIn (key : Seal.Key) (pool : Seal.Pool) (chain : Chain) (input : ByteArra
 those without proofs, whose lacks are said; and, only when `parent` is the newest block known here, those
 with proofs, with the proofs. -/
 def extra (pool : Seal.Pool) (chain : Chain) (slot : Nat) (parent : ByteArray) : Bid.Extra :=
-  let good := pool.kept.filter (·.last ≥ slot)
+  let good := pool.kept.filter (·.good slot)
   let bare := good.filter (·.proofs.isNone)
   let atHead := chain.head?.any fun head => Trie.wordBytes head.hash == parent
   let proven := if atHead then good.filter (·.proofs.isSome) else #[]

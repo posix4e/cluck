@@ -41,6 +41,11 @@ The slot is the sender's protection against a carrier that keeps a transaction b
 in when that suits the carrier: after the slot named it will not go into anything. Before it, when it
 goes in is still up to whoever asks for blocks.
 
+A sender may name a slot up to an hour on (`farthest`, 300 slots) and no further: one that names a later
+slot is dropped, like one whose time is up, when a block is next asked for. The machine has no clock of
+its own for the chain; the slot it counts from is the one a block is asked for. Without this a
+transaction that will never go in could hold one of the few places for as long as its sender liked.
+
 ## With proofs
 
     "JSEA2"
@@ -107,6 +112,13 @@ structure Kept where
   wire : ByteArray
   /-- The proofs its sender brought, if any, kept good at the newest block this machine has checked. -/
   proofs : Option Proofs := none
+
+/-- How many slots on from the one a block is asked for a transaction's last slot may be: an hour. -/
+def farthest : Nat := 300
+
+/-- Whether a transaction is still to be tried when a block is asked for `slot`: its last slot has not
+passed, and is not further on than a sender may name. -/
+def Kept.good (k : Kept) (slot : Nat) : Bool := k.last ≥ slot && k.last ≤ slot + farthest
 
 /-- The transactions kept. -/
 structure Pool where
@@ -203,7 +215,7 @@ def openWithProofs (key : Key) (input : ByteArray) : Except UInt8 (Kept × ByteA
 
 /-- The transactions to try in a block for `slot`, and the pool without those whose time is up. -/
 def Pool.forSlot (p : Pool) (slot : Nat) : Pool × Array ByteArray :=
-  let kept := p.kept.filter (·.last ≥ slot)
+  let kept := p.kept.filter (·.good slot)
   ({ kept }, kept.map (·.wire))
 
 /-- The answer to either request here, and the pool after it. -/

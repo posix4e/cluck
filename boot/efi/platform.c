@@ -231,13 +231,8 @@ lean_obj_res silo_efi_report(b_lean_obj_arg challenge) {
 // (TDG.VP.INFO: the width of a guest address, whose top bit that is). What comes back is the host's
 // word on whether it took the request: 0 when it did.
 //
-// The firmware's clock is stopped for the length of the call and set going again after it. Firmware
-// keeps a timer interrupt going for as long as its boot services are there (every 10 ms on those seen),
-// which nothing here needs. A host may serve this call before it returns, as Compute Engine's does,
-// in some 40 ms; and there, with that interrupt falling due while the processor was away, about one
-// call in ten never returned and the trust domain was started afresh, with nothing said (TODO.md has
-// the trials). With the clock stopped, none in 300. Whether the clock is there to stop is the
-// firmware's to say; where it is not, the call is made as it was.
+// The call is made with the firmware's clock stopped, as it has been since the image started
+// (`stop_clock`, below, which says why that matters here).
 extern uint8_t *silo_hw_shared(uint64_t address, size_t size);
 uint64_t silo_efi_quote_ask(uint64_t address, uint64_t size) {
 #if REQUIRE_TDX
@@ -249,12 +244,6 @@ uint64_t silo_efi_quote_ask(uint64_t address, uint64_t size) {
                       : : "rdx", "r8", "r9", "r10", "r11", "cc", "memory");
     width &= 63;
     if (leaf != 0 || width < 32 || width > 52) return ~(uint64_t)0;
-    static const Guid timer_guid = {0x26baccb3, 0x6f42, 0x11d4, {0xbc, 0xe7, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81}};
-    Timer *timer = NULL;
-    uint64_t period = 0;
-    if (system_table->boot->locate_protocol(&timer_guid, NULL, (void **)&timer) != 0 || !timer ||
-        timer->get_period(timer, &period) != 0 || period == 0 || timer->set_period(timer, 0) != 0)
-        timer = NULL;
     register uint64_t said __asm__("r10") = 0;                 // a call the specification defines
     register uint64_t which __asm__("r11") = 0x10002;          // GetQuote
     register uint64_t where __asm__("r12") = place | ((uint64_t)1 << (width - 1));
@@ -263,13 +252,30 @@ uint64_t silo_efi_quote_ask(uint64_t address, uint64_t size) {
     __asm__ volatile (".byte 0x66,0x0f,0x01,0xcc"
                       : "+a"(call), "+c"(shown), "+r"(said), "+r"(which), "+r"(where), "+r"(bytes_)
                       : : "cc", "memory");
-    uint64_t result = call != 0 ? ~(uint64_t)0 : said;
-    if (timer) timer->set_period(timer, period);
-    return result;
+    return call != 0 ? ~(uint64_t)0 : said;
 #else
     (void)address; (void)size;
     return ~(uint64_t)0;
 #endif
+}
+
+// Firmware keeps a timer interrupt going for as long as its boot services are there (every 10 ms on
+// those seen), and its handler runs, under whatever the image is doing, anything firmware has waiting
+// on time. Nothing here waits on it: time is read from the processor's counter, and the one sleep asked
+// of firmware (`stall`) is a counted delay. So it is stopped when the image starts, and stays stopped.
+//
+// It is not only tidiness. On Compute Engine the host makes a quote before the call for one returns
+// (`silo_efi_quote_ask`), in some 40 ms, and with this interrupt falling due meanwhile about one such
+// call in ten never returned: the trust domain was started afresh, with new keys (TODO.md has the
+// trials). Where firmware has no such clock to stop, or will not stop it, that is said and the image
+// goes on as it would have.
+static void stop_clock(void) {
+    static const Guid timer_guid = {0x26baccb3, 0x6f42, 0x11d4, {0xbc, 0xe7, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81}};
+    Timer *timer = NULL;
+    if (system_table->boot->locate_protocol(&timer_guid, NULL, (void **)&timer) == 0 && timer &&
+        timer->set_period(timer, 0) == 0)
+        return;
+    rt_print("silo: the firmware's clock could not be stopped\n");
 }
 
 extern int main(int, char **);
@@ -286,6 +292,7 @@ Status EFIAPI efi_main(Handle image, SystemTable *table) {
     rt_print("silo: development EFI guest\n");
 #endif
     if (table->boot->watchdog(0, 0, 0, NULL) != 0) return EFI_ERROR_CODE(7);
+    stop_clock();
     // Allocate private loader data for the runtime. Compiled Init alone
     // exceeds 32 MiB during module initialization.
     uint64_t heap_address = 0;

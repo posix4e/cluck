@@ -361,7 +361,7 @@ Where this is thinner than it looks:
   blocks for the slot after, and all four relays answered 200 to the first two. One slot is not a rate.
   And a block that comes late looks the same as none until it comes. The wait was four seconds at first,
   and blocks are the head at the feeder's node later than that once in 29, an epoch's first block nearly
-  always: thirteen bids on the old parent went out in three hours and were refused (above). The wait is
+  always: nine bids on the old parent drew the thirteen refusals above in three hours. The wait is
   now seven seconds, and the feeder looks once more for a late block before it asks the guest. About one
   head in 370 is later than that, and for those a bid on the old parent can still go out, which a relay
   that has the late block refuses.

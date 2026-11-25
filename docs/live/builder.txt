@@ -1,4 +1,4 @@
-The builder's guest on Google Compute Engine, as it has run since 2026-11-24 19:58 UTC
+The builder's guest on Google Compute Engine, as it has run since 2026-11-25 01:59 UTC
 (c3-standard-4 with TDX, us-central1). A guest draws its key when it starts, so these are of this
 start and no other; when the guest is started again these files are written again (scripts/gce-live).
 
@@ -7,9 +7,9 @@ image       evm/scripts/build-efi tdx  ->  evm/.lake/build/efi/tdx/evm-os/BOOTX6
             4,898,304 bytes, SHA-256 bfd47e1db9ec4152b814a401512069ee9c7291ea64ff212e25c66fb8e0629dde
 RTMR1       30adead3c0211d36084a811e97cf6a72413844b35e621d462844ef9950e52dadd4a778dcfe1b0c92a4b415607ab44375
             (what Google's firmware measures for that file: scripts/gce-measure)
-builder key 0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20
-challenge   0x3981d6ecc6ccd7597cc06c4f7a2d77852a1ab86c23b3a606afce3af77ebb41ae
-            (the hash of mainnet block 26487559, so the quote is no older than that block)
+builder key 0x999e5d1ebf3f8fc6c5a3de2e59ed8f659b2a3adc5d83d936a24bc29d64e20ce12976948107551a3021a77e6e4b9a7703
+challenge   0x0ded500786b382cf32f80a6c19c8fa17ef04f30e5df845955af6bdbaea47ab9c
+            (the hash of mainnet block 26489065, so the quote is no older than that block)
 quote       builder.quote, 8,000 bytes: the guest's answer to "what is your key for bids", asked with
             that challenge, quoted by the machine it runs on
 
@@ -19,9 +19,9 @@ Without taking the record's word for the image, from the repository's root, with
 installed and the image built:
 
     scripts/gce-check evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI docs/live/builder.quote \
-      0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20 \
-      0x3981d6ecc6ccd7597cc06c4f7a2d77852a1ab86c23b3a606afce3af77ebb41ae
+      0x999e5d1ebf3f8fc6c5a3de2e59ed8f659b2a3adc5d83d936a24bc29d64e20ce12976948107551a3021a77e6e4b9a7703 \
+      0x0ded500786b382cf32f80a6c19c8fa17ef04f30e5df845955af6bdbaea47ab9c
 
 The bids it has sent, as a relay lists them:
 
-    https://boost-relay.flashbots.net/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20
+    https://boost-relay.flashbots.net/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=0x999e5d1ebf3f8fc6c5a3de2e59ed8f659b2a3adc5d83d936a24bc29d64e20ce12976948107551a3021a77e6e4b9a7703

@@ -1,12 +1,12 @@
 {
- "started": "2026-11-24 19:58 UTC",
+ "started": "2026-11-25 01:59 UTC",
  "commit": "865fdf7",
  "image_sha256": "bfd47e1db9ec4152b814a401512069ee9c7291ea64ff212e25c66fb8e0629dde",
  "image_bytes": 4898304,
  "rtmr1": "30adead3c0211d36084a811e97cf6a72413844b35e621d462844ef9950e52dadd4a778dcfe1b0c92a4b415607ab44375",
- "builder": "0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20",
- "challenge": "0x3981d6ecc6ccd7597cc06c4f7a2d77852a1ab86c23b3a606afce3af77ebb41ae",
- "challenge_block": 26487559,
+ "builder": "0x999e5d1ebf3f8fc6c5a3de2e59ed8f659b2a3adc5d83d936a24bc29d64e20ce12976948107551a3021a77e6e4b9a7703",
+ "challenge": "0x0ded500786b382cf32f80a6c19c8fa17ef04f30e5df845955af6bdbaea47ab9c",
+ "challenge_block": 26489065,
  "quote": "builder.quote",
  "quote_bytes": 8000
 }

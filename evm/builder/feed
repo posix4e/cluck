@@ -6,15 +6,16 @@
 # It runs builder/shadow against the guest at ADDRESS an hour of slots at a time (300), live, the guest
 # posting its blocks itself to the four relays its image has, unpaid; with --hold, posting to none. Each
 # hour has a record of its own in DIR, named by when it began, and with it the guest's keys and the quotes
-# of them, asked for anew each hour. After each hour one line says what the hour was: slots, blocks,
-# what our node made of them, what the relays answered.
+# of them, which are asked for once for each time the guest starts. After each hour one line says what
+# the hour was: slots, blocks, what our node made of them, what the relays answered.
 #
 # It stops by itself, leaving DIR/STOPPED saying why, when something is wrong that a person should look at
 # before another bid goes out: more than one in twenty of the answers from relays were refusals, or more
 # than one in twenty of the blocks sent were not judged valid by the node here. That is looked at once a
 # minute over the last fifty slots, and over the whole hour at its end. A guest that cannot be reached is
-# tried again every minute. A block of ours that becomes the chain's head ends that hour's run early, as
-# builder/shadow does, and the next begins.
+# tried again every minute. A guest whose key for bids is no longer the one docs/live names (it began
+# again) is said after each hour and noted in DIR/BEGAN-AGAIN; the feed goes on. A block of ours that
+# becomes the chain's head ends that hour's run early, as builder/shadow does, and the next begins.
 #
 # Requests that were slow are kept whole by builder/shadow (DIR/slow), megabytes each: those older than a
 # day are removed here.
@@ -106,5 +107,15 @@ while true; do
   fi
   [[ -s "$log.err" ]] || rm -f "$log.err"
   look "$log" "$dir/STOPPED" hour || exit 0
+  # A guest that began again has new keys, and what docs/live says is then of one that is gone: said
+  # here and noted in DIR/BEGAN-AGAIN, for scripts/gce-live to be run on the record named.
+  newest="$(ls -t "$log".keys*.json 2>/dev/null | head -n 1)"
+  if [[ -n "$newest" && -e "$here/../docs/live/builder.json" ]] && ! python3 -I -c '
+import json, sys
+sys.exit(json.load(open(sys.argv[1])).get("builder") != json.load(open(sys.argv[2])).get("builder"))' \
+      "$newest" "$here/../docs/live/builder.json" 2>/dev/null; then
+    echo "feed: the guest's key for bids is not the one docs/live names; the record of it now is $newest"
+    echo "$(date -u +'%Y-%m-%d %H:%M UTC') $newest" >> "$dir/BEGAN-AGAIN"
+  fi
   find "$dir/slow" -type f -mmin +1440 -delete 2>/dev/null
 done

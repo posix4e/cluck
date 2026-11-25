@@ -884,6 +884,42 @@ by the guest itself.
       here. Not possible here: a test with a certificate Intel has really revoked. Not in the
       page: a browser cannot ask Intel (the page says so). "Up to date" is Intel's word on the
       day asked, and the answers are good for thirty days.
+  - **The guest there began again by itself three times in six hours, each time at a request for
+    a quote; the cause is not known** (found 2026-11-25 02:00 UTC, on the image `bfd47e1d…e0629dde`
+    started 19:57 UTC the day before).
+    - What was seen. The feed's hourly records of the guest's keys did not agree with each
+      other. The guest's console (the last megabyte Google keeps) twice shows "request of 1029
+      bytes", which is a request for a quote, with no line after it and then the firmware
+      starting the image. Google's log of the instance has a start's two integrity events at
+      22:58:02, 23:58:36 and 01:59:00 UTC, and no operation on the instance by anybody since it
+      was made. At 01:58:57.6 a first quote was made; the request for the second came within a
+      second, and the guest was starting again at 01:59:00.6, so it ended about two seconds
+      into that request. At 22:58 and 23:58 it was the hour's first request that ended it.
+      Twelve other requests for a quote in those hours were answered.
+    - What it is not: one of this program's own stops, which say why on the console before
+      they stop. So a fault the firmware took, or the host ending the trust domain. On this
+      machine, where QEMU serves the same request, it has not happened; how often it was asked
+      here is small.
+    - What it did. A guest draws its keys when it starts. Bids went out under
+      `0x94ab682b…` from 19:58 to 22:58 UTC, `0xb2423801…` to 23:58, `0x820f042a…` to 01:59 and
+      `0x999e5d1e…` since, and `docs/live` named the first until this was found: for three hours
+      the bids at the relays were under keys the page did not name. There is no quote of the
+      second key (the guest ended making it); the third's is in the feed's record of 00:58.
+      Bidding went on through each start, some slots later: the feed makes its connection again.
+      The feed's line for an hour said "guest replaced 0 times" each time, because the guest
+      was lost while its keys were being asked for, before any slot.
+    - Done about it, short of the cause. The feed asked for both quotes every hour; it now asks
+      once for each start of the guest and keeps what it has while the keys are the same
+      (`quoted_before` in `builder/shadow`), asks all of it again when the connection was lost
+      while it asked (one record no longer holds keys of two starts), and says after each hour,
+      and notes in `BEGAN-AGAIN`, when the guest's key is not the one `docs/live` names
+      (`builder/feed`). `scripts/gce-live` takes the commit an image was built from, and
+      `docs/live` is written again for the start of 01:59, with the image as GitHub's machine
+      built it (the same SHA-256) and `scripts/gce-check` holding on all five. Tried: the feed
+      started again at 02:08 UTC took the kept quotes and asked for none.
+    - Not done: finding the cause, for which the image needs to say on its console how far a
+      request for a quote got, on a test machine asked many times. `docs/live` is still
+      written by hand after a start.
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about three dollars (of the 500 a month agreed).
     A subnet (`silo-10-0-2`), a firewall rule for this machine's address alone

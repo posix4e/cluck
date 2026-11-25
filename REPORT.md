@@ -130,6 +130,12 @@ away, bidding at four relays with nothing paid for a win:
   0.03 s. Five builds a slot, 1.15 s apart: 0.15 s for the request (1.5 MB) to arrive, 0.45 s to
   build, 0.07 s to post to four relays and have their answers, and the rest the feeder gathering
   transactions and proofs.
+- **It began again by itself three times in its first six hours on this machine** (22:58 and 23:58
+  UTC on the 24th, 01:59 on the 25th), each time about two seconds into a request to have a quote
+  made, with nothing on its console. The cause is not known yet. Every start draws new keys, so for
+  three hours its bids at the relays were under keys this repository did not name; the record here is
+  of the start of 01:59. Bidding went on through each, some slots later. The feeder asked for quotes
+  every hour then, and asks once for each start now.
 - **No proposer took one**, and none was expected to.
 - The machine costs about 23 cents an hour.
 

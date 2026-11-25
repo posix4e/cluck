@@ -976,6 +976,15 @@ by the guest itself.
         of 1.9 s for 400 transactions, against 8% for running them. `Build.byTip` worked out
         the front of every signer's queue from every pair of waiting transactions, anew for
         each transaction taken.
+        **Mended** (2026-11-25): it counts once, for each transaction, how many of its
+        signer's others go before it, and takes fronts from that. Four of the kept requests
+        put to `evm-serve-min` before and after gave the same answers byte for byte, in 1.18 s
+        for 1.73, 1.07 for 1.94, 0.79 for 1.39, and 5.00 for 5.80 (the one with the point
+        evaluation). `build-test` holds it to the old definition on nine made-up lists (862
+        checks). The images with it: `evm-os` `e3faec94…a08da33c` (4,004,864 bytes), the
+        twin `a5e5ba1c…`, `evm-os-spec` `0c7e20f5…`; in TDX here `run-fixtures tdx --limits
+        --key --quotes 30`, `--spec`, `check-secret-code` and `run-ask` pass. Not on Compute
+        Engine.
       - Recovering signers is 30% of what is left, and three fifths of that is one inverse
         modulo the curve's order by Euclid's algorithm on whole numbers (Jaune's
         `FinField.inv`), about 0.35 ms a signature. Not changed.
@@ -991,7 +1000,7 @@ by the guest itself.
         in TDX against the stand-in, the second with both costs said to be 40 ms: every slot
         with a block but one that fell while `bid-verify` was being rebuilt under it, 348
         blocks sent and all valid, seven and eight rounds a slot, 0.73 s a round, as before;
-        the limit left out two to seven of the least paying in eight last rounds and 35 in
+        the limit left out two to seven of the least paying in seven last rounds and 35 in
         one, and one transaction was left out for a slow precompile.
         **Not shown: a full pool with the limit.** There has been none since, and nothing here
         makes one. The first trial of the change failed outright (a name used twice; every

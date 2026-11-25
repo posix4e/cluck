@@ -205,9 +205,45 @@ def sealedFor (tally : Tally) : IO Tally := do
     (after.kept.map (·.last) == #[100, 250, 400] && tried.size == 3)
   return tally
 
+/-- The order of rule 1 as it was first written: the fronts of the signers' queues found anew from every
+pair of waiting transactions, for each transaction taken. Slow, and plainly what the rule says; kept here
+as what `Build.byTip` must agree with. -/
+partial def byTipByPairs (waiting : List Build.Candidate) (out : Array Build.Candidate := #[]) : Array Build.Candidate :=
+  let front := waiting.filter fun c => waiting.all fun d =>
+    d.sender != c.sender || d.tx.nonce > c.tx.nonce || (d.tx.nonce == c.tx.nonce && d.place ≥ c.place)
+  match front with
+  | [] => out
+  | first :: rest =>
+    let best := rest.foldl (fun b c => if c.tip > b.tip || (c.tip == b.tip && c.place < b.place) then c else b) first
+    byTipByPairs (waiting.filter (·.place != best.place)) (out.push best)
+
+/-- `Build.byTip` against that, on lists made up so that signers, nonces and tips each repeat: many signers
+with one transaction, one signer with many, the same nonce twice from one signer, everything paying the
+same. -/
+def ordered (tally : Tally) : IO Tally := do
+  let mut tally := tally
+  let mut seed := 20261125
+  for (count, signers, nonces, tips) in
+      [(0, 1, 1, 1), (1, 1, 1, 1), (40, 1, 40, 5), (40, 1, 3, 1), (60, 7, 4, 3), (120, 30, 6, 1000), (200, 200, 1, 2),
+       (150, 3, 2, 2), (400, 150, 5, 50)] do
+    let mut list : List Build.Candidate := []
+    for place in [0:count] do
+      seed := (seed * 1103515245 + 12345) % 2147483648
+      let drawn := seed / 4096
+      let tx : Transaction :=
+        { nonce := ((drawn / 7) % nonces).toUInt64, gasLimit := 21000, value := 0, data := [], v := 0, r := [], s := [],
+          type := .legacy 1 none }
+      list := { place, tx, sender := ((drawn % signers).toUInt32, (0, 0)), tip := (drawn / 1000) % tips } :: list
+    let waiting := list.reverse
+    let got := (Build.byTip waiting).map (·.place)
+    tally ← tally.expect s!"the order by tip of {count} transactions from {signers} signers is the rule's"
+      (got == (byTipByPairs waiting).map (·.place) && got.size == count)
+  return tally
+
 def main (args : List String) : IO UInt32 := do
   let mut tally : Tally := {}
   tally ← sealedFor tally
+  tally ← ordered tally
   -- Every case is put to Jaune's builder and then to the fast engine's.
   for engine in [false, true] do
     for name in ["highGasUsage-11", "wallet2outOf3txsRevokeAndConfirmAgain-8", "DelegateCallSpam-1"] do

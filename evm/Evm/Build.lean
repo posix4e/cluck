@@ -180,17 +180,35 @@ structure Candidate where
 
 /-- The order of rule 1. Each signer's transactions are taken lowest nonce first; of the transactions at
 the front of their signers' queues, the one paying most goes next, the earlier proposed if two pay the
-same. -/
-partial def byTip (waiting : List Candidate) (out : Array Candidate := #[]) : Array Candidate :=
-  -- The front of each signer's queue: no other waiting transaction of that signer has a lower nonce, or
-  -- the same nonce and an earlier place.
-  let front := waiting.filter fun c => waiting.all fun d =>
-    d.sender != c.sender || d.tx.nonce > c.tx.nonce || (d.tx.nonce == c.tx.nonce && d.place ≥ c.place)
-  match front with
-  | [] => out
-  | first :: rest =>
-    let best := rest.foldl (fun b c => if c.tip > b.tip || (c.tip == b.tip && c.place < b.place) then c else b) first
-    byTip (waiting.filter (·.place != best.place)) (out.push best)
+same.
+
+Each transaction is given the number of its signer's others that go before it (a lower nonce, or the same
+nonce and an earlier place); those with none before them are the fronts. Taking a front leaves each of its
+signer's others with one fewer before it. That is one pass over every pair to begin with and one pass over
+the list for each transaction taken. (Until 2026-11-25 the fronts were worked out anew from every pair for
+each transaction taken, which for 400 transactions was 0.8 s of a block that took 1.9 s to build.) -/
+def byTip (waiting : List Candidate) : Array Candidate := Id.run do
+  let all := waiting.toArray
+  let taken := all.size + 1
+  let mut before : Array Nat := all.map fun c => all.foldl (fun n d =>
+    if d.sender == c.sender && (d.tx.nonce < c.tx.nonce || (d.tx.nonce == c.tx.nonce && d.place < c.place))
+    then n + 1 else n) 0
+  let mut out : Array Candidate := Array.mkEmpty all.size
+  for _ in [0:all.size] do
+    let mut best : Option (Nat × Candidate) := none
+    for c in all, i in [0:all.size] do
+      if before[i]! == 0 then
+        best := match best with
+          | none => some (i, c)
+          | some (j, b) => if c.tip > b.tip || (c.tip == b.tip && c.place < b.place) then some (i, c) else some (j, b)
+    let some (chosen, front) := best | break
+    out := out.push front
+    before := before.set! chosen taken
+    for c in all, i in [0:all.size] do
+      let n := before[i]!
+      if n != 0 && n != taken && c.sender == front.sender then
+        before := before.set! i (n - 1)
+  return out
 
 /-- What has been read so far and shown to be in the witness, so that each transaction is asked only
 about what it read that nothing before it did. -/

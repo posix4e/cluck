@@ -1032,9 +1032,21 @@ by the guest itself.
         records with slots taken for empty 7.5 s before they began, there being no way to
         make one empty (`SHADOW_EMPTY_AFTER=-7.5`, `next2`): 115 blocks built for the slot
         after on the old parent, all judged valid by reth's validator and signed, beside
-        230 ordinary ones. `scripts/round-check` holds the three rules (34 cases).
+        230 ordinary ones. `scripts/round-check` holds the rules (34 cases).
         **Not shown:** a relay taking a block built after a slot that was really empty,
         which is what says the withdrawals and the randao were the right ones.
+        On Compute Engine from the feed's run of 12:28 UTC: seven rounds a slot for five,
+        the last bid 0.76 s before the slot at the median for 0.83, in its first 51 slots.
+        And **the first slot it took for empty was not** (15732160): the block came later
+        than four seconds, the beacon node had it before the execution node called it the
+        newest, and in between a block was built on the old parent with the new block's
+        randao. Two relays refused it ("incorrect prev_randao"), rightly. Mended at 12:45
+        UTC: nothing is built on a parent once the beacon node has a block after it, and
+        what a later slot fixes is asked of the state at the parent's own slot and not of
+        the head. 30 more records here with slots pretended empty (`next3`): 83 such
+        blocks, all valid, randao and withdrawals as the chain's next block had them in all
+        15 that could be compared. A block that comes later than four seconds and after
+        the round has begun can still cost one refused bid.
       - Recovering signers is 30% of what is left, and three fifths of that is one inverse
         modulo the curve's order by Euclid's algorithm on whole numbers (Jaune's
         `FinField.inv`), about 0.35 ms a signature. Not changed.

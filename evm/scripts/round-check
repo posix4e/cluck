@@ -100,6 +100,12 @@ check("a head two seconds old: the slot after it", shadow.slots_gone(head, 1002.
 check("  until that slot is four seconds old with no block", shadow.slots_gone(head, 1015.9) == 0)
 check("  then the one after, on the same parent", shadow.slots_gone(head, 1016.0) == 1 and shadow.slots_gone(head, 1027.9) == 1)
 check("  and so on", shadow.slots_gone(head, 1028.0) == 2 and shadow.slots_gone(head, 1100.0) == 8)
+# A block that came late is the beacon node's head before it is the execution node's.
+at = {"slot": (1000 - shadow.GENESIS_TIME) // 12}
+shadow.get = lambda base, path, timeout=20: {"data": {"header": {"message": {"slot": str(at["slot"])}}}}
+check("the beacon node's head is the parent: nothing later is known", not shadow.later_block_known(head))
+at["slot"] += 1
+check("  it has a block after the parent: nothing more is built on the parent", shadow.later_block_known(head))
 shadow.rebid = False
 check("without --rebid nothing is built on an old head", shadow.slots_gone(head, 1100.0) == 0)
 shadow.rebid = True

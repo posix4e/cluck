@@ -2393,6 +2393,22 @@ times, and the block from the relay. Six stages:
     - Still 0.17 s a round outside the guest's work at the median. Not looked into: QEMU's own
       network, which the builder's guest is still behind (the trial TCP was measured on the
       kernel's and on a poller); how often the guest tells the host of a frame it sends.
+  - **How much of compiled Lean is Lean's header, measured** (2026-11-25; a reader of `REPORT.md`
+    asked). Lean's compiler writes C that calls small functions of `lean/lean.h`, and the C
+    compiler puts them inside the caller; `scripts/image-inventory` counts all of it as the Lean
+    package's. `evm/scripts/header-share` compiles the 94 modules of the running image
+    (`93068517…b31e1372`) again with line numbers, links them with the image's other objects, and
+    adds up bytes by the file each instruction's line is in. Of 2,527,478 bytes of code:
+    1,797,577 (71.1%) of the header, 292,913 (11.6%) of the module's own C, 436,988 (17.3%) with
+    no line. By package: the builder 1,389,111 bytes, 70.6% of the header; Jaune 768,732, 72.6%;
+    the OS 369,635, 69.9%. Of the header's bytes, eight functions that count references are
+    930,684 (`lean_dec_ref` alone 400,621, `lean_inc_ref_n` 173,194); `lean_obj_once`, which
+    reads a module's constant, 128,210. With line numbers 8 of 3,402 functions came out
+    another size, 14 bytes more between them, so what was measured is not byte for byte the
+    image. **Not done:** the same for Lean's own library (a third of the image), which comes
+    compiled without line numbers; any reading of the header itself. **What follows from it,
+    not acted on:** the count of references is over a third of the code compiled here, and
+    it is C by hand, in the toolchain, with nothing here checking it.
   - **The count below was wrong about the image's size, and is put right** (2026-11-24, found by a
     reader set to check `REPORT.md` against the repository). `scripts/image-inventory` counted
     the linker's tables of symbols and their names and its list of relocations as part of the

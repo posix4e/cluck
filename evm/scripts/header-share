@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# How much of the image's compiled Lean is code of Lean's own header.
+#
+#   scripts/header-share [executable]      (from evm/, after: scripts/build-efi tdx [executable])
+#
+# Compiled Lean is C that Lean's compiler wrote, and that C calls small functions of Lean's header
+# (lean/lean.h: counting references, reading a field, making an object) which the C compiler puts inside
+# the caller. scripts/image-inventory puts all of it down to the package the Lean function belongs to.
+# This says how many of those bytes are instructions of the header's functions.
+#
+# It compiles the same C again with line numbers (-g, and otherwise as scripts/build-efi does), links it
+# with the other objects of the image as they were built, and adds up, from the table that says which
+# source line each instruction came from, the bytes whose line is in lean/lean.h, those whose line is in
+# the module's own C, and those the compiler gives no line (code it made itself, or made one of several
+# places' code). Only functions the linker kept are counted. Lean's own library comes compiled, without
+# line numbers, and is not looked into: it is Lean's either way.
+#
+# Building with line numbers is not supposed to change the code and here it nearly does not: the script
+# says how many functions came out another size than in the image, and by how many bytes.
+#
+# Everything is made in a directory of its own and removed; the build is not touched. Needs objdump
+# (binutils) besides what scripts/build-efi needs.
+set -euo pipefail
+name="${1:-evm-os}"
+here="$(cd "$(dirname "$0")/.." && pwd)"
+os="$(cd "$here/.." && pwd)"
+cd "$here"
+prefix="$(lean --print-prefix)"
+libs="$prefix/lib/lean"
+real=".lake/build/efi/tdx/$name/obj"
+[[ -r "$real/image.map" ]] || { echo "header-share: no image in $real; scripts/build-efi tdx $name first" >&2; exit 2; }
+work="$(mktemp -d "${TMPDIR:-/tmp}/header-share.XXXXXXXX")"
+trap 'rm -rf -- "$work"' EXIT
+# scripts/build-efi's flags for compiled Lean, and -g.
+printf '%s\n' --target=x86_64-unknown-none-elf -ffreestanding -nostdinc -isystem "$prefix/include/clang" \
+  -I "$prefix/include" -I "$os/rt" -O2 -fno-stack-protector -mno-red-zone -fPIE \
+  -ffile-prefix-map="$here/"=evm/ -ffile-prefix-map="$os/"= -ffile-prefix-map="$prefix/"=lean-toolchain/ \
+  -fdata-sections -ffunction-sections -DNDEBUG -w -g > "$work/flags"
+units=() offered=()
+while IFS= read -r arg; do
+  arg="${arg#\"}"; arg="${arg%\"}"
+  case "$arg" in
+    "$here"/.lake/packages/jaune/*.c.o.export | "$here"/.lake/build/*.c.o.export | "$os"/.lake/build/*.c.o.export)
+      units+=("${arg%.o.export}") ;;
+    *.c.o.export) offered+=("$arg") ;;
+  esac
+done < ".lake/build/bin/$name.rsp"
+# build-efi numbers its objects in the order it compiles them, and compiled Lean comes last.
+all="$(find "$real" -maxdepth 1 -name '*.o' | wc -l)"
+before=$(( all - ${#units[@]} ))
+inputs=()
+for ((i = 0; i < before; i++)); do inputs+=("$real/$i.o"); done
+for ((j = 0; j < ${#units[@]}; j++)); do
+  echo "$work/$(( before + j )).o ${units[$j]}"
+  inputs+=("$work/$(( before + j )).o")
+done > "$work/units"
+export work prefix
+xargs -P "$(nproc)" -L 1 bash -c 'mapfile -t flags < "$work/flags"; "$prefix/bin/clang" -c "${flags[@]}" "$1" -o "$0"' < "$work/units"
+"$prefix/bin/llvm-ar" rcs "$work/offered.a" "${offered[@]}"
+"$prefix/bin/ld.lld" -pie --no-dynamic-linker -z text -z defs --gc-sections -T "$os/boot/efi/link.ld" \
+  -Map="$work/image.map" -o "$work/image.elf" "${inputs[@]}" \
+  --start-group "$work/offered.a" "$libs/libLean.a" "$libs/libInit.a" "$libs/libStd.a" --end-group
+objdump --dwarf=decodedline "$work/image.elf" > "$work/lines"
+python3 -I - "$work" "$real/image.map" "$prefix/include/lean/lean.h" "${#units[@]}" <<'EOF'
+import collections, re, sys
+work, real_map, header, units = sys.argv[1:5]
+
+def functions(path):  # (object, section) -> bytes, for the code of the numbered objects
+    out = {}
+    for text in open(path, errors="replace"):
+        m = re.match(r"^\s*[0-9a-f]+\s+([0-9a-f]+)\s+([0-9a-f]+)\s+\d+\s+\S+?/(\d+\.o):\((\.text[^)]*)\)", text)
+        if m: out[(m.group(3), m.group(4))] = (int(m.group(1), 16), int(m.group(2), 16))
+    return out
+was, now = functions(real_map), functions(work + "/image.map")
+other = [k for k in was if k in now and was[k][1] != now[k][1]]
+kept = sorted((a, a + n) for a, n in now.values())
+
+# The function of the header each of its lines belongs to: the last one that began at or before it.
+starts = []
+for n, text in enumerate(open(header, errors="replace"), 1):
+    m = text.startswith("static") and re.search(r"\b(lean_\w+)\s*\(", text)
+    if m: starts.append((n, m.group(1)))
+def function(line):
+    name = "(before any)"
+    for n, f in starts:
+        if n > line: break
+        name = f
+    return name
+def package(unit):  # paths as scripts/build-efi's -ffile-prefix-map leaves them, after the directory compiled in
+    if "/packages/jaune/" in unit: return "Jaune"
+    return "the builder" if unit.startswith("evm/evm/") else "the OS"
+
+lowest = kept[0][0]
+by, by_function = collections.defaultdict(collections.Counter), collections.Counter()
+row = re.compile(r"^(\S+)\s+(\d+|-)\s+(0x[0-9a-f]+|0)(\s|$)")
+current = last_c = unit = None
+prev = None  # the row before in this run of rows: (address, file, line)
+for text in open(work + "/lines", errors="replace"):
+    text = text.rstrip("\n")
+    if text.endswith(":") and " " not in text:
+        current = text[:-1]
+        continue
+    m = None if text.startswith("File name") else row.match(text)
+    if not m:
+        continue
+    address = int(m.group(3), 16)
+    # A function the linker left out keeps its rows, with addresses that begin at nothing.
+    if prev is not None and address > prev[0] and begun >= lowest:
+        kind = "none" if prev[2] == 0 else "header" if prev[1].endswith("lean/lean.h") else "own"
+        by[package(unit)][kind] += address - prev[0]
+        if kind == "header": by_function[function(prev[2])] += address - prev[0]
+    if m.group(2) == "-":
+        prev = None
+        continue
+    if current.endswith(".c"): last_c = current
+    if prev is None: begun, unit = address, last_c
+    prev = (address, current, int(m.group(2)))
+
+total = collections.Counter()
+share = lambda n, of: f"{n:>9,} {100 * n / of:4.1f}%"
+print(f"{units} modules of compiled Lean, built again with line numbers: {len(other)} of {len(was)} functions another size, "
+      f"{sum(now[k][1] - was[k][1] for k in other):+d} bytes in all")
+print(f"{'':<12} {'code':>9}   {'of the header':>15}   {'of its own C':>15}   {'with no line':>15}")
+for name in sorted(by):
+    k = by[name]; n = sum(k.values()); total.update(k)
+    print(f"{name:<12} {n:>9,}   {share(k['header'], n)}   {share(k['own'], n)}   {share(k['none'], n)}")
+n = sum(total.values())
+print(f"{'together':<12} {n:>9,}   {share(total['header'], n)}   {share(total['own'], n)}   {share(total['none'], n)}")
+print("of the header's, by function (a function's lines; what it has put inside it is under its own name):")
+for f, b in by_function.most_common(12):
+    print(f"  {b:>9,} {100 * b / total['header']:4.1f}%  {f}")
+EOF

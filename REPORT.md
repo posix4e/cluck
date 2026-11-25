@@ -21,7 +21,9 @@ This is a builder whose guest is one EFI program of 4.0 MB. Above the firmware t
 no kernel, no C library, no OpenSSL, no shell, no file system, and one listening TCP port. The network
 card's driver, Ethernet, IP, TCP, DNS, TLS 1.3, X.509, HTTP, the EVM, the Merkle-Patricia trie, BLS
 signing, SSZ and the builder itself are Lean in that one program. The 0.8% of it that is C parses no
-frame, no request and no certificate.
+frame, no request and no certificate. (Compiled Lean also carries small functions of Lean's own C
+header inside it, which count references and reach into objects. They are counted here as Lean, and by
+instructions they are most of the compiled code: the figure is under what is trusted, below.)
 
 It runs today in a TDX trust domain on Google Cloud, builds a block about every second from the public
 pool, signs its bids with a key drawn inside the trust domain, and posts them itself to Flashbots,
@@ -97,7 +99,15 @@ What that count leaves out or flatters:
 - **The compilers are trusted**: Lean's, and the C compiler and linker behind it.
 - **What is C is told by the file it was compiled from.** Compiled Lean is C that Lean's compiler wrote,
   built against Lean's own header, and the small functions of that header that end up inside it
-  (counting references, reading a field) are counted as Lean. How many bytes that is was not measured.
+  (counting references, reading a field) are counted as Lean. **They are most of it.** Of the 2,527,478
+  bytes of code compiled here from Lean (this project's and Jaune's, 94 modules), 1,797,577, or 71%, are
+  instructions whose source line is in that header; 292,913 (12%) have a line of the C the compiler
+  wrote for the module, and 436,988 (17%) have no line. Half of the header's share is counting
+  references. (`evm/scripts/header-share`, which compiles the same C again with line numbers in it: 8 of
+  3,402 functions came out another size that way, 14 bytes between them. Lean's own library comes
+  compiled and was not looked into.) So the rows above for this project's Lean and for Jaune say whose
+  program the bytes carry out, not who wrote the instructions: seven in ten of those are from 3,590
+  lines of C by Lean's authors, trusted here as the compiler is and reviewed by nobody here.
 - **Two things under the Lean are not sound, and neither is mended.** The program runs on a stack of
   64 MiB with nothing below it to stop it: recursion past the end would write into the image, and how
   deep a hostile request can drive it has not been worked out. And seven of mathlib's start-up

@@ -227,11 +227,13 @@ away, bidding at four relays with nothing paid for a win:
 - **All of it, to 15:04 UTC on the 25th**: 6,167 slots went by and a bid of ours was sent to a relay in
   5,973 of them, 96.9%. About half of those slots, the ones to 04:27 on the 25th, were on images of 4.9
   MB that still held Jaune's interpreter; the rest were on images of 4.0 MB, as the one described above
-  is. Of the 194 without: in 94 no relay held a registration from the slot's proposer,
+  is. Of the 194 without: in 89 no relay held a registration from the slot's proposer,
   so there was nobody to send to; 71 were three changes of image, 23 or 24 slots each; seven were the
   three resets by Google's host (below), two or three slots each; 14 followed a slot with no block, for
-  which nothing was built then (below); seven were built and not sent, five of them in the full pool of
-  07:39 (below); and one has no record and no reason found. 30,132 bids were sent, every one judged
+  which nothing was built then (below); twelve were built and not sent, five of them in the full pool
+  of 07:39 (below) and seven with one block that paid nothing, which the guest does not send (five of
+  those were the first slot after a start); and one has no record and no reason found.
+  (`evm/builder/tools/day.py` counts these from the feed's records.) 30,132 bids were sent, every one judged
   valid afterwards by reth's validator on the feeder (none was left unjudged), and eight had their
   round end after the slot began. Valid there means that the block, run on the parent it names, comes
   to what its header says; it does not mean the parent was still the chain's head or the randomness the

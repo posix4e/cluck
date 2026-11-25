@@ -1427,6 +1427,13 @@ by the guest itself.
       (`evm/builder/tools/`: `health.py`, `live.py`, `intake.py`, `gap.py`, `seen.py`,
       `cover.py`; where this file says `/data/eth/shadow/tools/`, those are the ones), as they
       were used, each with what it does in its heading.
+    - **And a count of the report's was wrong** (found the same evening, writing
+      `evm/builder/tools/day.py`, which counts several of the feed's records as one stretch and
+      gives the report's totals to 15:04 UTC exactly: 6,167 slots, 5,973 with a bid, 30,132 bids,
+      97,241 answers). Of the 194 slots without a bid the report had 94 with no registration and
+      seven built and not sent; the records say 89 and twelve. Five first slots after a start,
+      whose one block paid nothing and was kept by the guest for that, had been put with the
+      slots nobody was registered for.
     The reviewer did not check: anything outside this machine, the records themselves, anything
     that needs a build or a run, the Lean and C behind the security statements, the threat model
     outside the EVM section, most of this file.

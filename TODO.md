@@ -1205,9 +1205,22 @@ by the guest itself.
         Two slots were empty in truth (15733082 and 15733403): a block was sent for the
         slot after each.
         One slot in eight had its last block ready more than 2 s before it (127 of 998).
+        **On Compute Engine since 2026-11-25 17:09 UTC** (`evm-os` `93068517…b31e1372`,
+        key `0xad9525cc…`, `docs/live`). The feed was stopped at 17:05:41 and started again
+        at 17:12:50: 36 slots without a bid. Before it was started, `run-fixtures tdx --at …
+        --key --quotes 50` against the new guest: the fixtures, the key and a bid as they
+        should be, and of the quotes five, after which the sixth request's connection was
+        not made in the ten seconds the test allows. The guest's console has the five and
+        no request after them; it had not started again, and the same test run a minute and
+        a half later passed whole, fifty quotes under the same key. **Not explained**, and
+        the second thing of its kind seen around quotes (the first: an answer that had not
+        arrived after 60 s, above). Whether the guest or the way to it was deaf for those
+        seconds is not known; nothing was looking at the wire.
       - Not done: BLS12-381 written for the purpose, so that those transactions can go in;
         sending only what is new each round, where now every round sends and the guest
         recovers and proves everything again.
+    - GitHub's machine built the image before this one to the same file too (run 45617452239 of
+      `image.yml`, for `e3faec94…` at commit af9f94d, 2026-11-25).
     - Not done: `docs/live` is still written by hand after a start. Google logs every quote a
       guest asks for in the project's own log (`tdxLaunchAttestationReportEvent`), which is
       where the times above are from.
@@ -2303,6 +2316,9 @@ times, and the block from the relay. Six stages:
       was taken by a proposer. Against the taken blocks in 253 slots: ours 18% of theirs at the
       median and 4.5% summed, in an hour when theirs were worth twice what they were the night
       before; 92% by fees of what was public a second before.
+      (That 253 slots had a figure here and in the hour of 2026-11-22 above is chance: `gap.py`
+      run again on both logs on 2026-11-25 gives 253 of 300 there and 253 of 297 here, with
+      the figures as written.)
     - Still 0.17 s a round outside the guest's work at the median. Not looked into: QEMU's own
       network, which the builder's guest is still behind (the trial TCP was measured on the
       kernel's and on a poller); how often the guest tells the host of a frame it sends.

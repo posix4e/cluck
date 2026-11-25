@@ -1348,9 +1348,14 @@ by the guest itself.
       document that is only what the script asks of one and a door that is only kept
       answers: sending stays shut until the key's quote has passed, what goes to the door
       is sealed and holds no eight bytes in a row of the transaction, a builder that did
-      not keep it is said so, a door serving another key gets nothing. Both in CI. Not run:
-      the page with this change in a browser (the text appears only after a hand-in, and a
-      hand-in to the live builder takes the feeder's check away for as long as it is kept).
+      not keep it is said so, a door serving another key gets nothing. Both in CI. And the
+      page with this change as GitHub serves it, in headless Chrome 154 (23:55 UTC): the twelve
+      checks held on a quote made for its asking, the hash of the type 2 transaction above
+      worked out in that browser's own engine came to the same, a transaction with blobs was
+      refused on the page, and the browser reported no error; `live.html` there, all ten
+      rows holding. Not run: a hand-in from the changed page in a browser, so the line with
+      the hash has been seen only under Node (a hand-in to the live builder takes the
+      feeder's check away for as long as it is kept).
   - **Against the blocks proposers took, from Compute Engine** (2026-11-25, the hour from 04:28
     UTC, the first on the image then there, of 04:27; `/data/eth/shadow/tools/gap.py` on the feed's record,
     asking six relays' public lists what each slot's taken block paid): 267 of 300 slots had a

@@ -160,6 +160,25 @@ is.
     block is in the chain; and the transaction cannot be changed, or built in after the last slot its
     sender named.
 
+**Set beside a builder with its node inside**, for somebody deciding where to send a transaction:
+
+- The same in kind. Both ask the sender to trust a measured image, the firmware under it and Intel.
+  Both are reached over a network their host controls, and either can be starved by it.
+- Less to trust here. What can read the transaction is one program whose parts are listed above, that
+  anybody can build to the same file in minutes and check against the running guest's quote. It has
+  one port, no shell and no operator's interface, and takes nothing from outside when it starts but
+  which of two network cards it finds: to change what it does is to run another image, with another
+  measurement.
+- More to trust here. A builder with its node inside puts a block together from a pool that many
+  feed, in an order of its own; its host can add transactions to that pool and cannot place them.
+  Here one machine outside chooses every other transaction of the block and may write them, which is
+  what makes the asking described above cheap. And that builder follows the chain itself, where this
+  one is told what the head is.
+- So nothing here is new in kind. The claim is one of amount: how much has to be right for a
+  transaction to stay unread, against a price paid in what the machine outside can find out by
+  asking. Which of the two weighs more for a given sender is not for this report to say, and the
+  second has not been measured.
+
 ## What it does
 
 Each slot the guest is handed pending transactions and proofs, builds a block, signs the bid with a BLS

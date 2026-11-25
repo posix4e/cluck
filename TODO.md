@@ -1005,6 +1005,15 @@ by the guest itself.
       it (it is a command), and anything that tells a sender their transaction went in.
     - Not done: where the door runs and under what name, which needs HTTPS in front for a
       page to use it and is to be decided.
+  - **Against the blocks proposers took, from Compute Engine** (2026-11-25, the hour from 04:28
+    UTC, the first on the image now there; `/data/eth/shadow/tools/gap.py` on the feed's record,
+    asking six relays' public lists what each slot's taken block paid): 267 of 300 slots had a
+    figure. Ours was worth 0.00176 ETH at the median and theirs 0.00525: 34% at the median, 80% at
+    best, never more; summed 0.53 ETH against 1.70 (31%). The same hour: 1,612 blocks built,
+    1,557 sent, all judged valid here; of 4,960 answers from relays 3,512 were 200, 1,445 were 202
+    and 3 did not come in time; two bids were answered after their slot began, one by 0.79 s; six
+    builds a slot, 1.08 s apart. Not done: what the taken blocks held that was public (the
+    watcher that says so was not running).
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about nine dollars by 2026-11-25 04:30 UTC (of the
     500 a month agreed); the builder's machine is 23 cents an hour. A subnet (`silo-10-0-2`), a

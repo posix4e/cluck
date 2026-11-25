@@ -159,7 +159,9 @@ away, bidding at four relays with nothing paid for a win:
 **Against the blocks proposers took** (one machine, 875 slots, 2026-11-23): ours were worth 29% of
 theirs at the median, and less summed, since their best blocks are far above their median. Ours held
 94% by fees of what theirs held that was public a second before the slot. At real relays, in an
-earlier hour, 18% at the median. Not measured from Google Cloud.
+earlier hour, 18% at the median. From Google Cloud, the hour from 04:28 UTC on 2026-11-25, over the 267
+of 300 slots for which a relay lists the block that was taken: ours 34% of theirs at the median, 80% at
+best, never more; summed, 0.53 ETH against 1.70 (31%).
 
 **How fast the parts are.** Building a block takes the guest 0.3 s on the machine it was developed on
 and 0.45 s on Google's; reth imports a block in 0.04 s. A request of 1.5 MB crosses the internet into

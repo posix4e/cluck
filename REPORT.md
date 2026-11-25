@@ -31,8 +31,8 @@ Ultrasound, Aestus and Titan. Anyone can follow one of those bids from a relay's
 the source it was built from; how is below.
 
 Three things it is not. It is not a competitive builder: it sees only the public pool, and its blocks
-were worth between a fifth and a third of the winning ones at the median, and less summed (the
-measurements are below). It guards nothing private yet: the instance that is running holds a key for
+were worth about a fifth to a third of the winning ones at the median, and as little as a twentieth
+summed (the measurements are below). It guards nothing private yet: the instance that is running holds a key for
 signing bids, which guards no money, and though anybody can send it a sealed transaction since
 2026-11-25 (through a door described below), nobody outside has. And it is not the same shape as a builder with its node inside: here the node is outside
 the trust domain and hands the guest transactions with proofs of the state they touch. That is what lets
@@ -104,8 +104,10 @@ What that count leaves out or flatters:
   instructions whose source line is in that header; 292,913 (12%) have a line of the C the compiler
   wrote for the module, and 436,988 (17%) have no line. Half of the header's share is counting
   references. (`evm/scripts/header-share`, which compiles the same C again with line numbers in it: 8 of
-  3,402 functions came out another size that way, 14 bytes between them. Lean's own library comes
-  compiled and was not looked into.) So the rows above for this project's Lean and for Jaune say whose
+  3,402 functions came out another size that way, 14 bytes between them. It counts code by the file it
+  was compiled from, where the table above counts code and data by name and sets the modules' start-up
+  code apart, so its total is not the sum of three rows there. Lean's own library comes compiled and
+  was not looked into.) So the rows above for this project's Lean and for Jaune say whose
   program the bytes carry out, not who wrote the instructions: seven in ten of those are from 3,590
   lines of C by Lean's authors, trusted here as the compiler is and reviewed by nobody here.
 - **Two things under the Lean are not sound, and neither is mended.** The program runs on a stack of
@@ -184,7 +186,8 @@ is.
 - The same in kind. Both ask the sender to trust a measured image, the firmware under it and Intel.
   Both are reached over a network their host controls, and either can be starved by it.
 - Less to trust here. What can read the transaction is one program whose parts are listed above, that
-  anybody can build to the same file in minutes and check against the running guest's quote. It has
+  builds to the same file in minutes and can be checked against the running guest's quote. (It has been
+  built on two machines, this project's and one of GitHub's; nobody outside has done it.) It has
   one port, no shell and no operator's interface, and takes nothing from outside when it starts but
   which of two network cards it finds: to change what it does is to run another image, with another
   measurement.
@@ -222,19 +225,24 @@ away, bidding at four relays with nothing paid for a win:
   differs from the last of them in one thing, a limit on the work one transaction may cost (under what
   is not done).
 - **All of it, to 15:04 UTC on the 25th**: 6,167 slots went by and a bid of ours was sent to a relay in
-  5,973 of them, 96.9%. Of the 194 without: in 94 no relay held a registration from the slot's proposer,
+  5,973 of them, 96.9%. About half of those slots, the ones to 04:27 on the 25th, were on images of 4.9
+  MB that still held Jaune's interpreter; the rest were on images of 4.0 MB, as the one described above
+  is. Of the 194 without: in 94 no relay held a registration from the slot's proposer,
   so there was nobody to send to; 71 were three changes of image, 23 or 24 slots each; seven were the
   three resets by Google's host (below), two or three slots each; 14 followed a slot with no block, for
   which nothing was built then (below); seven were built and not sent, five of them in the full pool of
   07:39 (below); and one has no record and no reason found. 30,132 bids were sent, every one judged
-  valid afterwards by reth's validator on the feeder, and eight had their round end after the slot
-  began. In that time the guest started seven times, each time with new keys: the first start, three
+  valid afterwards by reth's validator on the feeder (none was left unjudged), and eight had their
+  round end after the slot began. Valid there means that the block, run on the parent it names, comes
+  to what its header says; it does not mean the parent was still the chain's head or the randomness the
+  slot's, and nine of these blocks drew thirteen refusals from relays for those (below). In that time the guest started seven times, each time with new keys: the first start, three
   changes of image, and the three resets.
 - **What the relays answered**, to all of it: 97,241 answers (a block goes only to the relays that hold
   the proposer's registration, so to fewer than four on average). 66,460 were 200 and 30,666 were 202. A
-  202 says the bid was below the relay's floor and the block was not checked, so only the 200s say a
-  relay ran the block. Flashbots' and Ultrasound's public lists give these bids with
-  `optimistic_submission` false. 27 posts had no answer in the 1.5 s allowed.
+  202 says the bid was below the relay's floor and the block was not checked, so at most the 200s say a
+  relay ran the block. That they do rests on little: a few rows each of Flashbots' and Ultrasound's
+  public lists were looked at, and gave these bids with `optimistic_submission` false; Aestus' and
+  Titan's were not looked at. 27 posts had no answer in the 1.5 s allowed.
 - **What they refused**, 26 answers of 400: eight "unknown parent hash" and five on the randomness, all
   thirteen for blocks built on the old parent when a block came late, a fault of the feeder's that is
   said under what is not done; seven "builder not in proposer's trusted list", from Aestus, which is a
@@ -244,9 +252,11 @@ away, bidding at four relays with nothing paid for a win:
   refused three blocks that paid nothing; the guest has since refused to send such a block.
 - **And one relay said it could not serve.** Ultrasound's answered 503 to every post of three separate
   minutes on the 25th, 60 answers, while listing other builders' bids for the same slots; why is not
-  known here. The feed, which stops itself when more than one answer in twenty is not a 200 or 202,
-  stopped at 15:04, and was started again at 15:07 with a rule that leaves such a relay alone for ten
-  minutes and longer and goes on with the others. (Two more answers of 500 and 520 came from other
+  known here. The feed, which then stopped itself when more than one answer in twenty was not a 200 or
+  202, stopped at 15:04. It was started again at 15:07 with a rule that leaves such a relay alone for
+  ten minutes and longer and goes on with the others; what stops it now is more than one refusal in
+  twenty answers (an answer of 500 or more is not counted one) or more than one block in twenty that
+  its node does not judge valid. (Two more answers of 500 and 520 came from other
   relays, once each.)
 - **Two hours on one image looked at closely** (the third of the five there have been; from 04:28 UTC on
   the 25th, 600 slots): 3,172 blocks built and 3,102 sent. Of the 70 not sent, 42 were for proposers no
@@ -254,12 +264,13 @@ away, bidding at four relays with nothing paid for a win:
   late. Of 9,934 answers 7,024 were 200, 2,907 were 202 and three were none; none was a refusal.
 - **Timing** in those two hours: two of the 3,102 bids had their round end after the slot began, by 0.6
   s and 0.8 s, both in rounds in which one relay gave no answer in the time allowed. The last bid of a
-  slot was in 0.81 s before it at the median. Five rounds a slot, 1.1 s apart: about 0.35 s of that is
-  the feeder gathering transactions and proofs, and the other 0.75 s is the request (2.2 MB late in a
-  slot) crossing the internet, the build, and the posts to the relays with their answers. Measured apart
-  on an earlier image, those three took 0.15 s, 0.45 s and 0.07 s. Since 12:47 on the 25th the feeder no
-  longer waits between rounds: seven rounds a slot, and the last bid 0.75 s before the slot at the
-  median, in its first two hours.
+  slot was in 0.81 s before it at the median. Five rounds a slot, 1.1 s a round at the median. A slot's last
+  round is its largest: at the median of each part, 0.35 s of the feeder gathering transactions and
+  proofs and 0.98 s of asking the guest, which is the request (2.2 MB by then) crossing the internet,
+  the build, and the posts to the relays with their answers. Measured apart on an earlier image, those
+  three took 0.15 s, 0.45 s and 0.07 s. Since 12:28 on the 25th the feeder no longer waits between
+  rounds: in the two hours from 12:48 (600 slots) six rounds a slot at the median, and the last bid
+  0.76 s before the slot.
 - **The first hours were slower.** The first, from 18:30 UTC on the 24th: 1,121 blocks built and 1,088
   sent, four rounds a slot 1.6 s apart, two bids answered after their slot began. The hour from 19:58,
   on the next image: 1,540 built and 1,490 sent; 4,840 answers, of them 3,344 200, 1,495 202 and one
@@ -318,7 +329,7 @@ relays and their certificates' roots.
 
 **Against the blocks proposers took**, as relays' public lists give what each paid. Measured eight
 times, over up to 875 slots each: ours was 18% to 34% of theirs at the median, and 4.5% to 31%
-summed. The three largest and latest:
+summed. The largest and latest of them:
 
 - From Google Cloud at the real relays (the hour from 04:28 UTC on 2026-11-25, 267 slots for which a
   relay listed what the proposer was paid): ours 34% of theirs at the median and 31% summed; 80% at
@@ -330,8 +341,9 @@ summed. The three largest and latest:
 
 The summed figure is the truer one: the slots that pay are far above the median, and in those ours is
 furthest behind. Of what the taken blocks held that was public a second before the slot, ours held 84%
-to 91% by fees summed over a run, and 89% to 94% at the median (four runs). So most of what it lacks was
-never public, and some of it was public and not taken.
+to 91% by fees summed over a run, and 89% to 94% at the median (four runs on one machine; public
+means in the pool of the one node that feeds it, and this was not measured on Google Cloud). So most of
+what it lacks was not public as that node saw it, and some of it was public and not taken.
 
 **How fast the parts are.** Building a block takes the guest 0.33 s at the median on the machine it was
 developed on and 0.45 s on Google's; reth imports a block in 0.04 s. A request of 1.5 MB crosses the
@@ -349,9 +361,11 @@ the key is its own. So a bid can be followed back to source with nothing from us
 2. **The key is the guest's.** `docs/live/builder.quote` is the guest's answer to "what is your key",
    quoted by the machine it runs on. <https://posix4e.github.io/cluck/live.html> checks it in a browser,
    as far as a page can: it takes the image's measurement from a file of ours.
-3. **The guest is this program, on Google's firmware.** Check out the commit `docs/live/builder.txt`
-   names (the repository has usually moved on from it), build the image, and run the command given
-   there. `scripts/gce-check` asks five things: that the quote's signatures lead to
+3. **The guest is this program, on Google's firmware.** Build the image from the commit
+   `docs/live/builder.txt` names, in a checkout of its own: the record is written after the commit it
+   names, so the files under `docs/live` at that commit are of the guest before, and the newest
+   checkout is the one to take the record, the quote and the script from (the commands are under
+   "Reproduce it"). `scripts/gce-check` asks five things: that the quote's signatures lead to
    Intel's root; that Intel, asked today, calls the platform's microcode, TDX module and quoting
    enclave up to date and has withdrawn none of the certificates; that RTMR1 in the quote is what
    Google's firmware measures for that image file; that Google signed for the firmware in MRTD; and
@@ -374,9 +388,9 @@ Where this is thinner than it looks:
   Nothing looks for a statement of Google's since withdrawn.
 - RTMR0, the machine's configuration as the firmware measured it, was the same on every start seen
   and is not worked out from anything.
-- The guest's port is plain TCP that asks nobody who they are, and a firewall rule of Google's lets in
-  the feeder's address alone. Whoever can send from that address, or stands between, can do what the
-  feeder can. A program stands beside the port for everybody else and passes on only requests for a
+- The guest's port is plain TCP that asks nobody who they are. Firewall rules of Google's let in two
+  senders: the feeder's address, and the machine the door below runs on. Whoever can send from either,
+  or stands between, can do what the feeder can. A program stands beside the port for everybody else and passes on only requests for a
   key with its quote, and sealed transactions (`evm/builder/door`, at the address in
   `docs/live/door.json` since 2026-11-25): through it anybody can have a quote made for random bytes
   of their own, which <https://posix4e.github.io/cluck/send.html> does before it seals anything. It
@@ -421,11 +435,13 @@ Where this is thinner than it looks:
   and transactions that need those contracts for longer than that are still not built in at all.
 - **After a slot with no block it has bid once.** The feeder asked for a block only when the chain had a
   new one, so when a proposer proposed nothing this builder sat the next slot out: three slots in a
-  thousand in the last run here, and the same in every number above. Since 12:28 UTC on 2026-11-25 the
+  thousand in the run here on the code of 12:47, and the same in every number before it. Since 12:28 UTC
+  on 2026-11-25 the
   feeder builds for the next slot on the same parent once a slot has gone some seconds with no block.
   That was tried by pretending slots were empty (115 blocks, all valid by reth's validator), and that
   afternoon a slot stayed empty while the builder on Google Cloud was bidding (15732467): it built three
   blocks for the slot after, and all four relays answered 200 to the first two. One slot is not a rate.
+  (In the last run here two slots were empty, and a block was sent for the slot after each.)
   And a block that comes late looks the same as none until it comes. The wait was four seconds at first,
   and blocks are the head at the feeder's node later than that once in 29, an epoch's first block nearly
   always: nine bids on the old parent drew the thirteen refusals above in three hours. The wait is
@@ -442,8 +458,9 @@ Where this is thinner than it looks:
   All of that is Lean; none of it is proved.
 - **Certificates** are not checked for revocation, and the date they are judged at is the feeder's
   word.
-- **Young code, all of it, and read by nobody else.** The repository's first commit is of 2026-11-16 and
-  the builder's of 2026-11-19; the engine that runs the transactions is of the 21st, and the TCP was
+- **Young code, all of it, and read by nobody else.** The repository's first commit is of 2026-11-16;
+  `evm/` began on the 19th as a service that checks blocks, and building blocks, signing bids and the
+  engine that runs the transactions are of the 21st. The TCP was
   rewritten and the driver for Google's card written in the week of these numbers. Nobody outside the
   project has reviewed any of it. The code that reads the feeder's requests and the network's bytes is
   tested on what was written for it and on what mainnet sent; none of it has been fuzzed.
@@ -457,30 +474,55 @@ Where this is thinner than it looks:
 
 ## Reproduce it
 
+What it takes: Linux on x86-64 (`scripts/build-efi` builds nowhere else) and Lean through
+[elan](https://github.com/leanprover/elan), which fetches the release `lean-toolchain` names, with the C
+compiler and linker used. For the check of a quote besides: `node`, `openssl`, `dosfstools`, `mtools`
+and `gdisk`, and a network that reaches Intel and Google.
+
 The image:
 
     git clone https://github.com/posix4e/cluck && cd cluck/evm
-    # for the very file that is running, first: git checkout the commit docs/live/builder.txt names
     # fetch mathlib's ready-made modules first: the command is in evm/README.md
     lake build
     scripts/build-efi tdx                 # .lake/build/efi/tdx/evm-os/BOOTX64.EFI
 
-On a machine with TDX and a TDVF built from source (`TDX.md`; `SILO_TDVF` names the firmware file):
+The very file that is running, and the check of step 3 above. The record names a commit older than
+the one it is written in, so the image is built in a second checkout and checked from the first, which
+is what `image.yml` does:
+
+    cd cluck                                         # the newest commit: the record, the quote, the script
+    git worktree add ../cluck-running COMMIT         # COMMIT as docs/live/builder.txt names it
+    (cd ../cluck-running/evm && lake build && scripts/build-efi tdx)        # mathlib's modules first, as above
+    scripts/gce-check ../cluck-running/evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI docs/live/builder.quote KEY CHALLENGE
+
+with the key and the challenge as `docs/live/builder.txt` gives them in a command of its own.
+
+On a machine with TDX, a QEMU that starts trust domains and a TDVF built from source (`TDX.md`;
+`SILO_TDVF` names the firmware file, and `SILO_TDX_QGS` the socket of the machine's quoting service,
+without which no quote is made):
 
     scripts/run-fixtures tdx --key        # starts it, asks, checks the answers
 
-On Google Cloud, `../scripts/gce-try` starts the same file on a TDX machine. The guest takes the
-address 10.0.2.15 with its gateway at 10.0.2.1, so it needs a subnet of 10.0.2.0/24, a public address,
-and a firewall rule that lets the feeder reach TCP 5005; the script's heading says how each is given.
-A project's `default` network there also lets anyone reach every machine by ICMP and on TCP 22 and
-3389, which a second rule has to close (`THREAT_MODEL.md` says what was open here, and until when).
-Given the feeder's address as `SILO_GCE_FROM`, the script makes both rules (`../scripts/gce-wall`) and
-lists every rule that can still let something reach the machine.
+On Google Cloud, `SILO_GCE_BUCKET=BUCKET ../scripts/gce-try NAME BOOTX64.EFI` starts the same file on a
+TDX machine, which costs money until it is deleted; it wants `gcloud`, signed in, and a storage bucket
+for the disk. The guest takes the address 10.0.2.15 with its gateway at 10.0.2.1, so it needs a subnet of
+10.0.2.0/24, a public address, and a firewall rule that lets the feeder reach TCP 5005; the script's
+heading says how each is given. A project's `default` network there also lets anyone reach every machine
+by ICMP and on TCP 22 and 3389, which a second rule has to close (`THREAT_MODEL.md` says what was open
+here, and until when). Given a network tag in `SILO_GCE_TAGS` and the feeder's address as a range in
+`SILO_GCE_FROM` (203.0.113.7/32), the script makes both rules (`../scripts/gce-wall`) and lists every
+rule that can still let something reach the machine.
 
 To feed it you need a synced reth with the `txpool`, `flashbots` and `debug` APIs and the patch in
-`evm/builder/reth-state-witness.patch`, and a beacon node:
+`evm/builder/reth-state-witness.patch` (made for reth 2.11.0; its heading says how to build), and a
+beacon node. The feed looks for them at `SHADOW_RPC` and `SHADOW_BEACON`, by default
+`http://127.0.0.1:8545` and `http://127.0.0.1:5052`:
 
-    builder/feed ADDRESS DIR --hold       # builds every slot and posts nothing; without --hold it bids
+    builder/feed ADDRESS DIR --hold       # ADDRESS is the guest's, HOST[:PORT]. It builds every slot
+                                          # and posts nothing; without --hold it bids
+
+The scripts named in this report are at the newest commit; an older one, such as the commit a record
+names, may not have them all.
 
 [bn]: https://buildernet.org/blog/2025/04/28/buildernet-v1.3
 [bn16]: https://buildernet.org/blog/2025/12/02/buildernet-v1.6

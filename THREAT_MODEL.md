@@ -366,8 +366,9 @@ to read. What that rests on, and where it gives:
     the answer says nothing was sent. With sealed transactions tried, that tells the host that
     none that went in paid anything, which a relay's refusal of the block told it before.
   - **What a relay publishes, which undoes part of that.** Found on 2026-11-22, after two blocks had
-    been sent this way. Each of the four relays lists every bid it receives, for anyone to read
-    (`/relay/v1/data/bidtraces/builder_blocks_received`): the block's hash and parent, the gas it
+    been sent this way. A relay lists every bid it receives, for anyone to read
+    (`/relay/v1/data/bidtraces/builder_blocks_received`; Flashbots, Ultrasound and Aestus were seen
+    to, and Titan gave no answer when asked): the block's hash and parent, the gas it
     used, what it pays, how many transactions are in it, and when it arrived, to the millisecond.
     The host knows the builder's key and exactly what it proposed. So against a real relay it learns
     at once, from the relay, whether a sealed transaction went in, how much gas it used and what it
@@ -754,7 +755,8 @@ from the public: a feeder that does not, or a sealed transaction that calls one,
 for as long as the call takes. Nothing secret is at stake in this, only whether the builder bids.
 
 It is wider than those two kinds of contract, and the guest now stands in the way itself (2026-11-25;
-`Bridge.work`, `Build.txWork`; in the image after `e3faec94…`, which is not yet the one running). Measured
+`Bridge.work`, `Build.txWork`; in the image after `e3faec94…`, which runs on Compute Engine since 17:09
+UTC that day). Measured
 on the guest's runtime (`precompile-time`), one transaction of all the gas a transaction may have, spent
 on nothing but recovering signers, adding points of bn254 or raising small numbers to powers, holds the
 builder four to six seconds: those contracts are priced for machine code and are Jaune's arithmetic here.

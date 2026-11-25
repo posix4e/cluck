@@ -15,10 +15,12 @@ quote       builder.quote, 8,000 bytes: the guest's answer to "what is your key 
 
 In a browser: https://posix4e.github.io/cluck/live.html checks the quote against this record.
 
-Without taking the record's word for the image, from the repository's root, with node and openssl
-installed and the image built from the commit named above (the repository may have moved on from it):
+Without taking the record's word for the image. This record is written in a later commit than the one
+it names, so the image is built from the commit named above in a checkout of its own (IMAGE below is
+its evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI; REPORT.md has the commands), and the check is run from
+the root of the newest checkout, with node, openssl, dosfstools, mtools and gdisk installed:
 
-    scripts/gce-check evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI docs/live/builder.quote \
+    scripts/gce-check IMAGE docs/live/builder.quote \
       0xad9525cc5a6bb1309158387b2f018f1e9001e1eb82d21791ed94dcd06a5a3177da679e244148fc334cdfcd9111501e4f \
       0x6b35425b030acfea140b94dab4a48859772fc2dbf2bdb10c3e1c2ab7b7f68b1a
 

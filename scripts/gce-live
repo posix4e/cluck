@@ -53,10 +53,12 @@ quote       builder.quote, {len(quote):,} bytes: the guest's answer to "what is 
 
 In a browser: https://posix4e.github.io/cluck/live.html checks the quote against this record.
 
-Without taking the record's word for the image, from the repository's root, with node and openssl
-installed and the image built from the commit named above (the repository may have moved on from it):
+Without taking the record's word for the image. This record is written in a later commit than the one
+it names, so the image is built from the commit named above in a checkout of its own (IMAGE below is
+its evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI; REPORT.md has the commands), and the check is run from
+the root of the newest checkout, with node, openssl, dosfstools, mtools and gdisk installed:
 
-    scripts/gce-check evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI docs/live/builder.quote \\
+    scripts/gce-check IMAGE docs/live/builder.quote \\
       {keys['builder']} \\
       {keys['challenge']}
 

@@ -940,7 +940,7 @@ by the guest itself.
     - Seen once in those 768 and not explained: an answer of 8,005 bytes that had not arrived
       after 60 s, the guest having made the quote and gone on to answer what came next.
     - **The clock is now stopped once, when the image starts, and stays stopped** (2026-11-25,
-      `stop_clock`; not yet the image on Compute Engine, which stops it around the call). That
+      `stop_clock`; on Compute Engine from the image of 12:47 UTC that day). That
       also keeps the firmware's handler from running a hundred times a second under the
       program. Nothing was found to want it: the OS's `scripts/test-efi tdx`, the hosted
       tests, `run-fixtures tdx --limits --key --quotes 100`, `--spec`, `check-secret-code`,
@@ -1049,12 +1049,12 @@ by the guest itself.
         blocks, all valid, randao and withdrawals as the chain's next block had them in all
         15 that could be compared. A block that comes later than four seconds and after
         the round has begun can still cost one refused bid.
-        The second time (15732348, 13:13 UTC, on the image above): again a block that came
+        The second time (15732348, 13:10 UTC, on the image above): again a block that came
         late, and one round was built on the old parent before the beacon node had it.
         This time with the old parent's own randao and the withdrawals for the later slot,
         and Flashbots, Aestus and Titan each answered 200, which is a relay having run the
         block. So relays take a block built two slots on from its parent with these inputs.
-        **A slot that stayed empty came at 13:24 UTC** (15732467; the beacon chain has no
+        **A slot that stayed empty came at 13:34 UTC** (15732467; the beacon chain has no
         block there). Three rounds were built for 15732468 on the block before, ready 6.1 s,
         4.4 s and 0.6 s before the slot. All four relays answered 200 to the first two, and
         to the third Aestus and Titan 200, Flashbots and Ultrasound that it was below their
@@ -1159,8 +1159,8 @@ by the guest itself.
         15731111) and one here, the first round was the only one, its block ready five
         seconds before the slot. The feeder judged a second round by what the first had cost,
         4.5 to 5.5 s, most of it proofs that a second round does not fetch again.
-      - **A limit inside a transaction, in the guest** (2026-11-25; not yet in an image that
-        runs anywhere). It is wider than the two kinds of contract above. `precompile-time`
+      - **A limit inside a transaction, in the guest** (2026-11-25; on Compute Engine from the
+        image of 17:09 UTC that day). It is wider than the two kinds of contract above. `precompile-time`
         puts each precompiled contract's worst input to the engine's host on the guest's
         runtime: a transaction of all the gas one may have (2^24) spent on nothing but
         recovering signers takes 4.0 s, on bn254 additions 4.0 s, on powers of 32-byte
@@ -1261,9 +1261,10 @@ by the guest itself.
       a made-up sealed message was answered "does not open" by the guest, a request to build
       was refused by the door.
     - What it would give once it runs somewhere: anyone can ask for a quote no older than
-      they like (REPORT.md says they cannot now), a page could show the guest's key as it is
+      they like (they could not until the door opened on 2026-11-25), a page could show the guest's key as it is
       and not as a file says it was, and strangers can hand in sealed transactions.
-    - **The page that uses it is written and not published** (`evm/demo/send.html`, with
+    - **The page that uses it** (written first and published later the same day, below;
+      `evm/demo/send.html`, with
       `send.js`, `seal.js` and `verify.js`): it asks the door for the sealing key with random
       bytes of its own, takes the key only if the quote holds, is of that key and that
       asking, and is of the program `docs/live` names on the firmware of the quote kept
@@ -1280,7 +1281,7 @@ by the guest itself.
       `http://127.0.0.1` or `localhost` as well as one over HTTPS. Not seen in a browser:
       a quote made for the page's own asking (the stand-in can make none), Firefox, Safari.
     - **A sealed transaction is kept an hour at most** (2026-11-25, `Seal.farthest`; in the
-      same image as the clock, not yet on Compute Engine): one whose last slot is more than
+      same image as the clock, on Compute Engine from 12:47 UTC that day): one whose last slot is more than
       300 on from the slot a block is asked for is dropped when the block is asked for, as one
       whose time is up is. Until this a transaction that could never go in held one of the 64
       places for as long as its sender had written. Three checks in `build-test`.
@@ -1351,7 +1352,7 @@ by the guest itself.
       the page with this change in a browser (the text appears only after a hand-in, and a
       hand-in to the live builder takes the feeder's check away for as long as it is kept).
   - **Against the blocks proposers took, from Compute Engine** (2026-11-25, the hour from 04:28
-    UTC, the first on the image now there; `/data/eth/shadow/tools/gap.py` on the feed's record,
+    UTC, the first on the image then there, of 04:27; `/data/eth/shadow/tools/gap.py` on the feed's record,
     asking six relays' public lists what each slot's taken block paid): 267 of 300 slots had a
     figure. Ours was worth 0.00176 ETH at the median and theirs 0.00525: 34% at the median, 80% at
     best, never more; summed 0.53 ETH against 1.70 (31%). The same hour: 1,612 blocks built,
@@ -1374,7 +1375,9 @@ by the guest itself.
     `"optimistic_submission":false` (looked at 2026-11-25, a few rows of each).
   - **Counted for REPORT.md** (2026-11-25): the modules of this project with a start-up routine in
     the image's map (`initialize_evm_…`, `initialize_silo_x2dos_…`) are 66 files of 14,660 lines,
-    comments and blank lines included (48 under `evm/`, 10,540 lines; 18 of the OS, 4,120). The
+    comments and blank lines included (48 under `evm/`, 10,540 lines; 18 of the OS, 4,120). (For
+    the image of 17:09 UTC, with the work limit: the same 66 files, 14,776 lines, 10,656 under
+    `evm/`.) The
     818 quote requests since the fix are 768 on a test machine and 50 on the running one.
   - **REPORT.md was read by a reviewer told to doubt it** (2026-11-25; a separate session that
     checked its figures against this file and the records). Mended from that: what a host can
@@ -1386,6 +1389,45 @@ by the guest itself.
     is given: 326,107,648 bytes for BuilderNet v1.6's TDX image for Azure, which is the
     `Content-Length` its download server gave for the image file linked from the release notes,
     asked on 2026-11-25 without fetching the file.)
+  - **And read again, the same way, late on 2026-11-25** (a separate session, told to check the
+    report against this file, the threat model and the scripts, and to run nothing). Mended from
+    it:
+    - The steps for checking the quote failed as written. The record names a commit older than
+      the one it is written in, so at that commit `docs/live` is the record of the guest before;
+      the report said to check out that commit and run the command "given there". It now says to
+      build in a second checkout and check from the newest, with the commands, and
+      `docs/live/builder.txt` (and `scripts/gce-live`, which writes it) says the same. Not run:
+      those commands as written, with `git worktree`; `image.yml` does the same with two
+      checkouts and passes.
+    - What the reproduction steps left out: Linux on x86-64, elan, the packages `gce-check`
+      needs, how `scripts/gce-try` is called and that `SILO_GCE_FROM` needs a tag and is a range,
+      where the feed looks for its nodes, the reth the patch is for, the quoting service's socket.
+    - Stale: the threat model said the work limit was not in the running image; the report said a
+      firewall rule lets in the feeder's address alone (the door's machine is let in too); it gave
+      the feed's rule for stopping as it was before 15:07; "three slots in a thousand in the last
+      run here" was of the run before the last; five lines of this file said "not yet" of things
+      since deployed or published; `builder/shadow` still asked Jaune's builder by default in a
+      mode nothing uses, which images now refuse.
+    - Said more strongly than what was run: "anybody can build to the same file" (two machines,
+      both ours or GitHub's); "every one judged valid" did not say what the validator does not
+      judge (whether the parent is still the head, the randomness), though thirteen such blocks
+      were refused for those; "only the 200s say a relay ran the block" rests on a few rows of two
+      relays' lists; "most of what it lacks was never public" is one node's pool on one machine;
+      the headline slots on Compute Engine did not say half were on the 4.9 MB images.
+    - Wrong, recounted from the records: "since 12:47 … seven rounds a slot, and the last bid
+      0.75 s" is 12:28, six rounds at the median and 0.76 s in the 600 slots from 12:48 (the
+      image now running: seven, and 0.77 s, in 1,322 slots to about 21:30); the split of a round into
+      0.35 s and 0.75 s was a subtraction from the median round, and the parts measured are of a
+      slot's last round, 0.35 s and 0.98 s. Two times of day in this file were off by ten minutes
+      and three (slots 15732467 and 15732348). The builder was dated to the 19th, when `evm/`
+      began as a service that checks blocks; building and bids are of the 21st.
+    - Not mended: the records the Google Cloud totals were counted from are still not published,
+      so nobody else can recount them; the tools that compare with proposers' blocks
+      (`/data/eth/shadow/tools/`) are not in the repository; what the taken blocks held that was
+      public was not measured on Google Cloud.
+    The reviewer did not check: anything outside this machine, the records themselves, anything
+    that needs a build or a run, the Lean and C behind the security statements, the threat model
+    outside the EVM section, most of this file.
   - Not done there: a look at how often the guest leaves the trust domain there.
   - Spent so far on Compute Engine for this: about thirteen dollars by 2026-11-25 18:45 UTC (of
     the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine

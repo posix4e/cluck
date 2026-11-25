@@ -2814,8 +2814,18 @@ What it stands on that is not sound yet:
       image on a TDX machine of Compute Engine through `scripts/gce-try`, read by eye, the same three
       lines; on the builder's image in a trust domain here, `run-fixtures tdx --limits --key`,
       `check-secret-code tdx`, `run-ask tdx`, all as before.
-      **Not run yet:** 1,000 slots on this image; anything on Compute Engine but the stack's own
-      test; CI builds nothing of `evm/`, so `stack-check` is run by hand.
+      **And 1,000 slots on it here** (the stand-in's twin in a trust domain on this box, blocks
+      26494570 to 26495567, 20:25 to 23:45 UTC on 2026-11-25, the command the feed runs with
+      `--relay-wait 1500 --slots 1000`, record in `/data/eth/shadow/gate1000o`; the live feed to
+      Compute Engine ran beside it throughout). Every slot with a block sent; 11,076 blocks built
+      and 10,703 sent, each judged valid by the node here, the same at the stand-in and signed as it
+      should be; no answer other than 200; none ready after its slot began. Six rounds, each a
+      slot's first, ended with a witness that fell short (status 6) and the rounds after them built.
+      A slot's last block was ready 0.82 s before it at the median (least 0.49 s); eleven rounds a
+      slot, 0.65 s a round. Nothing on the guest's console after its first line: the hole was not
+      reached.
+      **Not run yet:** anything on Compute Engine but the stack's own test; CI builds nothing of
+      `evm/`, so `stack-check` is run by hand.
       **Not done:** how deep a hostile block can make it recurse has still not been measured (what
       that depth can now do is stop the builder, not write on the image); firmware's own stack,
       which the OS's other images run on, is as firmware made it; the tables are written by C by

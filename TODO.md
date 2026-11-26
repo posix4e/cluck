@@ -1493,9 +1493,22 @@ by the guest itself.
     - The last round of a slot is the one the feeder waits before, to begin it as late as it
       can, and the connection is quiet meanwhile. This machine's Linux lets a quiet connection's
       sending window fall back (`net.ipv4.tcp_slow_start_after_idle` is 1, and the congestion
-      control is cubic with its early exit from slow start): taken to be the cause, by the
-      pattern; not looked at on the wire. Every round follows some quiet, so every request
-      comes slower than it could (80 ms a megabyte at the median, over a path of 12 ms).
+      control is cubic with its early exit from slow start). Every round follows some quiet, so
+      every request comes slower than it could (80 ms a megabyte at the median, over a path of
+      12 ms).
+    - **The window does fall back, by the feeder's own readings** (the run of 05:11 UTC on
+      2026-11-26, 300 slots, 1,713 rounds; "link" in each round's entry is what Linux says of
+      the connection, TCP_INFO, before the request and once it is handed over). Before a
+      request the connection had been quiet 0.97 s at the median and its window stood at 127
+      packets (a tenth under 68). In the 1,518 rounds whose request the kernel took at once,
+      the window read straight after was 10 packets in 984 and 30 or fewer in 1,484. So a
+      request of one to three megabytes sets out with a tenth of the window the one before it
+      ended on. Of that hour's 12 last rounds with nothing in them, 8 were such; the other 4
+      were requests of 1.7 to 8 MB that took 0.24 to 1.1 s only to hand over. Not known yet:
+      why from 10 packets some regrow in 0.1 s and some take 0.4 s or more (the early exit
+      from slow start, or packets lost). From the run of 07:10 UTC the entry also has where
+      the window stood when the answer came, the size above which it grows slowly, and the
+      count of packets sent twice, which should say.
     - The remedy is `sudo sysctl -w net.ipv4.tcp_slow_start_after_idle=0` on this machine,
       which needs root: asked of the user, not done. `coming.py` before and after would show
       what it gives.
@@ -1523,9 +1536,12 @@ by the guest itself.
       rounds came out short (four with nothing, three with fewer) where it had been 46 in a
       hundred, none of them in the last fourteen slots; it had learned 0.25 s by then, and the
       last block was ready 1.0 s before the slot at the median where it was 0.83 in the first
-      fifteen. `scripts/round-check` has the rule. Not run: a thousand slots here with it;
-      and on Compute Engine, where the feed takes it up at 05:11 UTC and it should stay near
-      nothing, since one in twenty is about where it settles.
+      fifteen. `scripts/round-check` has the rule. Not run: a thousand slots here with it.
+      On Compute Engine it changes nothing, as expected: one in sixteen is where the rule
+      settles and the fault there is rarer. In the feed's first hour with it (05:11 UTC, 300
+      slots, every block valid) the last round held nothing in 12 slots and fewer in 3, the
+      margin was 0.04 s at the median and never over 0.14, and the last bid 0.86 s before the
+      slot at the median.
   - [ ] **A proposer whose fee recipient spends in the block gets no bid, or too low a one**
     (found 2026-11-25, looking at why slot 15734425 had nine valid blocks of 15 to 72
     transactions, each counted as paying nothing and kept by the guest). `Evm.Build` counts a

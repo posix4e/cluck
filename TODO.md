@@ -2865,8 +2865,8 @@ What it stands on that is not sound yet:
       A slot's last block was ready 0.82 s before it at the median (least 0.49 s); eleven rounds a
       slot, 0.65 s a round. Nothing on the guest's console after its first line: the hole was not
       reached.
-      **Not run yet:** anything on Compute Engine but the stack's own test; CI builds nothing of
-      `evm/`, so `stack-check` is run by hand.
+      **Not run yet:** anything on Compute Engine but the stack's own test; CI starts no machine
+      with `evm/`'s images, so `stack-check` is run by hand.
       **Not done:** how deep a hostile block can make it recurse has still not been measured (what
       that depth can now do is stop the builder, not write on the image); firmware's own stack,
       which the OS's other images run on, is as firmware made it; the tables are written by C by
@@ -2874,7 +2874,12 @@ What it stands on that is not sound yet:
 - [ ] **The three runtime functions it adds are in `evm/rt/`, not in `rt/`**, and are held to Lean's runtime
       only by `evm-test` (212 cases of `powMod`) and by the fixtures. If the service stays, they go through
       what every other runtime function went through.
-- [ ] **Nothing in `evm/` is built or run by CI.**
+- [x] **CI builds `evm/` and runs its tests** (2026-11-26, the job `builder` of `ci.yml`, eight
+      minutes on GitHub's machine): `evm-test`, `fast-word-test`, `fast-op-test`, `trie-test`,
+      `stateless-test`, `build-test`, `bn254-test`, `bls-test`, `tls-test`, then `evm-serve` and
+      `evm-serve-min` on every fixture. `image.yml` builds the running image besides. Not in CI:
+      Ethereum's own suites (`fast-fixtures`), anything that starts a machine (`run-fixtures`,
+      `stack-check`, `check-secret-code`), anything that needs a node.
 
 Not done:
 

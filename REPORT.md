@@ -120,8 +120,10 @@ What that count leaves out or flatters:
 - **Nothing proved covers the builder.** Parts of the runtime have proofs. The network stack and the
   builder are tested: the cryptography against OpenSSL's, the engine against Ethereum's own suites
   (4,723 files) and against Jaune, the blocks against reth's validator. That is evidence, not proof.
-  Those suites are run by hand where this is developed: the repository's CI builds the image and tests
-  the tools around it, not the builder's Lean, and Ethereum's suites were not run again for every image.
+  The repository's CI builds the image, tests the tools around it and, since 2026-11-26, builds the
+  builder's Lean and runs its own tests (the engine's parts against Jaune's, blocks checked and built
+  on the fixtures, the pairings, TLS). Ethereum's suites, the image in a trust domain and the runs of
+  slots are run by hand where this is developed, and the suites were not run again for every image.
   The TLS and the cryptography under it were written here and have been read by nobody who writes such
   code for a living.
 

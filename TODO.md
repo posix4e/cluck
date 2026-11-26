@@ -1750,6 +1750,45 @@ by the guest itself.
         a tenth of a second the other way. `round-check` as it should be, with its cases
         changed to say this. The feed takes it up at its next hourly start; the 1,000 slots
         under way run on the rule before.
+      - **The feeder asked for proofs five to a batch, and the node answers a batch one call
+        after another** (2026-11-26; `builder/shadow`). Every round spent 0.22 s on proofs
+        however few it needed: reth takes about 45 ms over an `eth_getProof` whatever is asked.
+        Asked singly, all at once, 26 come back in 0.10 s. On the live feed the step went from
+        0.27 s at the median to 0.12 s at its hourly start at 17:19 UTC, the blocks valid as
+        before. The 1,000 slots under way began before it.
+      - **The engine remembered a storage slot it could not read as an empty one** (found and
+        put right 2026-11-26, `Fast/State.lean`; `THREAT_MODEL.md` has the whole of it). A
+        transaction left out because the witness lacked a slot left that slot in the engine's
+        world holding nothing, and an account it could not read and paid, as not there; a later
+        transaction of the block reading the same place was told so. It is in every image so
+        far, the one on Compute Engine and the one under test included, and wants a transaction
+        whose proof is missing and another after it reading the same place: no block built
+        wrong is known (every one was judged by a node), but nothing stood in the way of one.
+        Found by the test of the next item, on block 26456390. **Open: an image with this in
+        it, tested and deployed.**
+      - **A block can go on from the block before** (2026-11-26; `Build.runGoingOn`, byte 2 of
+        `JBLF2`; the guest's side only). The guest keeps the block it built as that stood after
+        its last transaction, and a request for the same header that proposes the same
+        transactions and more has only the new ones run. Of the 74 dumped requests 67 went on,
+        and on a workstation those took 41 ms where building from nothing takes 73 (signing
+        apart), then 31 with the two changes to the ending below. `build-test` and `bls-test`
+        say what was checked. `builder/shadow-try` has the feeder's side (`--continues`: the
+        byte, the block before proposed again first, no learned margin) and `--dump`;
+        `scripts/dump-to-replay` makes a dump into requests to put to an image with byte 0 or
+        2. **Open, all waiting on the 1,000 slots under way: an image; the same dump put to
+        it both ways in a trust domain; 25 slots and then 1,000 through the feeder; what the
+        kept block takes of the heap; then Compute Engine.**
+      - **The ending of a block: the receipts' root by this project's trie, and a state root
+        that writes without looking first** (2026-11-26; `Evm/Bridge.lean`). 9 ms to under
+        one, and 18 ms to 15, a block, on a workstation. What is left of a round that goes on
+        is mostly the state root, which is worked out from the parent's whole every time:
+        about 75 µs for each account or slot the block changed, a third each for reading the
+        nodes on the way down, writing, and hashing on the way up. Not done: a state root
+        that goes on from the round before as the block does; the transactions' root, still
+        Jaune's (1 to 2 ms).
+      - **The console says how a request's time was divided** (2026-11-26; `Machine.buildWith`):
+        reading, the transactions, ending, signing, for a request no sealed transaction was
+        tried in. Not seen yet: no image has been built with it.
       - **On Compute Engine since 2026-11-26 15:18 UTC** (`evm-os` `a07875d4…174a38df`,
         4,045,312 bytes, built from commit 77d8cb4: the stack guard, what a request gave kept,
         the signers kept; in place of `93068517…`, which had run since 17:09 UTC on the 25th).

@@ -523,7 +523,10 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   request. One block is kept, replaced by each request that may go on and forgotten with everything
   else kept; its size is that of the state the block touched and its transactions decoded, not
   measured yet in a trust domain. On the console the machine says that a block went on and from how
-  many transactions, which the host knows. Checked in `build-test` on the blocks of mainnet there:
+  many transactions, which the host knows. It also says there, since the same day, how a request's
+  time was divided (reading it, the transactions, ending the block, signing), but only of a request
+  no sealed transaction was tried in: of one that was, the console says how long all of it took and
+  no more, as before, and that much the host times for itself (`Machine.buildWith`). Checked in `build-test` on the blocks of mainnet there:
   a block's transactions proposed in two parts give the very block built at once; the clock running
   out part way gives a block the checker accepts, and the next request finishes it; another gas
   limit, rule, fee recipient, a transaction withdrawn, or transactions added by the machine each

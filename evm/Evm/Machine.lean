@@ -543,10 +543,24 @@ def buildWith (request : ByteArray) (added : ByteArray → Evm.Bid.Extra := fun 
     let _ ← pump
     if allowed == 0 then pure false else return (← Efi.millis).toNat ≥ stopAt
   let kept ← modifyGet fun s => (s.kept, { s with kept := {} })
-  let outcome ← Evm.Bid.buildWith over key request added serving.other kept
+  -- When each part of the work was done (`Bid.buildWith`'s `mark`), for the console.
+  let marks ← IO.mkRef (#[] : Array Nat)
+  let mark : M Unit := do
+    let time ← Efi.millis
+    marks.modify (·.push time.toNat)
+  let outcome ← Evm.Bid.buildWith over key request added serving.other kept mark
   -- Put back before anything else is done with the outcome; it is not part of what is answered.
   modify fun s => { s with kept := outcome.kept }
-  return { outcome with kept := {} }
+  -- Where the time went, when nothing but what the sender proposed was tried: the milliseconds of
+  -- reading the request with what is kept, of the transactions with all that comes before the first,
+  -- of ending the block, and of signing the bid. Of a block that sealed transactions were tried in,
+  -- nothing is said beyond how long all of it took, which the host sees for itself.
+  let ended := (← Efi.millis).toNat
+  let parts := match (← marks.get) with
+    | #[read, tried, built] =>
+      if outcome.tried then "" else s!" ({read - now} to read, {tried - read} to the last transaction, {built - tried} to end the block, {ended - built} to sign)"
+    | _ => ""
+  return { outcome with kept := {}, parts }
 
 /-- A block built, bid for, and sent to relays: a call out to each relay asked for, or the answer at once
 when there is nothing to send. The transactions sealed to this machine that are good for the slot are
@@ -576,7 +590,7 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) (since
   let more := match built.wentOn with
     | some had => s!", going on from {had}"
     | none => ""
-  Platform.write s!"evm: status {built.reply[0]!}, {now - started} ms{sealed}{more}\n".toUTF8
+  Platform.write s!"evm: status {built.reply[0]!}, {now - started} ms{sealed}{more}{built.parts}\n".toUTF8
   let bid := if built.tried then Send.hidden else built.reply
   let some submission := built.submission | finish bid built.wanted "no block was built"
   -- A block for the same slot on the same parent as one a relay has already taken, paying no more, stays
@@ -714,7 +728,7 @@ partial def work : M Unit := do
       let more := match built.wentOn with
         | some had => s!", going on from {had}"
         | none => ""
-      Platform.write s!"evm: status {reply[0]!}, {(ended - started).toNat} ms{report}{more}\n".toUTF8
+      Platform.write s!"evm: status {reply[0]!}, {(ended - started).toNat} ms{report}{more}{built.parts}\n".toUTF8
       transmit (← modifyGet (·.reply ended.toNat key (frame reply)))
     work
 

@@ -961,15 +961,19 @@ def runKeeping {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (othe
 
 /-- A stage taken to its answer as `finishWith` takes it, and beside the answer the fast engine's block
 as it stood when nothing was proposed any more and nothing had yet been done to end it: `none` when
-the stage is not the fast engine's or never got that far. `last` is what to answer when it did not. -/
-def Stage.finishKeeping {m : Type → Type} [Monad m] (over : m Bool) : Nat → Stage → Option FastJob → m (Stage × Option FastJob)
+the stage is not the fast engine's or never got that far. `last` is what to answer when it did not.
+`mark` is done once, at that moment, the last transaction tried and the block's ending not begun: for
+whoever has a clock and wants to know how long each took. -/
+def Stage.finishKeeping {m : Type → Type} [Monad m] (over : m Bool) (mark : m Unit) :
+    Nat → Stage → Option FastJob → m (Stage × Option FastJob)
   | 0, stage, last => pure (stage, last)
   | steps + 1, stage, last => do
     let stage ← if stage.filling then (do if (← over) then pure stage.cut else pure stage) else pure stage
-    let last := match stage with
-      | .goingFast job => if job.rest.isEmpty then some job else last
-      | _ => last
-    finishKeeping over steps stage.step last
+    let ended : Option FastJob := match stage with
+      | .goingFast job => if job.rest.isEmpty then some job else none
+      | _ => none
+    if ended.isSome then mark
+    finishKeeping over mark steps stage.step (ended.orElse fun _ => last)
 
 /-- What is kept of a block for the next request to go on from: `job` is the block before its ending,
 built for `r`, whose block's bytes are `proposal`; `seen` is what is known of the transactions proposed
@@ -1050,13 +1054,16 @@ block before (`Request.goesOn`): with that block when it is one for the same pla
 from nothing otherwise. Beside the answer and the signers, the block to go on from next time, and, when
 this one went on, how many transactions it had to begin with.
 
-A request that does not say it may go on is `runKeeping`'s, and what is kept to go on from is handed
-back as it came. -/
+A request that does not say it may go on is answered as `runKeeping` answers it, and what is kept to
+go on from is handed back as it came. `mark` is done when the last transaction has been tried
+(`Stage.finishKeeping`). -/
 def runGoingOn {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (before : Option Before)
-    (other : Other := byJaune) : m ((Response × Array Note × String) × Signers × Option Before × Option Nat) := do
+    (other : Other := byJaune) (mark : m Unit := pure ()) :
+    m ((Response × Array Note × String) × Signers × Option Before × Option Nat) := do
   if !r.goesOn then
-    let (answer, signers) ← runKeeping over r other
-    return (answer, signers, before, none)
+    let (stage, signers) := beginKeeping r other
+    let (stage, _) ← stage.finishKeeping over mark stage.left none
+    return (stage.answer, signers, before, none)
   let proposal := Proposal.of? r.witness.block
   let going : Option (Before × Proposal × FastJob × Signers × Std.HashMap Fast.Word (Option Candidate)) :=
     match before, proposal with
@@ -1065,7 +1072,7 @@ def runGoingOn {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (befo
   match going with
   | some (b, proposal, job, signers, seen) =>
     let had := job.included.size
-    let (stage, last) ← Stage.finishKeeping over (job.rest.length + 1) (.goingFast job) none
+    let (stage, last) ← Stage.finishKeeping over mark (job.rest.length + 1) (.goingFast job) none
     return (stage.answer, signers, last.map (Before.of r proposal seen b.ancestors), some had)
   | none =>
     let (stage, signers) := beginKeeping r other
@@ -1073,7 +1080,7 @@ def runGoingOn {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (befo
     let tried : List Candidate := match stage with
       | .goingFast job => job.rest
       | _ => []
-    let (stage, last) ← stage.finishKeeping over stage.left none
+    let (stage, last) ← stage.finishKeeping over mark stage.left none
     let kept : Option Before := match last, proposal with
       | some job, some proposal =>
         if r.fromSender < proposal.items.size then none else

@@ -168,6 +168,9 @@ structure Outcome where
   /-- When the block went on from the one built for the request before (`Build.runGoingOn`): how many
   transactions it had to begin with. -/
   wentOn : Option Nat := none
+  /-- For the console of a machine with a clock: where the time went, in words, or nothing
+  (`Evm/Machine.lean` fills it in). -/
+  parts : String := ""
 
 /-- Transactions the machine adds to those a request proposes, which the request's sender has not seen. -/
 structure Extra where
@@ -194,10 +197,15 @@ state, because of a transaction the sender is not to know about.
 
 `kept` is what whoever calls this has of earlier requests read with what was sent before
 (`Build.Kept.take`); the outcome has what there is to keep after this one. With none handed in, such a
-request is read with nothing. -/
+request is read with nothing.
+
+`mark` is done at three moments, for whoever has a clock and wants to know where a request's time
+goes: when the request has been read with what is kept, when the last transaction has been tried, and
+when the block is ended and only the bid is left to sign. The second is not done for a request the
+machine adds transactions to. -/
 def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input : ByteArray)
     (added : ByteArray → Extra := fun _ => {}) (other : Build.Other := Build.byJaune)
-    (kept : Build.Kept := {}) : m Outcome := do
+    (kept : Build.Kept := {}) (mark : m Unit := pure ()) : m Outcome := do
   if input == keyMagic then return { reply := key.publicKey, kept }
   let refuse : Outcome := { reply := ({ status := 5 } : Build.Response).encode, kept }
   if input.size < magic.size + 64 || input.extract 0 magic.size != magic then return refuse
@@ -234,8 +242,9 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
     -- kept from one request to the next.
     let before := kept.before
     let kept := { kept with before := none }
+    mark
     let ((response, _, _), signers, before, wentOn) ← (do
-      if extra.wires.isEmpty then Build.runGoingOn over request before other
+      if extra.wires.isEmpty then Build.runGoingOn over request before other mark
       else
         let (answer, signers) ← Build.runKeeping over request other
         pure (answer, signers, before, none) :
@@ -248,6 +257,7 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
         let (again, _, _) ← Build.runWith over plain other
         pure (again, plain)
       else pure (response, request)
+    mark
     match response.built with
     | none => return { reply := response.encode, wanted := response.wanted, tried := !extra.wires.isEmpty, kept, wentOn }
     | some built =>

@@ -1565,10 +1565,53 @@ by the guest itself.
       guest holds. Tried here on 25 slots (blocks 26498036 on, a guest in a trust domain, the
       stand-in for a relay): 235 blocks, every one built and judged valid; a request was
       155 KB at the median (a head's first 344 KB, a slot's last 252 KB) where whole it would
-      have been 2.4 MB; ten rounds a slot. Not run yet: a thousand slots; the image on
-      Compute Engine, where the slow arrivals are; the heap with the most kept and the longest
+      have been 2.4 MB; ten rounds a slot. Then a thousand slots here with it
+      (`/data/eth/shadow/gate1000q`, 08:07 to 11:27 UTC, blocks 26498073 on, the image
+      `950803d4…` and its twin in a trust domain, the stand-in for a relay): a bid in every one
+      of the thousand; 11,325 rounds, 11,320 blocks built and judged valid, five a head's
+      first round answered with a witness that fell short (status 6; seven the run before,
+      without keeping); eleven rounds a slot where it was ten; a request 121 KB at the median,
+      one in ten over 358 KB, the largest 11.4 MB; a round 0.65 s, of it 0.31 s asking the
+      guest; no round ended after its slot began; the last bid 0.87 s before the slot at the
+      median. The last round came to nothing in 25 slots and to fewer than a round before in
+      38, as many as without keeping (65): the margin the feeder learns settles there by its
+      rule, whatever a round costs. Not run: the heap with the most kept and the longest
       request at once. (The second trial, five slots after the feeder's account was put
       into functions of its own, was 56 blocks, all valid; the commit that says 59 miscounts.)
+      - **On Compute Engine it takes a sixth off a round and does not end the wasted last
+        rounds** (2026-11-26, 09:15 to 11:14 UTC; a second trust domain, `silo-keeps-test` in
+        `silo-test2`, with the image `950803d4…`, since deleted; fed from here with `--guest`
+        and neither `--live` nor `--guest-sends`, so the guest returned each block and sent
+        none anywhere, and the feeder judged each before the next round, which makes a round
+        a little longer than a live one; `/data/eth/shadow/gce-keeps`). 300 slots with
+        `--keeps`, then 300 without on the same machine:
+
+        |  | keeping | everything each round |
+        |---|---|---|
+        | blocks built and judged valid | 1,937 of 1,939 | 1,640 of 1,642 |
+        | rounds a slot, median | 7 | 6 |
+        | a request, median (a slot's last) | 206 KB (248 KB) | 1.53 MB (2.21 MB) |
+        | a round, median (one in ten over) | 0.89 s (1.19) | 1.07 s (1.53) |
+        | of it asking the guest | 0.50 s (0.69) | 0.65 s (1.00) |
+        | slots whose last round had nothing in it | 6 | 10 |
+        | last block with something in it, before the slot: median (one in ten over) | 0.81 s (0.98) | 0.84 s (1.38) |
+        | rounds ended after their slot began | 0 | 1 |
+
+        The two blocks not built in each were a head's first round answered with a witness
+        that fell short (status 6), as in every run here with or without keeping (seven in the
+        thousand slots before). With keeping 18% of the bytes were sent; the guest was told to
+        forget 35 times: 33 on a head's first round, once in nine slots, and twice on the
+        round after one that fell short.
+      - **Why six last rounds still came to nothing**: each allowed the guest 193 to 382 ms
+        for transactions, where a slot's last round allows 480 at the median, and the guest
+        had used that before the first went in. What it does before the first is mostly
+        finding who signed each transaction proposed (`Build.openTemplate`): by
+        `build-why` here on one whole request of that run (180 transactions, 3.4 MB), 296 ms
+        in all, of them 40 for a block with no transaction proposed, 128 for the signers
+        (0.71 ms each; the same request with a gas limit nothing fits under) and 128 for
+        running them. Compute Engine's processors take about 1.7 times as long. And the
+        learned margin above settles, by its own rule, where one waited-for round in sixteen
+        fails. Next: the signers kept from one request to the next, below.
     - Not done, and why: beginning the last round earlier by what the slow arrival costs (it
       would take 0.4 s of what is pending from every slot to save the one in twenty, and by the
       fees that become public in a slot's last seconds that loses more than it saves); sending
@@ -1623,7 +1666,7 @@ by the guest itself.
     transactions go in, which this builder has not made so far), or fees to an account of the
     guest's own and a last transaction signed in the guest that pays the proposer (new code
     inside, and that transaction's gas comes out of every bid).
-  - Spent so far on Compute Engine for this: about thirteen dollars by 2026-11-25 18:45 UTC (of
+  - Spent so far on Compute Engine for this: about eighteen dollars by 2026-11-26 11:17 UTC (of
     the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine
     is 23 cents an hour, about 170 dollars a month, and the door's about ten a month. A subnet (`silo-10-0-2`), a
     firewall rule for this machine's address alone (`silo-test-from-home`), a second network

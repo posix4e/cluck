@@ -1377,8 +1377,15 @@ by the guest itself.
     at the slot's start, 80% and 84%. Our last block was ready 0.78 s before the slot at the
     median. So eleven parts in a hundred of the taken blocks' worth was ours, and of the rest
     nearly all was never in this node's pool: the public fees in those 600 blocks come to 1.56
-    ETH in all. Not done: saying which of the missing public fees were lost to time (public
-    less than 0.78 s before) and which to the order transactions are taken in.
+    ETH in all. Which of the public fees ours lacked were lost to time (`cover.py` now
+    says, by how long before the slot a transaction became public): of 0.311 ETH public by the
+    slot's start and not in ours, 0.215 became public in the last two seconds, when our last
+    round had already taken its transactions (it began 2.03 s before the slot at the median;
+    nothing public in the last 1.5 s was in ours, and a quarter of what came 1.5 to 2 s
+    before), and 0.096 was public earlier and left out: 27% of what came 2 to 3 s before, 7%
+    of 3 to 6 s, 3% of 6 to 12 s. Not done: why those earlier ones were left out (the
+    feeder's limit on a round, the guest's on a transaction's work, a sender's earlier
+    transaction missing, or the order they are taken in).
   - **The first two hours on that image together** (04:28 to 06:28 UTC, 600 slots; the feed's
     records `20261125-042803.jsonl` and `20261125-052810.jsonl`, counted by a few lines of Python
     over their rounds; REPORT.md's figures are these): 3,172 blocks built, 3,102 sent, all judged

@@ -351,7 +351,12 @@ to 91% by fees summed over a run, and 89% to 94% at the median (four runs on one
 Google Cloud 86% summed and 90% at the median (600 slots from 23:50 UTC on 2026-11-25, the last block
 ready 0.78 s before the slot; of what was public three seconds before, 95% and 99%). Public means in
 the pool of the one node that feeds it. So most of
-what it lacks was not public as that node saw it, and some of it was public and not taken.
+what it lacks was not public as that node saw it, and some of it was public and not taken. In those
+600 slots the fees public by the slot's start that ours lacked came to 0.31 ETH: seven parts in ten of
+it became public in the last two seconds, after the slot's last round had begun (a median 2.0 s
+before the slot), and the rest was public earlier and left out. Against that, the taken blocks of
+those hours paid their proposers 13 ETH. A faster builder of this kind would gain little; what is
+missing never reached the public pool.
 
 **How fast the parts are.** Building a block takes the guest 0.33 s at the median on the machine it was
 developed on and 0.45 s on Google's; reth imports a block in 0.04 s. A request of 1.5 MB crosses the

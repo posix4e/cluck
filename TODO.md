@@ -1457,7 +1457,10 @@ by the guest itself.
     and balance before and after block 26494472, and that transaction in our list. One slot of
     the 8,690 the feed's records on Compute Engine have rounds for had a block of five or more
     transactions paying nothing; slots where the recipient spent less than it was tipped, and
-    the bid was only too low, were not looked for (the records do not keep the recipient).
+    the bid was only too low, were not looked for (the records did not keep the recipient; from the feed's run of
+    01:12 UTC on 2026-11-26 each row has `fee_recipient` and, where that account sent any of
+    the transactions proposed, `from_fee_recipient`, how many; run for four slots against a
+    guest here before the feed took it up).
     Not done: leaving that account's transactions out in the feeder (a choice of whose
     transactions go in, which this builder has not made so far), or fees to an account of the
     guest's own and a last transaction signed in the guest that pays the proposer (new code

@@ -111,7 +111,8 @@ def goingOn (dir : String) : IO UInt32 := do
   let mut kept : Evm.Build.Kept := {}
   let mut on : Nat × Nat := (0, 0)
   let mut fresh : Nat × Nat := (0, 0)
-  IO.println "bytes in status | went on from | ms: read, the rest"
+  let mut parts : Nat × Nat × Nat := (0, 0, 0)
+  IO.println "bytes in status | went on from | ms: read, to the last transaction, ending"
   for path in paths do
     let bytes ← IO.FS.readBinFile path
     let some (request, _) := (Evm.Build.request (bytes.extract 69 bytes.size)).run 0
@@ -124,9 +125,11 @@ def goingOn (dir : String) : IO UInt32 := do
     let t1 ← IO.monoMsNow
     let before := held.before
     let held := { held with before := none }
-    let ((response, _, why), signers, before, went) ← IO.lazyPure fun _ =>
-      Id.run (Evm.Build.runGoingOn (pure false) request before Evm.Build.noOther)
+    let marked ← IO.mkRef (0 : Nat)
+    let ((response, _, why), signers, before, went) ←
+      Evm.Build.runGoingOn (m := IO) (pure false) request before Evm.Build.noOther (do marked.set (← IO.monoNanosNow))
     let t2 ← IO.monoMsNow
+    let tried := (← marked.get) / 1000000
     kept := if request.seen.isSome then { held with signers, before } else { held with before }
     let inBlock := match response.built with
       | some built => built.included.length
@@ -134,10 +137,15 @@ def goingOn (dir : String) : IO UInt32 := do
     let had := match went with
       | some had => s!"{had}"
       | none => "nothing"
-    IO.println s!"{bytes.size} {inBlock} {response.status}{if why == "" then "" else " (" ++ why ++ ")"} | {had} | {t1 - t0} {t2 - t1}"
+    IO.println s!"{bytes.size} {inBlock} {response.status}{if why == "" then "" else " (" ++ why ++ ")"} | {had} | {t1 - t0} {tried - t1} {t2 - tried}"
     if response.status == 0 then
-      if went.isSome then on := (on.1 + 1, on.2 + (t2 - t0)) else fresh := (fresh.1 + 1, fresh.2 + (t2 - t0))
+      if went.isSome then
+        on := (on.1 + 1, on.2 + (t2 - t0))
+        parts := (parts.1 + (t1 - t0), parts.2.1 + (tried - t1), parts.2.2 + (t2 - tried))
+      else fresh := (fresh.1 + 1, fresh.2 + (t2 - t0))
   IO.println s!"{on.1} went on, {if on.1 == 0 then 0 else on.2 / on.1} ms each on average; {fresh.1} were built from nothing, {if fresh.1 == 0 then 0 else fresh.2 / fresh.1} ms each"
+  if on.1 != 0 then
+    IO.println s!"of those that went on, on average: {parts.1 / on.1} ms to read, {parts.2.1 / on.1} to the last transaction, {parts.2.2 / on.1} to end the block"
   return 0
 
 def main (args : List String) : IO UInt32 := do

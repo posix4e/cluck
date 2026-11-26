@@ -1612,8 +1612,7 @@ by the guest itself.
         running them. Compute Engine's processors take about 1.7 times as long. And the
         learned margin above settles, by its own rule, where one waited-for round in sixteen
         fails. Next: the signers kept from one request to the next, below.
-      - **The signers are kept too, in an image not yet on Compute Engine or run a thousand
-        slots** (2026-11-26; `Build.Signers`: who signed each transaction of the last request
+      - **The signers are kept too, in an image not yet run a thousand slots** (2026-11-26; `Build.Signers`: who signed each transaction of the last request
         read with what was sent before, under the hash signed, taken only for the same
         signature on the same chain; the machine's own added transactions left out of it;
         THREAT_MODEL.md has what it adds). `build-test`: 934 checks with three blocks of
@@ -1629,7 +1628,31 @@ by the guest itself.
         less at the median and 85 on average. A trial of 25 slots through the feeder (266
         blocks, all valid) did not show it: 294 ms a round at the median where the thousand
         slots of the morning had 290, in another hour with other transactions; so that is
-        not a measure, and the replay is. Not run: a thousand slots; Compute Engine.
+        not a measure, and the replay is. Not run: a thousand slots (under way as this is
+        written).
+      - **On Compute Engine with the signers kept, a tenth off the guest's time for a block of
+        like size** (2026-11-26, 11:53 to 12:53 UTC; image `a07875d4…` in a test trust domain,
+        300 slots with keeping, no relay, each block returned and judged here; the machine
+        deleted after). A block in every slot; 1,965 of 1,967 valid, the two a head's first
+        round fallen short as before; none ended late. Beside the 300 slots of the image
+        before, from 09:15 to 10:14 UTC and in a quieter hour (61 transactions in a block at
+        the median then, 75 now), medians, one in ten over in brackets:
+
+        | | signers kept | image before |
+        |---|---|---|
+        | a round | 0.85 s (1.14) | 0.89 s (1.19) |
+        | of it asking the guest | 0.48 s (0.65) | 0.50 s (0.69) |
+        | the same, blocks of under 50 transactions | 0.39 s | 0.40 s |
+        | of 50 to 100 | 0.47 s | 0.52 s |
+        | of 100 to 150 | 0.55 s | 0.65 s |
+        | of 150 to 250 | 0.67 s | 0.75 s |
+        | slots whose last round came to nothing | 7 | 6 |
+        | last block with something in it, before the slot | 0.83 s (1.06) | 0.81 s (0.98) |
+
+        So it is worth 50 to 100 ms on a full round there and nothing on an empty one, and
+        the last rounds that come to nothing are as many: those are the learned margin's own
+        rate (above), not the guest's speed. The two runs are different hours; only the rows
+        by block size compare like with like, and roughly.
     - Not done, and why: beginning the last round earlier by what the slow arrival costs (it
       would take 0.4 s of what is pending from every slot to save the one in twenty, and by the
       fees that become public in a slot's last seconds that loses more than it saves); sending
@@ -1684,7 +1707,7 @@ by the guest itself.
     transactions go in, which this builder has not made so far), or fees to an account of the
     guest's own and a last transaction signed in the guest that pays the proposer (new code
     inside, and that transaction's gas comes out of every bid).
-  - Spent so far on Compute Engine for this: about eighteen dollars by 2026-11-26 11:17 UTC (of
+  - Spent so far on Compute Engine for this: about nineteen dollars by 2026-11-26 12:57 UTC (of
     the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine
     is 23 cents an hour, about 170 dollars a month, and the door's about ten a month. A subnet (`silo-10-0-2`), a
     firewall rule for this machine's address alone (`silo-test-from-home`), a second network

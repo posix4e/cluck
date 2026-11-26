@@ -1504,7 +1504,28 @@ by the guest itself.
       fees that become public in a slot's last seconds that loses more than it saves); sending
       throwaway bytes ahead of the request to open the window (it puts made-up requests to the
       live guest). Each round's entry in the feed's records carries the request's size and the
-      guest's seconds from the run of 04:11 UTC on 2026-11-26.
+      guest's seconds from the run of 04:11 UTC on 2026-11-26, and from the run after it what
+      Linux says of the connection's sending window before and after the request ("link").
+    - **On this machine it was nearly every other slot**, with nothing slow in coming: in the
+      thousand slots of 2026-11-25 (`/data/eth/shadow/gate1000o`) the last round held nothing in
+      274 and fewer than the round before in 190 more, and those slots' last bid was 2.1 s
+      before the slot at the median. The 0.82 s said of that run above is the median over all
+      its slots and is right; it does not show this. The cause here is the feeder's own: the
+      round waited for is begun when the round before says there is just time for it, and
+      having waited it gathers more than that round did (0.47 s for 0.35 in one looked at), all
+      of which comes out of what the guest is allowed: 246 ms at the median, a tenth under 118,
+      where the round before had used 160 before its transactions ended.
+    - **The feeder now begins that round sooner, by what it learns** (`early` in
+      `builder/shadow`): six hundredths of a second more after a waited-for round in which
+      fewer went in than in a round before it, four thousandths less after any other, never
+      more than 0.6 s. Tried here on 59 slots (2026-11-26, blocks 26496925 on, a guest in a
+      trust domain, `--live --hold`, nothing posted; every block judged valid): seven such
+      rounds came out short (four with nothing, three with fewer) where it had been 46 in a
+      hundred, none of them in the last fourteen slots; it had learned 0.25 s by then, and the
+      last block was ready 1.0 s before the slot at the median where it was 0.83 in the first
+      fifteen. `scripts/round-check` has the rule. Not run: a thousand slots here with it;
+      and on Compute Engine, where the feed takes it up at 05:11 UTC and it should stay near
+      nothing, since one in twenty is about where it settles.
   - [ ] **A proposer whose fee recipient spends in the block gets no bid, or too low a one**
     (found 2026-11-25, looking at why slot 15734425 had nine valid blocks of 15 to 72
     transactions, each counted as paying nothing and kept by the guest). `Evm.Build` counts a

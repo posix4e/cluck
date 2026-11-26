@@ -91,6 +91,24 @@ got = shadow.begin_at(100.0, 103.5, 1.5)
 check("  2.3 times: begun now, and there is time for another after it", got == 100.0, got)
 check("time for exactly one: now", near(shadow.begin_at(100.0, 101.5, 1.5), 100.0))
 check("less than one: no more rounds", shadow.begin_at(100.0, 101.4, 1.5) is None)
+# The round that is waited for is begun sooner by what such rounds have been seen to want (`early`).
+got = shadow.begin_at(100.0, 103.2, 1.5, 0.2)
+check("the round waited for, with a fifth of a second to spare: begun that much sooner", near(got, 101.5), got)
+check("  and never before now", near(shadow.begin_at(100.0, 101.6, 1.5, 0.5), 100.0))
+check("  a round that is not waited for is begun now all the same", shadow.begin_at(100.0, 110.0, 1.5, 0.5) == 100.0)
+check("  and to spare is not time for a round: less than one is still no round", shadow.begin_at(100.0, 101.4, 1.5, 0.5) is None)
+shadow.early["by"] = 0.0
+shadow.learn_early(True)
+check("a waited-for round that held as many as those before: nothing to take off nothing", shadow.early["by"] == 0.0)
+shadow.learn_early(False)
+check("one with fewer in it: the next is begun six hundredths of a second sooner", near(shadow.early["by"], 0.06))
+for _ in range(15):
+    shadow.learn_early(True)
+check("fifteen that held, and it is back where it was", near(shadow.early["by"], 0.0), shadow.early)
+for _ in range(20):
+    shadow.learn_early(False)
+check("never more than six tenths of a second", near(shadow.early["by"], 0.6), shadow.early)
+shadow.early["by"] = 0.0
 # That slot's first round was over 5.11 s before the slot, the block wanted 0.7 s before it.
 check("a full pool's slow first round is followed by a second", shadow.begin_at(0.0, 4.41, shadow.need_of(full, True)) == 0.0
       and shadow.begin_at(0.0, 4.41, shadow.need_of(full, False)) is None)

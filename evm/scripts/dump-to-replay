@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Requests for a bid as the feeder sent them (builder/shadow --dump DIR), made into ones that can be
+put to an image again and compared like for like.
+
+    scripts/dump-to-replay DUMP OUT [--byte N]          (from evm/)
+
+Each DUMP/rNNNNN.req is written to OUT under the same name with the time it allows set to nothing, so
+that no clock cuts a block short and the answer depends on the requests alone, and beside it an empty
+rNNNNN.expected, which scripts/run-fixtures --from OUT wants there: the answers will be called wrong,
+and what is read is the console's time for each ("evm: status 00, N ms"). In name order they are the
+order they were sent in, which matters to a guest that keeps what it is given.
+
+With --byte N the byte after JBLF2 is set to N in every request that has one and is not telling the
+guest to forget (1): 0 for a block built from nothing each time, 2 for one that may go on from the
+block before (Evm/Build.lean). The same dump made both ways is the comparison.
+"""
+import os, sys
+
+args = sys.argv[1:]
+byte = None
+if "--byte" in args:
+    at = args.index("--byte")
+    byte = int(args[at + 1])
+    del args[at:at + 2]
+if len(args) != 2 or byte not in (None, 0, 2):
+    sys.exit(__doc__)
+source, out = args
+os.makedirs(out, exist_ok=True)
+count = changed = 0
+for name in sorted(os.listdir(source)):
+    if not name.endswith(".req"):
+        continue
+    with open(os.path.join(source, name), "rb") as f:
+        request = bytearray(f.read())
+    # JBID2, the slot (8), the proposer's key (48), the fork's version (4), the milliseconds allowed (4),
+    # and then the request to build.
+    if request[:5] != b"JBID2" or len(request) < 75:
+        sys.exit(f"{name}: not a request for a bid")
+    request[65:69] = bytes(4)
+    if byte is not None and request[69:74] == b"JBLF2" and request[74] != 1 and request[74] != byte:
+        request[74] = byte
+        changed += 1
+    with open(os.path.join(out, name), "wb") as f:
+        f.write(request)
+    open(os.path.join(out, name[:-4] + ".expected"), "wb").close()
+    count += 1
+print(f"{count} requests written to {out}" + (f", the byte set to {byte} in {changed}" if byte is not None else ""))

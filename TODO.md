@@ -1684,6 +1684,22 @@ by the guest itself.
         the last rounds that come to nothing are as many: those are the learned margin's own
         rate (above), not the guest's speed. The two runs are different hours; only the rows
         by block size compare like with like, and roughly.
+      - **Where a request's time goes, part by part** (2026-11-26; `build-why --each DIR`, new:
+        the 74 requests above built one after another with keeping, not in a trust domain,
+        where everything takes about two thirds of what it does in one; milliseconds on
+        average, and for the smallest and largest of them, 11 and 179 transactions): reading
+        the request with what is kept 1; before the first transaction 33 (29 to 61), of which
+        decoding the 255 headers and checking that they are a chain is 12 every time;
+        the transactions 27 (5 to 76); ending the block 31 (5 to 66), of which the state root
+        19 (4 to 42), the receipts' root and bloom 9 (0 to 22), the transactions' root 1,
+        closing 0. Signing the bid is 25 to 36 more (`bls-test`, two runs: 20 and 28 making
+        the message a point of G2, which is Jaune's arithmetic, and 5 and 8 the key times it,
+        which is this project's). So of some 120 ms the transactions are 27: a round that went on from the
+        block before would save a quarter, and the larger part is work that is the same every
+        round (the headers, the signing) or done over the whole block every round (the
+        roots). Next, in this order: the headers checked once and kept as checked; the
+        message made a point of G2 by this project's own arithmetic; then going on from the
+        block before, and the roots with it.
       - **On Compute Engine since 2026-11-26 15:18 UTC** (`evm-os` `a07875d4…174a38df`,
         4,045,312 bytes, built from commit 77d8cb4: the stack guard, what a request gave kept,
         the signers kept; in place of `93068517…`, which had run since 17:09 UTC on the 25th).

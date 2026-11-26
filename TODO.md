@@ -1721,8 +1721,10 @@ by the guest itself.
         `scripts/gce-check` said all five hold; the door serves the new keys. Its first eight
         slots: a block in each, 53 of 54 rounds built and valid (one a first round fallen
         short), requests of 0.1 to 0.95 MB where everything would be 2.7 to 5.2 MB, 158
-        answers from relays, all 200 or 202. Not yet: a day of its numbers; `image.yml` on
-        this commit.
+        answers from relays, all 200 or 202. `image.yml` built the same image from the commit
+        `docs/live` names (run 45848335958). After 64 slots: a bid in each, nine rounds a
+        slot at the median where the image before had seven, 526 of 528 blocks built and
+        valid, 1,615 answers, all 200 or 202. Not yet: a day of its numbers.
     - Not done, and why: beginning the last round earlier by what the slow arrival costs (it
       would take 0.4 s of what is pending from every slot to save the one in twenty, and by the
       fees that become public in a slot's last seconds that loses more than it saves); sending

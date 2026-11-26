@@ -92,7 +92,16 @@ exactly what the same bytes would prove in the request, and nothing kept can mak
 is kept does change which requests can be answered: one that leaves out what was never given, or was
 forgotten, is answered as any request with a short witness is (6, or transactions left out), and whoever
 sends it has to know what it has sent. When the nodes and codes given since the last forgetting come to
-more than `Kept.limit` bytes, everything is forgotten once the request that passed it is answered. A
+more than `Kept.limit` bytes, everything is forgotten once the request that passed it is answered.
+
+Who signed each transaction of the last such request is kept too (`Signers`), because finding that out
+is the largest part of what a request costs before its first transaction goes in, and a slot's requests
+propose mostly the same transactions. A signer is kept under the hash that was signed, with the
+signature and the chain it was found for, and is taken for a transaction only when all of those are the
+transaction's own; it was worked out here, from a transaction given here, and is what working it out
+again would give. Nobody sends one. They are not counted in the limit: there are no more of them than the
+last request had transactions. The transactions a machine adds to a request itself are left out of this
+altogether (`Request.fromSender`). A
 request that begins `JBLF1` neither reads what is kept nor adds to it, and is still a function of its
 bytes. So is one that begins `JBLF2` where nothing is kept: `serve` here keeps nothing, and only a
 machine that builds for relays does (`Evm/Machine.lean`).
@@ -111,6 +120,42 @@ def magic : ByteArray := "JBLD1".toUTF8
 def magicFast : ByteArray := "JBLF1".toUTF8
 /-- The fast engine's request read with what was sent before (see "On what was sent before" above). -/
 def magicSeen : ByteArray := "JBLF2".toUTF8
+
+/-- Who signed a transaction, with everything that was worked out from besides the hash signed: the
+chain, whether the transaction is of the first kind (whose `v` carries the chain), and the signature. -/
+structure Signer where
+  chain : UInt64
+  legacy : Bool
+  v : Nat
+  r : Bytes
+  s : Bytes
+  sender : Address
+
+/-- Signers by the hash each signed. -/
+abbrev Signers := Std.TreeMap U256 Signer Trie.order
+
+/-- Who signed `tx`, and the entry that says so under the hash signed: the one held, when it was worked
+out from this same signature on this chain, and otherwise worked out now (`recoverSender`, which reads of
+a transaction its signature, its kind and the hash signed, and nothing else). `none` when nobody can be
+found to have signed it. -/
+def Signers.signer (held : Signers) (chain : UInt64) (tx : Transaction) : Option (U256 × Signer) :=
+  match tx.signingHash with
+  | none => none
+  | some hash =>
+    let legacy := match tx.type with
+      | .legacy .. => true
+      | _ => false
+    let known := match held.get? hash with
+      | some known =>
+        if known.chain == chain && known.legacy == legacy && known.v == tx.v && known.r == tx.r && known.s == tx.s
+        then some known else none
+      | none => none
+    match known with
+    | some known => some (hash, known)
+    | none =>
+      match recoverSender chain tx with
+      | .ok sender => some (hash, { chain, legacy, v := tx.v, r := tx.r, s := tx.s, sender })
+      | .error _ => none
 
 structure Request where
   witness : Stateless.Request
@@ -134,6 +179,13 @@ structure Request where
   request as it is written: `Kept.take` puts them here. -/
   held : Store := .empty
   heldCodes : Std.HashMap Fast.Word ByteArray := {}
+  /-- Who signed the transactions of the request before this one, for a request read with what was sent
+  before: `Kept.take` puts them here too. -/
+  signers : Signers := {}
+  /-- Of the transactions proposed, how many from the first came from whoever sent the request. The
+  signers of the rest, which the machine added itself (`Evm/Bid.lean`), are neither looked for among
+  those kept nor kept: how long a request takes then says nothing of them that it did not before. -/
+  fromSender : Nat := 1000000000
 
 /-- What one transaction may ask of precompiled contracts in a block built against a clock: a quarter of a
 second, by `Bridge.work`. The clock is looked at between transactions and cannot be looked at inside one,
@@ -187,6 +239,10 @@ structure Kept where
   chain : Array (U256 × ByteArray) := #[]
   /-- The bytes of the nodes and codes given since nothing was kept, counted each time one is given. -/
   given : Nat := 0
+  /-- Who signed the transactions of the last request built with what was sent before. `take` hands them
+  to the next and does not change them: whoever runs the request puts that request's in their place
+  (`runKeeping`, `Evm/Bid.lean`). -/
+  signers : Signers := {}
 
 /-- The most the nodes and codes given may come to before everything is forgotten. A request gives a
 megabyte or two when nothing is kept and a tenth of that when the last one's are, so this is some
@@ -201,7 +257,7 @@ The nodes and codes it gives join those kept, by their hashes. Its headers, when
 255, follow the kept ones up to the one the oldest given names as its parent; when there are none, the
 kept ones stand as they are. Whether the result is a chain to the block's parent is not looked at here:
 `begin` checks that of every request, joined or not. What was given is counted, and past `limit`
-nothing is kept after this request. -/
+none of those is kept after this request. The signers kept go with the request, unless it says to forget. -/
 def Kept.take (kept : Kept) (r : Request) (limit : Nat := Kept.limit) : Request × Kept :=
   match r.seen with
   | none => (r, kept)
@@ -227,9 +283,9 @@ def Kept.take (kept : Kept) (r : Request) (limit : Nat := Kept.limit) : Request 
       (r.witness.nodes.foldl (fun n node => n + node.size) kept.given)
     let whole : Request :=
       { r with
-        held := nodes, heldCodes := codes
+        held := nodes, heldCodes := codes, signers := kept.signers
         witness := { r.witness with headers := chain.toList.map (·.2), nodes := #[], codes := [] } }
-    (whole, if size > limit then {} else { nodes, codes, chain, given := size })
+    (whole, if size > limit then { signers := kept.signers } else { nodes, codes, chain, given := size, signers := kept.signers })
 
 /-- A block that was built. -/
 structure Built where
@@ -446,10 +502,11 @@ def answered : M (Response × Array Note) → Stage
   | .error .failure => .done { status := 4 } #[] ""
 
 /-- What is the same whoever builds: the header with everything in it that the parent fixes, checked as a
-header the parent allows, and the proposed transactions in the order they will be tried. The error is the
-answer when the template is refused. -/
+header the parent allows, and the proposed transactions in the order they will be tried, with who signed
+each (those the request holds from the one before are not worked out again). The error is the answer when
+the template is refused. -/
 def openTemplate (r : Request) (fork : Fork) (parent : Header) (chain : BlockChain) (template : Block) :
-    Except Stage (Header × List Candidate) := do
+    Except Stage (Header × List Candidate × Signers) := do
   let rules := fork.ruleSet
   -- What the parent alone fixes is worked out from it; then the template has to be a header the parent
   -- allows, with no gas used yet.
@@ -463,16 +520,23 @@ def openTemplate (r : Request) (fork : Fork) (parent : Header) (chain : BlockCha
   if (validateHeader rules chain blank).isOk == false || !template.ommers.isEmpty then
     .error (.done { status := 3 } #[] "")
   let fee := blank.baseFeePerGas.getD 0
-  let proposed := template.transactions.zipIdx.filterMap fun (item, place) =>
-    match decodeTransaction rules item with
-    | .error _ => none
-    | .ok tx =>
-      match recoverSender r.witness.chainId tx with
-      | .error _ => none
-      | .ok sender =>
-        if r.rule == 0 then some { place, tx, sender, tip := 0 : Candidate }
-        else (tip fee tx).map fun t => { place, tx, sender, tip := t }
-  pure (blank, if r.rule == 0 then proposed else (byTip proposed).toList)
+  let (proposed, signers) := template.transactions.zipIdx.foldl (init := ((#[] : Array Candidate), ({} : Signers)))
+    fun (proposed, signers) (item, place) =>
+      match decodeTransaction rules item with
+      | .error _ => (proposed, signers)
+      | .ok tx =>
+        let theirs := place < r.fromSender
+        match (if theirs then r.signers else ({} : Signers)).signer r.witness.chainId tx with
+        | none => (proposed, signers)
+        | some (hash, signer) =>
+          let signers := if theirs then signers.insert hash signer else signers
+          let sender := signer.sender
+          if r.rule == 0 then (proposed.push { place, tx, sender, tip := 0 }, signers)
+          else match tip fee tx with
+            | some t => (proposed.push { place, tx, sender, tip := t }, signers)
+            | none => (proposed, signers)
+  let proposed := proposed.toList
+  pure (blank, if r.rule == 0 then proposed else (byTip proposed).toList, signers)
 
 /-- Everything before the first transaction: the witness checked, the template checked against the parent,
 the two system calls that open a block, and the proposed transactions in the order they will be tried. -/
@@ -484,7 +548,7 @@ def start (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header
     { blocks := ancestors.map fun h => ⟨h, [], [], []⟩, state := known.state, chainId := r.witness.chainId }
   match openTemplate r fork parent chain template with
   | .error refused => return .error refused
-  | .ok (blank, ordered) =>
+  | .ok (blank, ordered, _) =>
     let benv := initBenv fork chain blank
     let opened : Except TransitionError (Benv × BlockAccessListBuilder) := do
       let (stBeacon, bal) ← beaconRootsCall rules benv
@@ -506,18 +570,20 @@ def short (witness : Bridge.Witness) (world : Fast.World) (notes : Array Note :=
   | _ => .done { status := 7 } notes ""
 
 /-- The same beginning for the fast engine: the template checked against the parent, the engine's world
-over the witness, the block's two opening calls, and what the fee recipient has before any transaction. -/
-def startFast (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) : Stage :=
-  if !Bridge.supported fork then .done { status := 4 } #[] "the engine has no rules for this fork" else
+over the witness, the block's two opening calls, and what the fee recipient has before any transaction.
+Beside the stage, who signed the transactions proposed, for whoever keeps that for the next request. -/
+def startFastKeeping (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) :
+    Stage × Signers :=
+  if !Bridge.supported fork then (.done { status := 4 } #[] "the engine has no rules for this fork", {}) else
   -- Jaune's checks of a header want a chain with a state, and read none of it.
   let chain : BlockChain :=
     { blocks := ancestors.map fun h => ⟨h, [], [], []⟩, state := State.ofPresentList [], chainId := r.witness.chainId }
   match openTemplate r fork parent chain template with
-  | .error refused => refused
-  | .ok (blank, ordered) =>
+  | .error refused => (refused, {})
+  | .ok (blank, ordered, signers) =>
     match Bridge.body fork r.witness.chainId { template with header := blank } [] with
-    | none => .done { status := 5 } #[] ""
-    | some body =>
+    | none => (.done { status := 5 } #[] "", {})
+    | some body => (·, signers) <|
       let body := { body with work := r.work }
       let witness := Bridge.Witness.of r.witness parent.stateRoot r.held r.heldCodes
       let blk := Bridge.environment fork r.witness.chainId blank ancestors
@@ -658,9 +724,10 @@ def byJaune : Other := fun r fork parent ancestors template =>
   | .error shortfall => answered (.error shortfall)
 
 /-- Where a request to build starts: refused, or a block with nothing in it yet. One that does not ask for
-the fast engine is `other`'s to begin. -/
-def begin (r : Request) (other : Other) : Stage :=
-  let only (response : Response) (why : String := "") : Stage := .done response #[] why
+the fast engine is `other`'s to begin. Beside it, who signed the transactions proposed, when the fast
+engine got as far as them. -/
+def beginKeeping (r : Request) (other : Other) : Stage × Signers :=
+  let only (response : Response) (why : String := "") : Stage × Signers := (.done response #[] why, {})
   match rlpToBlockE r.witness.block.toList with
   | .error _ => only { status := 5 } "the block does not decode"
   | .ok (template, _) =>
@@ -681,7 +748,11 @@ def begin (r : Request) (other : Other) : Stage :=
         if !linked || parent.hash != template.header.parentHash then only { status := 5 } "the headers are not a chain to the parent"
         else if ancestors.length != min 255 template.header.number then only { status := 6 } "too few headers"
         else
-          if r.engine then startFast r fork parent ancestors template else other r fork parent ancestors template
+          if r.engine then startFastKeeping r fork parent ancestors template
+          else (other r fork parent ancestors template, {})
+
+/-- Where a request to build starts, without the signers. -/
+def begin (r : Request) (other : Other) : Stage := (beginKeeping r other).1
 
 /-- One more piece of work: the next proposed transaction, or, when none is left, the end of the block. -/
 def Stage.step : Stage → Stage
@@ -731,6 +802,13 @@ def runWith {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (other :
     m (Response × Array Note × String) := do
   let stage := begin r other
   return (← stage.finishWith over stage.left).answer
+
+/-- The same, and who signed the transactions the request proposed, for the next request to be handed
+(`Kept.signers`): none when the fast engine did not get as far as the transactions. -/
+def runKeeping {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (other : Other := byJaune) :
+    m ((Response × Array Note × String) × Signers) := do
+  let (stage, signers) := beginKeeping r other
+  return ((← stage.finishWith over stage.left).answer, signers)
 
 def runWithNotes (r : Request) (other : Other := byJaune) : Response × Array Note × String :=
   Id.run (runWith (pure false) r other)

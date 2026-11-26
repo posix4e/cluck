@@ -101,6 +101,22 @@ def one (engine : Bool) (name : String) (bytes : ByteArray) (shorten : Bool) (ta
       tally ← tally.expect s!"{name}: a block was built on what had been forgotten"
         ((Build.run forgotten).built.isNone && nothing.given == 0 && nothing.chain.isEmpty
           && (size == 0 || (past.given == 0 && (Build.run (past.take bare).1).built.isNone)))
+      -- Who signed each transaction, kept from one request for the next (`Build.Signers`): one for each
+      -- transaction, and the same answer with them handed in. One kept under another signature or
+      -- another chain is not taken, whoever it names; one kept under the transaction's own is, which
+      -- shows when it names somebody else (nothing outside can put one there: `Evm/Bid.lean`).
+      let ((first, _, _), signers) := Id.run (Build.runKeeping (pure false) whole)
+      let ((withThem, _, _), signersAgain) := Id.run (Build.runKeeping (pure false) { whole with signers })
+      let nobody : Address := Address.max
+      let made (change : Build.Signer → Build.Signer) : Build.Signers :=
+        signers.foldl (fun out hash signer => out.insert hash (change signer)) {}
+      tally ← tally.expect s!"{name}: with the signers kept the answer is another, or there are not {count} of them"
+        (first.encode == again.encode && withThem.encode == again.encode
+          && signers.size == count && signersAgain.size == count
+          && (Build.run { whole with signers := made fun s => { s with v := s.v + 1, sender := nobody } }).encode == again.encode
+          && (Build.run { whole with signers := made fun s => { s with chain := s.chain + 1, sender := nobody } }).encode == again.encode
+          && (Build.run { whole with signers := made fun s => { s with r := 1 :: s.r, sender := nobody } }).encode == again.encode
+          && (count == 0 || (Build.run { whole with signers := made fun s => { s with sender := nobody } }).encode != again.encode))
       match Build.Request.encode asked, Build.Request.encode { asked with seen := some true } with
       | some encoded, some forgetting =>
         tally ← tally.expect s!"{name}: read with what was sent before, the request as bytes is answered differently"

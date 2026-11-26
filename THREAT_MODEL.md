@@ -477,6 +477,22 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   connection, so a relay, or the host for it, can have one block posted to it twice. At most one
   is kept a relay, closed after a minute with nothing sent. The questions asked with `JASK1` are
   still a connection each.
+- *Who signed a transaction is kept for the next request too* (2026-11-26; `Build.Signers` in
+  `Evm/Build.lean`). Finding a transaction's signer is the largest part of what a request costs
+  before its first transaction goes in, and the requests of a slot propose mostly the same
+  transactions, so a request read with what was sent before (`JBLF2`, the next item) is also handed
+  the signers found for the request before it. That is a second thing a block is built with that
+  did not come in its own request. What stands in the way of a wrong one: nobody sends a signer;
+  each was worked out in this machine from a transaction given to it, is kept under the hash that
+  was signed together with the signature, the chain and the kind of transaction, and is taken only
+  for a transaction of which all of those are its own, which is everything the working out reads.
+  A kept signer is then what working it out again would give, as far as two different signed
+  contents do not share a keccak hash, which the signature itself rests on. Bounded by the last
+  request: only its transactions' signers are kept. The transactions the machine adds itself, the
+  sealed ones, are neither looked up nor kept (`Request.fromSender`), so how long a request takes
+  says nothing of them that it did not before. Checked in `build-test` on the blocks of mainnet
+  there: the same block with the signers kept; a signer under another signature, chain or `r` not
+  taken; one under the transaction's own taken.
 - *What a request to build gave is kept for the next* (2026-11-26; `Build.Kept` in `Evm/Build.lean`,
   `Machine.State.kept`). A request to build that begins `JBLF2` is read with the trie nodes, contract
   codes and headers that earlier such requests gave, and what it gives is kept in its turn, so whoever

@@ -221,10 +221,15 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
       | some block =>
         { request with
           loud := own + extra.loud
+          fromSender := own
           witness := { request.witness with
             block, nodes := request.witness.nodes ++ extra.nodes, codes := request.witness.codes ++ extra.codes.toList } }
       | none => request
-    let (response, _, _) ← Build.runWith over request other
+    let ((response, _, _), signers) ← Build.runKeeping over request other
+    -- Who signed the transactions this request proposed is kept for the next one, when requests are
+    -- being read with what was sent before. The added transactions' signers are not among them
+    -- (`fromSender` above).
+    let kept := if request.seen.isSome then { kept with signers } else kept
     let (response, request) ← if response.built.isNone && !extra.wires.isEmpty then do
         let (again, _, _) ← Build.runWith over plain other
         pure (again, plain)

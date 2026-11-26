@@ -2,7 +2,8 @@ import Evm
 
 /-! For whoever is making requests to build: what became of each transaction proposed, in the order they
 were tried. One that went in is shown with the gas the block had used once it had run, which is what a
-node's own account of the block can be laid beside; one left out, with why. Never in an image.
+node's own account of the block can be laid beside; one left out, with why. It says how long the block
+took, and how long it takes handed who signed each transaction (`Build.Signers`). Never in an image.
 
     .lake/build/bin/build-why build.req -/
 
@@ -14,6 +15,11 @@ def main (args : List String) : IO UInt32 := do
   let started ← IO.monoMsNow
   let (response, notes, why) := Evm.Build.runWithNotes request
   IO.println s!"status {response.status}{if why == "" then "" else ": " ++ why}; {(← IO.monoMsNow) - started} ms"
+  -- The same again handed who signed each transaction, as a machine that keeps that hands it on.
+  let (_, signers) := Id.run (Evm.Build.runKeeping (pure false) request)
+  let again ← IO.monoMsNow
+  let ((kept, _, _), _) := Id.run (Evm.Build.runKeeping (pure false) { request with signers })
+  IO.println s!"with its {signers.size} signers kept: status {kept.status}; {(← IO.monoMsNow) - again} ms"
   if let some built := response.built then
     IO.println s!"hash {built.hash}, {built.included.length} went in, gas used {built.header.gasUsed}, value {built.value}"
   for note in notes do

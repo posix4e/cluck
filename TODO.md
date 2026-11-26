@@ -1612,6 +1612,24 @@ by the guest itself.
         running them. Compute Engine's processors take about 1.7 times as long. And the
         learned margin above settles, by its own rule, where one waited-for round in sixteen
         fails. Next: the signers kept from one request to the next, below.
+      - **The signers are kept too, in an image not yet on Compute Engine or run a thousand
+        slots** (2026-11-26; `Build.Signers`: who signed each transaction of the last request
+        read with what was sent before, under the hash signed, taken only for the same
+        signature on the same chain; the machine's own added transactions left out of it;
+        THREAT_MODEL.md has what it adds). `build-test`: 934 checks with three blocks of
+        mainnet (the same block with the signers handed in; one kept under another signature,
+        chain or `r` not taken; one under the transaction's own taken). `build-why` on the
+        request above: 290 ms, and 170 handed its 175 signers. Images `evm-os`
+        `a07875d4…` and twin `83575c82…`: `check-secret-code tdx`, `stack-check tdx` and
+        `run-fixtures tdx --limits --key` as they should be. Measured like for like: the 74
+        requests of six slots here (kept as they were sent, the time allowed set to none, so
+        every transaction proposed is tried) put in the same order to the image before
+        (`950803d4…`) and to this one, each in a trust domain: every answer the same block
+        from both; the guest took 324 ms a request at the median before and 252 now, 75 ms
+        less at the median and 85 on average. A trial of 25 slots through the feeder (266
+        blocks, all valid) did not show it: 294 ms a round at the median where the thousand
+        slots of the morning had 290, in another hour with other transactions; so that is
+        not a measure, and the replay is. Not run: a thousand slots; Compute Engine.
     - Not done, and why: beginning the last round earlier by what the slow arrival costs (it
       would take 0.4 s of what is pending from every slot to save the one in twenty, and by the
       fees that become public in a slot's last seconds that loses more than it saves); sending

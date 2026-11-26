@@ -112,7 +112,7 @@ def goingOn (dir : String) : IO UInt32 := do
   let mut on : Nat × Nat := (0, 0)
   let mut fresh : Nat × Nat := (0, 0)
   let mut parts : Nat × Nat × Nat := (0, 0, 0)
-  IO.println "bytes in status | went on from | ms: read, to the last transaction, ending"
+  IO.println "bytes in status | went on from | ms: read, to the last transaction, ending | of those tried and left out, how many for each reason"
   for path in paths do
     let bytes ← IO.FS.readBinFile path
     let some (request, _) := (Evm.Build.request (bytes.extract 69 bytes.size)).run 0
@@ -126,8 +126,15 @@ def goingOn (dir : String) : IO UInt32 := do
     let before := held.before
     let held := { held with before := none }
     let marked ← IO.mkRef (0 : Nat)
-    let ((response, _, why), signers, before, went) ←
+    let ((response, notes, why), signers, before, went) ←
       Evm.Build.runGoingOn (m := IO) (pure false) request before Evm.Build.noOther (do marked.set (← IO.monoNanosNow))
+    -- Why each transaction tried and left out was: how many for each reason, the reason cut short.
+    let reasons : Std.HashMap String Nat := notes.foldl (fun reasons note =>
+      if note.went then reasons else
+      let reason := ((note.said.splitOn ", at ").headD note.said |>.splitOn " where ").headD note.said
+      let reason := (reason.splitOn " 0").headD reason
+      reasons.insert reason (reasons.getD reason 0 + 1)) {}
+    let left := reasons.toList.foldl (fun out (reason, count) => out ++ s!" {count} {reason};") ""
     let t2 ← IO.monoMsNow
     let tried := (← marked.get) / 1000000
     kept := if request.seen.isSome then { held with signers, before } else { held with before }
@@ -137,7 +144,7 @@ def goingOn (dir : String) : IO UInt32 := do
     let had := match went with
       | some had => s!"{had}"
       | none => "nothing"
-    IO.println s!"{bytes.size} {inBlock} {response.status}{if why == "" then "" else " (" ++ why ++ ")"} | {had} | {t1 - t0} {tried - t1} {t2 - tried}"
+    IO.println s!"{bytes.size} {inBlock} {response.status}{if why == "" then "" else " (" ++ why ++ ")"} | {had} | {t1 - t0} {tried - t1} {t2 - tried} | left out:{left}"
     if response.status == 0 then
       if went.isSome then
         on := (on.1 + 1, on.2 + (t2 - t0))

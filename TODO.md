@@ -1504,14 +1504,26 @@ by the guest itself.
       the window read straight after was 10 packets in 984 and 30 or fewer in 1,484. So a
       request of one to three megabytes sets out with a tenth of the window the one before it
       ended on. Of that hour's 12 last rounds with nothing in them, 8 were such; the other 4
-      were requests of 1.7 to 8 MB that took 0.24 to 1.1 s only to hand over. Not known yet:
-      why from 10 packets some regrow in 0.1 s and some take 0.4 s or more (the early exit
-      from slow start, or packets lost). From the run of 07:10 UTC the entry also has where
-      the window stood when the answer came, the size above which it grows slowly, and the
-      count of packets sent twice, which should say.
-    - The remedy is `sudo sysctl -w net.ipv4.tcp_slow_start_after_idle=0` on this machine,
-      which needs root: asked of the user, not done. `coming.py` before and after would show
-      what it gives.
+      were requests of 1.7 to 8 MB that took 0.24 to 1.1 s only to hand over.
+    - **But what makes a request slow is how far the window can grow, and lost packets set
+      that.** Of that hour's requests of 1 to 2.6 MB handed over at once from a window of 10,
+      the 592 that ended on a window of 80 packets or more took what such a round takes; the
+      133 that ended on 40 to 80 took 0.10 s longer at the median, and the 17 that ended under
+      40 took 0.37 s longer. Six minutes of `ss -ti` on the connection (06:20 UTC): the size
+      above which the window grows slowly fell three times, each time as packets were sent
+      twice (96 of 225,265 in those minutes), and stood between 135 and 300. Where they are
+      lost, on the way or at the guest's card, is not known. So the window is held near 150
+      packets, now and then far lower, and a request of 1.7 MB is 1,200: ten round trips at
+      the best. From the run of 07:10 UTC each round's entry also has where the window stood
+      when the answer came, the size above which it grows slowly, and the count of packets
+      sent twice.
+    - `sudo sysctl -w net.ipv4.tcp_slow_start_after_idle=0` on this machine (root; asked of
+      the user on 2026-11-26) would spare each request the climb from 10 packets, three round
+      trips or so. It would not lift what lost packets set, so it is not the remedy it was
+      taken for, and the ask is withdrawn. What would be: requests a tenth the size, by the
+      guest keeping the nodes, codes and headers it has been sent. Of two requests saved for
+      blocks one after the other (26497543, 26497544), the second's nodes were 22 in a
+      hundred new by bytes, its codes 29, its headers one of 255. Being written; not built.
     - Not done, and why: beginning the last round earlier by what the slow arrival costs (it
       would take 0.4 s of what is pending from every slot to save the one in twenty, and by the
       fees that become public in a slot's last seconds that loses more than it saves); sending

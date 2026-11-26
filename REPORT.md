@@ -432,9 +432,10 @@ Where this is thinner than it looks:
   the 26th) that round's request, two megabytes sent from the machine with the node, was so long in
   arriving (0.38 s at the median, where the round before took 0.12 s) that the time it allowed for
   transactions was gone: the block had none in it, the guest kept it back, and the slot's last bid was
-  an earlier round's, 3.1 s before the slot at the median. The sending machine's TCP starts slowly
-  again after every wait: by its own account its sending window stands at about 130 packets before a
-  request and at 10 once the request is handed over. Turning that off needs root there and is not done.
+  an earlier round's, 3.1 s before the slot at the median. By the sending machine's own account
+  of its TCP, packets lost between it and the guest hold its sending window near 150 packets and now
+  and then far lower, and such a request is 1,200 or more. The requests are larger than they need be:
+  each carries again nearly everything the one before it did. Not mended.
 - **A full pool, or one transaction, has kept it from bidding, and may again.** For three minutes on
   2026-11-25 the feeder had 400 transactions to propose, which is the most it takes from its node's
   pool; rounds took 6 to 12 s where they take one, and on Google Cloud five slots in a row went by with

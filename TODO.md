@@ -1738,6 +1738,18 @@ by the guest itself.
         look next: decoding the transactions, the receipts' root, the header's checks.
         **1,000 slots on the twin** began at 15:48 UTC (`/data/eth/shadow/gate1000s`), with
         nothing else built or run on the machine but the feed until it ends.
+      - **The feeder's rule for when to begin a round assumed a slow guest** (2026-11-26;
+        `need_of` in `builder/shadow`). It took a round to need the guest's time and a sixth,
+        while the guest is told to stop adding transactions a quarter second before the block
+        is due: the round that is waited for was allowed 0.2 s less than the round before
+        had used, less a sixth of it. With the guest at 0.5 s a round that was a small
+        shortfall which the learned margin covered; at 0.15 s it allowed the round nothing,
+        in three of the first eight slots of the run on the faster image, until the margin
+        had learned 0.16 s. Now a round needs what the one before took and the time kept for
+        finishing, which is that margin where it had settled, and the learned margin may go
+        a tenth of a second the other way. `round-check` as it should be, with its cases
+        changed to say this. The feed takes it up at its next hourly start; the 1,000 slots
+        under way run on the rule before.
       - **On Compute Engine since 2026-11-26 15:18 UTC** (`evm-os` `a07875d4…174a38df`,
         4,045,312 bytes, built from commit 77d8cb4: the stack guard, what a request gave kept,
         the signers kept; in place of `93068517…`, which had run since 17:09 UTC on the 25th).

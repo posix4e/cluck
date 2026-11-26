@@ -75,15 +75,16 @@ check("no more than three rounds are remembered", len(shadow.pace["guest"]) == 3
 # Whether another round is begun for the same head, and when (`need_of`, `begin_at`).
 near = lambda a, b: a is not None and abs(a - b) < 1e-9
 shadow.later[:] = [0.3, 0.35, 0.6]
+shadow.FINISHING = 0.25                                                  # as builder/feed starts it
 full = {"inputs_and_trace": 1.49, "proofs": 2.28, "guest": 0.83}        # slot 15731104, 2026-11-25
 got = shadow.need_of(full, False)
-check("a round needs what the one before took, the guest's part and a little over", near(got, 3.77 + 1.15 * 0.83 + 0.05), got)
+check("a round needs what the one before took, and the time kept back for finishing", near(got, 3.77 + 0.83 + 0.25), got)
 got = shadow.need_of(full, True)
-check("  after a head's first round, the gathering is the later rounds': the middle of three and half again", near(got, 0.525 + 1.15 * 0.83 + 0.05), got)
+check("  after a head's first round, the gathering is the later rounds': the middle of three and half again", near(got, 0.525 + 0.83 + 0.25), got)
 got = shadow.need_of({"inputs_and_trace": 0.1, "proofs": 0.2, "guest": 0.5}, True)
-check("  unless the first round's own was less", near(got, 0.3 + 0.575 + 0.05), got)
+check("  unless the first round's own was less", near(got, 0.3 + 0.5 + 0.25), got)
 got = shadow.need_of({}, False)
-check("  a round that left no times is taken for an ordinary one", near(got, 1.0 + 0.69 + 0.05), got)
+check("  a round that left no times is taken for an ordinary one", near(got, 1.0 + 0.6 + 0.25), got)
 check("time for many rounds: the next begins now", shadow.begin_at(100.0, 110.0, 1.5) == 100.0)
 got = shadow.begin_at(100.0, 103.2, 1.5)
 check("time for two and little over: one, begun as late as it can be", near(got, 101.7), got)
@@ -99,12 +100,15 @@ check("  a round that is not waited for is begun now all the same", shadow.begin
 check("  and to spare is not time for a round: less than one is still no round", shadow.begin_at(100.0, 101.4, 1.5, 0.5) is None)
 shadow.early["by"] = 0.0
 shadow.learn_early(True)
-check("a waited-for round that held as many as those before: nothing to take off nothing", shadow.early["by"] == 0.0)
+check("a waited-for round that held as many as those before: the next is begun four thousandths later", near(shadow.early["by"], -0.004))
 shadow.learn_early(False)
-check("one with fewer in it: the next is begun six hundredths of a second sooner", near(shadow.early["by"], 0.06))
+check("one with fewer in it: the next is begun six hundredths of a second sooner", near(shadow.early["by"], 0.056))
 for _ in range(15):
     shadow.learn_early(True)
-check("fifteen that held, and it is back where it was", near(shadow.early["by"], 0.0), shadow.early)
+check("fifteen that held, and it is back where it was", near(shadow.early["by"], -0.004), shadow.early)
+for _ in range(40):
+    shadow.learn_early(True)
+check("never more than a tenth of a second later than the round before says", near(shadow.early["by"], -0.1), shadow.early)
 for _ in range(20):
     shadow.learn_early(False)
 check("never more than six tenths of a second", near(shadow.early["by"], 0.6), shadow.early)

@@ -1,15 +1,15 @@
-The builder's guest on Google Compute Engine, as it has run since 2026-11-26 15:18 UTC
+The builder's guest on Google Compute Engine, as it has run since 2026-11-26 19:14 UTC
 (c3-standard-4 with TDX, us-central1). A guest draws its key when it starts, so these are of this
 start and no other; when the guest is started again these files are written again (scripts/gce-live).
 
-source      commit 77d8cb4 of this repository, or the one before it that changed what goes in the image
+source      commit 224624c of this repository, or the one before it that changed what goes in the image
 image       evm/scripts/build-efi tdx  ->  evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI
-            4,045,312 bytes, SHA-256 a07875d45a2807e200b2c2da965c3fd11069022b1d5d3ae99d732e6d174a38df
-RTMR1       3320925e2eb81e7f204c5769199ea9d24c23479c0013389dfb597afa738541b8c979fb9976fa1cada394ec1ff5ee4bd8
+            4,057,600 bytes, SHA-256 b1f0683bb0d90038615a7235b47f1db68927e905d688fdd85afd3bf2868877bc
+RTMR1       210254e425d18493273f4b9b564fdb606451397fc5b2f2d4a8e61c5df6696443b3bf13b58b8f919eaa35c8da47948880
             (what Google's firmware measures for that file: scripts/gce-measure)
-builder key 0xac318193e0b77b32c167bbb0ae6fa37c50c29cae567ba6db18f2f6b7ec81fd38c60f197b50ed273a4bcdea55bbc7635a
-challenge   0x843200b3ad816a4f17d95738e9222b3863a5bff92990f3baf3e17c200ffdb6ed
-            (the hash of mainnet block 26500225, so the quote is no older than that block)
+builder key 0xb46fe0fe7332bf88bc9ee36536e325bf81de98508421f50eb505cadb1f33ef736da1400bc07663874f612e0ce378f826
+challenge   0xea8d2e782dde55fbbb8029f67f1063ef554a54787691cc5c706aa8b81de953b0
+            (the hash of mainnet block 26501396, so the quote is no older than that block)
 quote       builder.quote, 8,000 bytes: the guest's answer to "what is your key for bids", asked with
             that challenge, quoted by the machine it runs on
 
@@ -21,9 +21,9 @@ its evm/.lake/build/efi/tdx/evm-os/BOOTX64.EFI; REPORT.md has the commands), and
 the root of the newest checkout, with node, openssl, dosfstools, mtools and gdisk installed:
 
     scripts/gce-check IMAGE docs/live/builder.quote \
-      0xac318193e0b77b32c167bbb0ae6fa37c50c29cae567ba6db18f2f6b7ec81fd38c60f197b50ed273a4bcdea55bbc7635a \
-      0x843200b3ad816a4f17d95738e9222b3863a5bff92990f3baf3e17c200ffdb6ed
+      0xb46fe0fe7332bf88bc9ee36536e325bf81de98508421f50eb505cadb1f33ef736da1400bc07663874f612e0ce378f826 \
+      0xea8d2e782dde55fbbb8029f67f1063ef554a54787691cc5c706aa8b81de953b0
 
 The bids it has sent, as a relay lists them:
 
-    https://boost-relay.flashbots.net/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=0xac318193e0b77b32c167bbb0ae6fa37c50c29cae567ba6db18f2f6b7ec81fd38c60f197b50ed273a4bcdea55bbc7635a
+    https://boost-relay.flashbots.net/relay/v1/data/bidtraces/builder_blocks_received?builder_pubkey=0xb46fe0fe7332bf88bc9ee36536e325bf81de98508421f50eb505cadb1f33ef736da1400bc07663874f612e0ce378f826

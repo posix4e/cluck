@@ -549,7 +549,7 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   decoded and hashed when it is given, and joins the kept ones only if each of those given names the
   one before it by that hash; the kept ones are then handed to every request as a chain already
   checked (`Kept.take`, `Request.ancestry`), and that the newest of them is the block's parent is
-  checked on every request (`Build.begin`). Until the image after `a07875d4…` all 255 were decoded
+  checked on every request (`Build.begin`). Until `b1f0683b…`, the image after `a07875d4…`, all 255 were decoded
   and hashed again on every request, a tenth of what a request cost; what is believed in its place is
   that headers this machine checked and has held in its own memory since are the ones it checked,
   which is what it already believes of the nodes. Nothing that comes in a request can say that its
@@ -568,8 +568,8 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   and a request of the longest allowed at once. A request that begins `JBLF1` reads nothing kept and
   keeps nothing.
 - *The engine remembered a storage slot it could not read as an empty one* (found and put right
-  2026-11-26, `Fast/State.lean`; in every image up to and including `a07875d4…` and the one tested
-  after it). A transaction that reads what the witness does not prove is undone and left out of the
+  2026-11-26, `Fast/State.lean`; in every image up to and including `b1f0683b…`, which runs on
+  Compute Engine since 19:15 UTC that day). A transaction that reads what the witness does not prove is undone and left out of the
   block. The undoing put back everything the transaction wrote, but a slot whose proof was missing
   had been put among the slots the engine knows, holding nothing, and stayed there; and an account
   whose proof was missing, if the transaction paid it or wrote to it, was put back as an account
@@ -579,8 +579,8 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   only read, a block could be built on a value the state does not have: an invalid block, bid for.
   It took a witness that lacks a proof one transaction needs and a later transaction reading the
   same place without writing it. No such block is known: every block the feeder was sent, in tests
-  and live, was judged by a node (11,466 in the last 1,000-slot test, 4,902 so far in the one
-  running, all valid), and a relay that checks blocks would have refused one. It was found by a new
+  and live, was judged by a node (11,466 in one 1,000-slot test, 14,075 in the one
+  after it, all valid), and a relay that checks blocks would have refused one. It was found by a new
   test that gives a block's missing node in a second request and has the left-out transaction tried
   again, which read the slot remembered as empty and paid for a write as if to an empty slot.
   Now a slot or account that could not be fetched is not kept, and nothing is written in a world
@@ -906,8 +906,7 @@ address and no division. Jaune's own BLS code is on `Nat` and is not used on the
 field elements as fifteen 26-bit limbs in machine words; where a value decides something, both answers are
 computed and `Secret.select` (checked in `Mini/Constant.lean`) picks one; points are added by one formula
 that is right in every case, so nothing asks which case it is in; and the multiplication does a doubling
-and an addition for each of 255 bits whatever they are. (From the image after the one tested on
-2026-11-26: four doublings, by a formula of their own that is as complete, and one addition for each
+and an addition for each of 255 bits whatever they are. (From the image after `b1f0683b…`, not yet built: four doublings, by a formula of their own that is as complete, and one addition for each
 four bits of the key, of one of sixteen multiples of the point worked out beforehand. Every one of the
 sixteen is gone through each time and kept or passed over by `Secret.select`, on a truth value made
 from the four bits by exclusive-or, negation and a shift, so the bits index nothing and decide no
@@ -916,7 +915,7 @@ wrote for it, where the only branches are on the position in the key and on whic
 passed, both public; `scripts/check-secret-code` looks at the field arithmetic under it and not at
 this. The four bits pass through a boxed 64-bit number on the way into the loop, as limbs of field
 elements do, never a `Nat`. Half the work: 4 ms a signature where 8.) Hashing the message to a point and writing the
-signature out are public. The hashing is on the same field arithmetic from the image after `a07875d4…`
+signature out are public. The hashing is on the same field arithmetic from `b1f0683b…`, the image after `a07875d4…`,
 on (2026-11-26; `evm/Evm/Sign/Hash.lean`: the map to the curve, the isogeny and the clearing of the
 cofactor, following Jaune's step for step, with the first step, SHA-256, and the constants still
 `JauneConsensus`'s); until then all of it was `JauneConsensus`'s on `Nat`. Its branches are on values

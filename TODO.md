@@ -1750,6 +1750,38 @@ by the guest itself.
         a tenth of a second the other way. `round-check` as it should be, with its cases
         changed to say this. The feed takes it up at its next hourly start; the 1,000 slots
         under way run on the rule before.
+      - **On Compute Engine since 2026-11-26 19:15 UTC** (`evm-os` `b1f0683b…868877bc`,
+        4,057,600 bytes, commit 224624c: headers checked once, a bid's message made a point by
+        this project's arithmetic; in place of `a07875d4…`). **Its 1,000 slots here first**
+        (`/data/eth/shadow/gate1000s`, on the twin `e9bf5a55…`, 15:48 to 19:08 UTC): a block sent
+        in every slot but one, where the feeder asked for nothing because the block of the slot
+        before came late ("the slot taken for empty has a block after all"); 14,082 rounds,
+        14,075 blocks built and every one judged valid, six first rounds of a head fallen short
+        of witness; 14 rounds a slot at the median where `a07875d4…` had 12, a round 0.51 s
+        where 0.64, the guest 0.20 s of it where 0.31 (174 ms by its own count); the last
+        block 0.92 s before the slot; none after it. Last rounds with nothing in them 20 and
+        with fewer than the round before 46 (19 and 46 on the image before): that run began on
+        the feeder's old rule for when to begin a round. The feed was stopped at 19:10:36 and
+        started at 19:15:15; `run-fixtures tdx --at`: every answer the expected one and a bid
+        signed by its key (`0xb46fe0fe…`); `scripts/gce-live` wrote `docs/live/` (challenge the
+        hash of block 26501396) and said all five hold. First eight slots: a bid in each, 13
+        rounds a slot, a round 0.52 s and the guest 0.36 s of it (0.76 and 0.56 on the image
+        before), 101 blocks all judged valid.
+      - **What `a07875d4…` did there, 15:19 to 19:10 UTC** (`builder/tools/day.py` on its four
+        records): 1,155 slots, a bid sent in 1,144 (99.0%), the other 11 with no registration
+        at any relay; 9,412 blocks built and 9,281 sent, all judged valid; none after its slot
+        began; eight rounds a slot and the last bid 0.75 s before it at the median; 29,646
+        answers, 22,252 of 200, 7,320 of 202, 70 of 429, one of 503, three of none. No
+        "blacklisted address" refusal under the rule of 15:03.
+      - **Ultrasound's relay says 429, and the feeder now keeps a pace for a relay that does**
+        (2026-11-26; `may_post` in `builder/shadow`). The 70 came after 17:19, when rounds
+        came down to 0.76 s: from a slot's seventh round on, to every other one. Such a relay
+        is now posted to at most every 1.3 s (more each time it says so again) and in the
+        slot's last round. Live from 19:15: one 429, which taught it, and then 26 rounds of
+        the first eight slots held back from that relay and no 429. Told to the user at
+        18:55 UTC; the feed was not stopped for it (under one answer in a hundred).
+        **Open: whether a second or so of age at one relay matters; what the others' limits
+        are is not known, none has said.**
       - **The feeder asked for proofs five to a batch, and the node answers a batch one call
         after another** (2026-11-26; `builder/shadow`). Every round spent 0.22 s on proofs
         however few it needed: reth takes about 45 ms over an `eth_getProof` whatever is asked.
@@ -1761,7 +1793,7 @@ by the guest itself.
         transaction left out because the witness lacked a slot left that slot in the engine's
         world holding nothing, and an account it could not read and paid, as not there; a later
         transaction of the block reading the same place was told so. It is in every image so
-        far, the one on Compute Engine and the one under test included, and wants a transaction
+        far, the one on Compute Engine (`b1f0683b…`) included, and wants a transaction
         whose proof is missing and another after it reading the same place: no block built
         wrong is known (every one was judged by a node), but nothing stood in the way of one.
         Found by the test of the next item, on block 26456390. **Open: an image with this in
@@ -1870,7 +1902,7 @@ by the guest itself.
     transactions go in, which this builder has not made so far), or fees to an account of the
     guest's own and a last transaction signed in the guest that pays the proposer (new code
     inside, and that transaction's gas comes out of every bid).
-  - Spent so far on Compute Engine for this: about twenty dollars by 2026-11-26 15:20 UTC (of
+  - Spent so far on Compute Engine for this: about twenty-one dollars by 2026-11-26 19:20 UTC (of
     the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine
     is 23 cents an hour, about 170 dollars a month, and the door's about ten a month. A subnet (`silo-10-0-2`), a
     firewall rule for this machine's address alone (`silo-test-from-home`), a second network

@@ -1684,6 +1684,18 @@ by the guest itself.
         the last rounds that come to nothing are as many: those are the learned margin's own
         rate (above), not the guest's speed. The two runs are different hours; only the rows
         by block size compare like with like, and roughly.
+      - **On Compute Engine since 2026-11-26 15:18 UTC** (`evm-os` `a07875d4…174a38df`,
+        4,045,312 bytes, built from commit 77d8cb4: the stack guard, what a request gave kept,
+        the signers kept; in place of `93068517…`, which had run since 17:09 UTC on the 25th).
+        The feed was stopped at 15:14:50 and started at 15:19:38 with `--keeps` (its service's
+        command has it now); `run-fixtures tdx --at` against the new guest: every answer the
+        expected one, and a bid signed by its key; `scripts/gce-live` wrote `docs/live/` for
+        its keys (builder key `0xac318193…`, challenge the hash of block 26500225) and
+        `scripts/gce-check` said all five hold; the door serves the new keys. Its first eight
+        slots: a block in each, 53 of 54 rounds built and valid (one a first round fallen
+        short), requests of 0.1 to 0.95 MB where everything would be 2.7 to 5.2 MB, 158
+        answers from relays, all 200 or 202. Not yet: a day of its numbers; `image.yml` on
+        this commit.
     - Not done, and why: beginning the last round earlier by what the slow arrival costs (it
       would take 0.4 s of what is pending from every slot to save the one in twenty, and by the
       fees that become public in a slot's last seconds that loses more than it saves); sending
@@ -1738,7 +1750,7 @@ by the guest itself.
     transactions go in, which this builder has not made so far), or fees to an account of the
     guest's own and a last transaction signed in the guest that pays the proposer (new code
     inside, and that transaction's gas comes out of every bid).
-  - Spent so far on Compute Engine for this: about nineteen dollars by 2026-11-26 12:57 UTC (of
+  - Spent so far on Compute Engine for this: about twenty dollars by 2026-11-26 15:20 UTC (of
     the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine
     is 23 cents an hour, about 170 dollars a month, and the door's about ten a month. A subnet (`silo-10-0-2`), a
     firewall rule for this machine's address alone (`silo-test-from-home`), a second network

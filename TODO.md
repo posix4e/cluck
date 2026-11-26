@@ -1478,7 +1478,8 @@ by the guest itself.
     that needs a build or a run, the Lean and C behind the security statements, the threat model
     outside the EVM section, most of this file.
   - Not done there: a look at how often the guest leaves the trust domain there.
-  - [ ] **The feed stopped itself at 06:40 UTC on 2026-11-26, and is stopped**: 65 of the 966
+  - [x] **The feed stopped itself at 06:40 UTC on 2026-11-26, and was started again at 15:03 with
+    a new rule**: 65 of the 966
     answers from relays over fifty slots were refusals, 64 of them "block accesses blacklisted
     address: 0x6Fac4D18c912343BF86fa7049364Dd4E424Ab9C0", from Flashbots' relay and Titan's, for
     blocks of slots 15737590 and 15737594 to 15737598 (25 in one slot: every round's block, to
@@ -1486,13 +1487,16 @@ by the guest itself.
     Such refusals had come before (37 in the hour from 23:12 UTC, 25 in the next) and stayed
     under one in twenty. The last blocks of three of those slots have no transaction in common,
     so it was several transactions touching that address, not one left pending. Whether to leave
-    such transactions out, or to keep such blocks from the relays that refuse them, is the user's
-    to say and is not decided; the feed is not started again until they say so
-    (`/data/eth/shadow/gce-live/STOPPED` holds the reason and has to be removed).
-    - Done meanwhile, in `builder/shadow` (not run against a relay): a relay that refuses a block
-      for that reason is sent no more on that head, so a slot costs it one refused block and not
-      one a round. With that the five slots would have been about a dozen refusals, under the
-      feed's limit. The blocks still go to the relays that take them.
+    such transactions out, or to keep such blocks from the relays that refuse them, was the user's
+    to say: they said the second (2026-11-26), so nothing is left out and the relays that take
+    such blocks still get them.
+    - The rule, in `builder/shadow` (`turned_down`): a relay that refuses a block for that reason
+      is sent no more on that head, so a slot costs it one refused block and not one a round. With
+      that the five slots would have been about a dozen refusals, under the feed's limit.
+    - Started again at 15:03:24 UTC on 2026-11-26 on the same image and the same guest (the note of
+      why it stopped is kept beside the records as `STOPPED.20261126-0640`). Its first eleven
+      slots: a block in each, all judged valid, 56 answers of 200 and 38 of 202, none refused.
+      Not yet seen: a blacklist refusal under the new rule.
     - What the image had done on Compute Engine by then, 17:12:59 UTC on 11-25 to 06:40:11 on
       11-26 (`day.py` on the fourteen records from `20261125-171250.jsonl`): 4,037 slots, a bid
       sent in 3,964 (98.2%); 65 with no registration at any relay, 7 built and nothing sent, 1
@@ -1506,7 +1510,7 @@ by the guest itself.
       0x6Fac4D18…, 0x1b8579cF…, 0xeb507eFa…, 0x252A8Bd2…; one "payload attributes not (yet)
       known"; one "could not find parent block"), one 500, two 503, 20 with no answer in the
       time allowed. No block taken by a proposer. The day of numbers meant for this image ends
-      here, at thirteen and a half hours. `REPORT.md` has these and says the feed is stopped.
+      here, at thirteen and a half hours. `REPORT.md` has these.
   - [ ] **One slot in twenty, the last round comes to nothing: its request is too long in coming**
     (found 2026-11-26, looking for why public transactions seen in time were not in our blocks).
     From Compute Engine since 17:13 UTC on 2026-11-25, 3,096 slots: in 143 the slot's last round

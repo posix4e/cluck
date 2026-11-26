@@ -28,9 +28,8 @@ instructions they are most of the compiled code: the figure is under what is tru
 It runs today in a TDX trust domain on Google Cloud, builds a block about every second from the public
 pool, signs its bids with a key drawn inside the trust domain, and posts them itself to Flashbots,
 Ultrasound, Aestus and Titan. Anyone can follow one of those bids from a relay's public list back to
-the source it was built from; how is below. (As this is written it is up and not bidding: the feeder
-stopped itself at 06:40 UTC on 2026-11-26, for refusals that are said under the numbers, and has not
-been started again.)
+the source it was built from; how is below. (It did not bid from 06:40 to 15:03 UTC on 2026-11-26:
+the feeder had stopped itself, for refusals that are said under the numbers.)
 
 Three things it is not. It is not a competitive builder: it sees only the public pool, and its blocks
 were worth about a fifth to a third of the winning ones at the median, and as little as a twentieth
@@ -278,9 +277,10 @@ away, bidding at four relays with nothing paid for a win:
   relay and Titan's; Ultrasound's and Aestus' took the same blocks. (Two more 400s were for other
   things.) They stayed under one answer in twenty until 06:38 on the 26th: in the two minutes from
   then 64 came, for blocks of six slots, and the feeder stopped itself by its own rule. The feeder
-  has since been changed so that a relay that refuses a block for this is sent no more for that
-  slot; that has not been run against a relay. Whether to leave such transactions out, or to go on
-  as before, is not decided.
+  was then changed so that a relay that refuses a block for this is sent no more on that head, and
+  was started again with that rule at 15:03 UTC the same day. Such transactions are not left out:
+  the blocks that hold them still go to the relays that take them. How it does under the rule is
+  not yet in these numbers.
 - **Two hours on one image looked at closely** (the third of the five there have been; from 04:28 UTC on
   the 25th, 600 slots): 3,172 blocks built and 3,102 sent. Of the 70 not sent, 42 were for proposers no
   relay had a registration from, 26 paid no more than one already sent for the slot, and two were too

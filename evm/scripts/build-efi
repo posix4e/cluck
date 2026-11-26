@@ -78,5 +78,20 @@ if [[ "$name" != evm-os-spec ]] && grep -E -m 3 '[[:space:]]lp_jaune_Jaune_(Mess
   rm -f "$out/BOOTX64.EFI"
   exit 1
 fi
+# Nor is one made that holds code compiled in the libraries Jaune draws in for its proofs (mathlib,
+# batteries, proofwidgets) beyond the three functions known to be there: two of batteries' on lists and
+# mathlib's compiled recursor of Option, 1,093 bytes with a constant. Those libraries' modules are
+# linked ready-made and seven of their start-up routines are replaced by ones that do nothing, so their
+# code is the code in the image least looked at. It gets in without being asked for: for a table keyed
+# by numbers Lean's compiler takes a specialization that some module of mathlib already holds (on
+# 2026-11-26 two such tables in Evm/Build.lean brought in 6 KB of it).
+known='^lp_(batteries_List_(bagInter___redArg___closed__0_value|takeDTR_go___redArg|takeDTR___redArg)|mathlib_Option_rec___redArg_00___x40_Mathlib_Util_CompileInductive_[0-9]+____hygCtx___hyg_[0-9]+_)$'
+others="$(grep -E -o '[[:space:]]lp_(mathlib|batteries|proofwidgets)_[^[:space:]()]*$' "$objects/image.map" | tr -d '[:blank:]' | sort -u | grep -E -v "$known" || true)"
+if [[ "$name" != evm-os-spec && -n "$others" ]]; then
+  echo "build-efi: code compiled in mathlib, batteries or proofwidgets is linked into $name that was not before (see above):" >&2
+  echo "$others" | head -20 >&2
+  rm -f "$out/BOOTX64.EFI"
+  exit 1
+fi
 python3 "$os/boot/efi/mkefi.py" "$objects/image.elf" "$out/BOOTX64.EFI"
 echo "$out/BOOTX64.EFI"

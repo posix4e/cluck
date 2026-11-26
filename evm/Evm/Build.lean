@@ -1131,12 +1131,18 @@ def runGoingOn {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (befo
     let kept : Option Before := match last, proposal with
       | some job, some proposal =>
         if r.fromSender < proposal.items.size then none else
-        let inBlock : Std.HashSet Nat := job.included.foldl (·.insert ·) {}
-        let known : Std.HashMap Nat Candidate :=
-          tried.foldl (fun (known : Std.HashMap Nat Candidate) (c : Candidate) => known.insert c.place c) {}
+        -- By place among those proposed: whether it is in the block, and what was tried there. (Arrays
+        -- and not tables with numbers for keys: for those the compiler takes code that mathlib's
+        -- modules happen to hold ready, and the image is to have none of theirs it can do without.)
+        let places := proposal.hashes.size
+        let inBlock : Array Bool := job.included.foldl (fun inBlock place => inBlock.setIfInBounds place true)
+          (Array.replicate places false)
+        let known : Array (Option Candidate) := tried.foldl
+          (fun (known : Array (Option Candidate)) (c : Candidate) => known.setIfInBounds c.place (some c))
+          (Array.replicate places none)
         let seen : Std.HashMap Fast.Word (Option Candidate) := proposal.hashes.zipIdx.foldl (init := {})
           fun (seen : Std.HashMap Fast.Word (Option Candidate)) ((hash, place) : Fast.Word × Nat) =>
-            if inBlock.contains place then seen else seen.insertIfNew hash known[place]?
+            if inBlock.getD place false then seen else seen.insertIfNew hash (known.getD place none)
         let ancestors := match r.ancestry with
           | some ancestry => ancestry.length
           | none => r.witness.headers.length

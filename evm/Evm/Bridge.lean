@@ -365,4 +365,100 @@ def rootAndNodes (w : Witness) (world : Fast.World) (keep : Bool) : Stateless.M 
 def rootAfter (w : Witness) (world : Fast.World) : Stateless.M U256 := do
   return (← rootAndNodes w world false).1
 
+/-- What a state root was worked out with, kept so that the next one for the same block with more in it
+goes on from there (`rootGoingOn`): the state's trie as it was written, open in memory as far as the
+accounts written reach; what was written for each account, and for each slot; and the storage of each
+account that had a slot written, as a trie and its root. All of it is this program's own working, from
+a witness's nodes; none of it is given by anyone. -/
+structure Rooted where
+  trie : Trie.Node
+  /-- Each account written, with its leaf as written; no bytes for one taken out of the state. -/
+  leaves : Std.HashMap Fast.Word ByteArray := {}
+  /-- For each account that existed before the block and had a slot written: its storage, and the root. -/
+  storage : Std.HashMap Fast.Word (Trie.Node × U256) := {}
+  /-- Each slot written, with the value written. -/
+  slots : Std.HashMap Fast.SlotKey Fast.Word := {}
+
+/-- The state root after the engine has run a block, as `rootAfter` gives it, worked out from where the
+last one for the same block was (`was`: the block with fewer transactions in it, on the same parent)
+and not from the parent's trie: only the accounts and slots that are not as they were last written are
+written, and the storage tries nothing was written to are not hashed again. Beside the root, what to
+go on from next time. With nothing to go on from it writes everything, as `rootAfter` does.
+
+What makes it the same root: a trie written with the same leaves is the same trie however many steps
+it was written in. Each account the world has changed, or that was written before, is written again
+wherever its leaf is not the leaf last written; each slot likewise, against the value last written or,
+when it never was, the value before the block. An account that was not in the state before the block,
+or was made in it, has its storage built from nothing every time, from all it holds: that is all in the
+world, and nothing is carried over for it.
+
+`none` when what was written before is not all in this world to be looked at again (an account or a
+slot then written that this world has not fetched): the caller works the root out whole. That is not
+expected, the world being the one those were written from with more done to it. -/
+def rootGoingOn (w : Witness) (world : Fast.World) (was : Option Rooted) : Stateless.M (Option (U256 × Rooted)) := do
+  let was := was.getD { trie := .sealed w.root }
+  -- The slots that hold something other than was last written, by whose they are; all that hold
+  -- anything, by whose they are; and how many of those written before are here.
+  let (changed, held, met) := world.slots.fold
+    (init := (({} : Std.HashMap Fast.Word (Array (Fast.Word × Fast.Word))),
+              ({} : Std.HashMap Fast.Word (Array (Fast.Word × Fast.Word))), 0))
+    fun (changed, held, met) name slot =>
+      let written := was.slots[name]?
+      let last := written.getD slot.before
+      (if slot.value == last then changed
+        else changed.insert name.address ((changed.getD name.address #[]).push (name.key, slot.value)),
+       if slot.value.isZero then held
+        else held.insert name.address ((held.getD name.address #[]).push (name.key, slot.value)),
+       if written.isSome then met + 1 else met)
+  if met != was.slots.size then return none
+  let writeAll (storage : Trie.Node) (slots : Array (Fast.Word × Fast.Word)) : Except Trie.Fault Trie.Node :=
+    slots.foldlM (fun storage (slot, value) =>
+      let path := pathOf slot.bytes
+      if value.isZero then Trie.remove w.store storage path
+      else Trie.set w.store storage path (Stateless.slotValue (u256 value))) storage
+  let mut trie := was.trie
+  let mut leaves := was.leaves
+  let mut storages := was.storage
+  let mut slots := was.slots
+  let mut seen := 0
+  for (a, account) in world.accounts.toList do
+    let news := changed.getD a #[]
+    let before := leaves[a]?
+    if before.isSome then seen := seen + 1
+    if !account.dirty && news.isEmpty && before.isNone then continue
+    for (slot, value) in news do
+      slots := slots.insert ⟨a, slot⟩ value
+    let key := pathOf a.addressBytes
+    if !account.present then
+      if before != some ByteArray.empty then
+        if account.existed || before.isSome then trie ← Stateless.ofTrie (Trie.remove w.store trie key)
+        leaves := leaves.insert a ByteArray.empty
+        storages := storages.erase a
+      continue
+    let storageRoot ←
+      if account.fresh || !account.existed then
+        -- Everything it holds is in the world: built from nothing, and nothing kept of it.
+        storages := storages.erase a
+        pure (Trie.rootHash (← Stateless.ofTrie (writeAll (.sealed Trie.emptyRoot) (held.getD a #[]))))
+      else
+        match storages[a]? with
+        | some (storage, root) =>
+          if news.isEmpty then pure root else
+          let storage ← Stateless.ofTrie (writeAll storage news)
+          let root := Trie.rootHash storage
+          storages := storages.insert a (storage, root)
+          pure root
+        | none =>
+          if news.isEmpty then pure (u256 account.storage) else
+          let storage ← Stateless.ofTrie (writeAll (.sealed (u256 account.storage)) news)
+          let root := Trie.rootHash storage
+          storages := storages.insert a (storage, root)
+          pure root
+    let leaf := (⟨account.nonce, u256 account.balance, storageRoot, u256 account.codeHash⟩ : Stateless.Leaf).write
+    if before == some leaf then continue
+    trie ← Stateless.ofTrie (Trie.set w.store trie key leaf)
+    leaves := leaves.insert a leaf
+  if seen != was.leaves.size then return none
+  pure (some (Trie.rootHash trie, { trie, leaves, storage := storages, slots }))
+
 end Evm.Bridge

@@ -1783,9 +1783,14 @@ by the guest itself.
         one, and 18 ms to 15, a block, on a workstation. What is left of a round that goes on
         is mostly the state root, which is worked out from the parent's whole every time:
         about 75 µs for each account or slot the block changed, a third each for reading the
-        nodes on the way down, writing, and hashing on the way up. Not done: a state root
-        that goes on from the round before as the block does; the transactions' root, still
-        Jaune's (1 to 2 ms).
+        nodes on the way down, writing, and hashing on the way up. Then **the state root goes
+        on from the round before as the block does** (`Bridge.rootGoingOn`, `Bridge.Rooted`):
+        only what is not as it was last written is written, and storage nothing was written to
+        is not hashed again; the state's own trie is still hashed whole as far as it is open.
+        The 67 requests that go on take about 20 ms each on a workstation with it (17 to 24 in
+        three runs beside other work) where they took 31. Not done: hashes kept in the open
+        trie, so that only what changed is hashed; the transactions' root, still Jaune's (1 to
+        2 ms).
       - **The console says how a request's time was divided** (2026-11-26; `Machine.buildWith`):
         reading, the transactions, ending, signing, for a request no sealed transaction was
         tried in. Not seen yet: no image has been built with it.

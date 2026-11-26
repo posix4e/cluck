@@ -124,7 +124,11 @@ nothing can end with nothing in it.
 
 What is kept for this is the block as it stood after the last transaction tried and before anything
 that ends a block: the engine's state, the receipts, and what is known of each transaction the request
-proposed (in the block; or decoded, with its signer; or not a transaction at all). A transaction is
+proposed (in the block; or decoded, with its signer; or not a transaction at all). With it is kept
+what the block's state root was worked out with when it was ended (`Bridge.Rooted`): the state's trie
+as written, and what was written for each account and slot, so that the next root writes only what is
+not as it was written then (`Bridge.rootGoingOn`). A trie written with the same leaves is the same
+trie, in however many steps. A transaction is
 known again by the hash of its bytes as they stand in the block's list, and the header and withdrawals
 by the hash of the block's bytes outside that list (`Proposal`), so a request that goes on has its
 header, its withdrawals and the transactions seen before neither decoded nor checked again: they are,
@@ -468,6 +472,10 @@ structure FastJob where
   wanted : Array Fast.Lack := #[]
   /-- The place from which nothing is said of what a transaction lacked. -/
   loud : Nat := 1000000000
+  /-- Whether what the state root is worked out with is to be kept for a block that goes on from this
+  one (`Bridge.rootGoingOn`), and what was kept when the block this one goes on from was ended. -/
+  rooting : Bool := false
+  rooted : Option Bridge.Rooted := none
 
 /-- A block as a request proposes it, taken apart where its bytes say and not decoded: each transaction
 as it stands in the block's list, the hash of each, and the hash of everything that is not a
@@ -741,14 +749,14 @@ def startFastKeeping (r : Request) (fork : Fork) (parent : Header) (ancestors : 
 /-- The next proposed transaction, put in or left out, by the fast engine. One the engine refuses, or that
 asked the witness for what it cannot prove, leaves the world and the block as they were before it. -/
 def FastJob.step : FastJob → FastJob
-  | ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included, notes, wanted, loud⟩ =>
+  | ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included, notes, wanted, loud, rooting, rooted⟩ =>
     match rest with
-    | [] => ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, [], out, taken, included, notes, wanted, loud⟩
+    | [] => ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, [], out, taken, included, notes, wanted, loud, rooting, rooted⟩
     | c :: rest =>
       let leftOut (why : String) (out : Fast.BlockOutput) (lacks : Array Fast.Lack := #[]) : FastJob :=
         ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included,
          notes.push ⟨c.place, false, why⟩,
-         if c.place < loud && wanted.size < 4 * Fast.maxLacks then wanted ++ lacks else wanted, loud⟩
+         if c.place < loud && wanted.size < 4 * Fast.maxLacks then wanted ++ lacks else wanted, loud, rooting, rooted⟩
       if out.gasUsed.toNat + c.tx.gasLimit > gasCap then leftOut "would pass the gas asked for" out
       else if (Bridge.chainOf c.tx).any (· != chainId) then leftOut "rejected: made for another chain" out
       else
@@ -771,11 +779,13 @@ def FastJob.step : FastJob → FastJob
             ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest,
              ⟨world, stack, receipts.push { receipt with cumulativeGas := gasUsed }, gasUsed,
               blobs + tx.blobHashes.size.toUInt64, requests⟩,
-             taken.push c.tx, included.push c.place, notes.push ⟨c.place, true, s!"{gasUsed.toNat}"⟩, wanted, loud⟩
+             taken.push c.tx, included.push c.place, notes.push ⟨c.place, true, s!"{gasUsed.toNat}"⟩, wanted, loud, rooting, rooted⟩
 
 /-- Everything after the last transaction, by the fast engine: withdrawals, the block's requests, the state
-root and the header. -/
-def FastJob.finish (job : FastJob) : Stage :=
+root and the header. Beside the answer, when the job says to keep it (`rooting`), what the state root
+was worked out with, for the block that goes on from this one; the root is then worked out from what
+was kept when the block before was ended (`rooted`), and is the same root (`Bridge.rootGoingOn`). -/
+def FastJob.finishRooted (job : FastJob) : Stage × Option Bridge.Rooted :=
   let rules := job.fork.ruleSet
   let notes := job.notes
   let witness := job.witness
@@ -783,14 +793,21 @@ def FastJob.finish (job : FastJob) : Stage :=
   let (world, recipient) := world.account job.blk.coinbase
   let value := recipient.balance.toNat - job.paidBefore
   match Fast.closeBlock job.blk job.host job.body ⟨world, stack, receipts, gasUsed, blobs, requests⟩ with
-  | .error (_, world) => if world.missing then short witness world notes else .done { status := 4 } notes ""
+  | .error (_, world) => (if world.missing then short witness world notes else .done { status := 4 } notes "", none)
   | .ok out =>
-    if out.world.missing then short witness out.world notes else
-    match Bridge.rootAfter witness out.world with
-    | .error (.lacking hash what) => .done { status := 6, lacking := hash } notes what
-    | .error .malformed => .done { status := 7 } notes ""
-    | .error .failure => .done { status := 4 } notes ""
-    | .ok stateRoot =>
+    if out.world.missing then (short witness out.world notes, none) else
+    let rooted : Stateless.M (U256 × Option Bridge.Rooted) :=
+      if !job.rooting then (Bridge.rootAfter witness out.world).map (·, none) else
+      match Bridge.rootGoingOn witness out.world job.rooted with
+      | .ok (some (root, kept)) => .ok (root, some kept)
+      -- What was kept cannot be gone on from: the root whole, and nothing kept of it.
+      | .ok none => (Bridge.rootAfter witness out.world).map (·, none)
+      | .error shortfall => .error shortfall
+    match rooted with
+    | .error (.lacking hash what) => (.done { status := 6, lacking := hash } notes what, none)
+    | .error .malformed => (.done { status := 7 } notes "", none)
+    | .error .failure => (.done { status := 4 } notes "", none)
+    | .ok (stateRoot, kept) => (·, kept) <|
       let (receiptsRoot, bloom) := Bridge.receiptsRootAndBloom out.receipts
       -- The roots that depend on the block's body alone, by Jaune's functions on what it would have kept.
       let kept : BlockOutput :=
@@ -809,6 +826,9 @@ def FastJob.finish (job : FastJob) : Stage :=
           blobGasUsed := if rules.header.blobGas then some kept.blobGasUsed else none,
           requestsHash := if rules.header.requestsHash then some (computeRequestsHash asked) else none }
       .done { status := 0, built := some ⟨header, header.hash, job.included.toList, value, asked⟩, wanted := job.wanted } notes ""
+
+/-- The answer alone. -/
+def FastJob.finish (job : FastJob) : Stage := job.finishRooted.1
 
 /-- Everything after the last transaction: withdrawals, the block's requests, the checks that everything
 read was shown, the state root and the header. -/
@@ -969,11 +989,16 @@ def Stage.finishKeeping {m : Type → Type} [Monad m] (over : m Bool) (mark : m 
   | 0, stage, last => pure (stage, last)
   | steps + 1, stage, last => do
     let stage ← if stage.filling then (do if (← over) then pure stage.cut else pure stage) else pure stage
-    let ended : Option FastJob := match stage with
-      | .goingFast job => if job.rest.isEmpty then some job else none
-      | _ => none
-    if ended.isSome then mark
-    finishKeeping over mark steps stage.step (ended.orElse fun _ => last)
+    match stage with
+    | .goingFast job =>
+      if job.rest.isEmpty then
+        mark
+        -- The block as it stands is what is kept, with what its state root was worked out with: a
+        -- root that could not be worked out leaves what the block before's was worked out with.
+        let (answer, rooted) := job.finishRooted
+        finishKeeping over mark steps answer (some (if rooted.isSome then { job with rooted } else job))
+      else finishKeeping over mark steps stage.step last
+    | _ => finishKeeping over mark steps stage.step last
 
 /-- What is kept of a block for the next request to go on from: `job` is the block before its ending,
 built for `r`, whose block's bytes are `proposal`; `seen` is what is known of the transactions proposed
@@ -983,7 +1008,7 @@ def Before.of (r : Request) (proposal : Proposal) (seen : Std.HashMap Fast.Word 
     (ancestors : Nat) (job : FastJob) : Before :=
   { fork := r.witness.fork.map Stateless.forkCode, chainId := r.witness.chainId, rule := r.rule, gasCap := r.gasCap,
     work := r.work, bare := proposal.bare, parent := job.blank.parentHash, ancestors,
-    job := { job with template := { job.template with transactions := [] }, rest := [], notes := #[], wanted := #[] },
+    job := { job with template := { job.template with transactions := [] }, rest := [], notes := #[], wanted := #[], rooting := true },
     taken := job.included.map fun place => proposal.hashes.getD place Fast.Word.zero,
     seen }
 
@@ -1080,6 +1105,9 @@ def runGoingOn {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (befo
     let tried : List Candidate := match stage with
       | .goingFast job => job.rest
       | _ => []
+    let stage : Stage := match stage with
+      | .goingFast job => Stage.goingFast { job with rooting := true }
+      | stage => stage
     let (stage, last) ← stage.finishKeeping over mark stage.left none
     let kept : Option Before := match last, proposal with
       | some job, some proposal =>

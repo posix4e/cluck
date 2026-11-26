@@ -512,7 +512,13 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   question went unanswered (`Fast.World`; this was not so of a storage slot until the same day, see
   the next item but one), so the kept state with the new request's wider witness behind it answers
   as a state begun on that witness would. (4) Nothing comes in a request that says what is in the
-  kept block or what a transaction's signer is. A block that goes on is then a block this machine
+  kept block or what a transaction's signer is. (5) The state root: what the last one was worked out
+  with is kept too (the state's trie as this machine wrote it, and each leaf and slot value written:
+  `Bridge.Rooted`), and the next writes only the accounts and slots that are not as they were written
+  then (`Bridge.rootGoingOn`). The root of a trie depends on its leaves and not on the steps they
+  were written in; the nodes written through are the witness's, found by hash as ever, and the rest
+  this machine's own working. If anything written before is not there to be looked at again the
+  root is worked out whole. A block that goes on is then a block this machine
   could have been asked for outright, with its transactions in that order under rule 0. What does
   change: under rule 1 the order is no longer what the rule alone would give, since what was in
   before stays before what comes later whatever each pays, and which transactions are in depends on

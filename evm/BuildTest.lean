@@ -174,6 +174,13 @@ def one (engine : Bool) (name : String) (bytes : ByteArray) (shorten : Bool) (ta
       tally ← tally.expect s!"{name}: proposed in two parts, the block that went on is not the block built at once"
         (wentFirst.isNone && before.isSome && beforeAll.isSome && second.encode == again.encode && third.encode == again.encode
           && wentFrom wentSecond half before && wentFrom wentThird count beforeAll)
+      -- Its state root was worked out from where the first part's was (`Bridge.rootGoingOn`), and what
+      -- that was worked out with is kept in its turn: the root is in the hash compared above.
+      tally ← tally.expect s!"{name}: what the state root was worked out with was not kept to go on from"
+        ((before.map fun b => b.job.rooting && b.job.rooted.isSome) == some true
+          && (beforeAll.map fun b => b.job.rooting && b.job.rooted.isSome) == some true
+          && (beforeAll.bind fun b => b.job.rooted.map (·.leaves.size)).getD 0
+              ≥ (before.bind fun b => b.job.rooted.map (·.leaves.size)).getD 1)
       -- Out of time while going on, before the first of the new transactions and half way through
       -- them: a whole block that the checker accepts, holding the block before and what went in by
       -- then; and the request after it goes on from that to the block built at once.

@@ -500,10 +500,16 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   nothing from one request to build to the next but its keys, its connections and the sealed
   transactions; now a block can be built with bytes that came in an earlier request. What stands in
   the way of that going wrong: a kept node or code is found by its hash exactly as one in the request
-  is, so it proves what the same bytes in the request would prove and nothing else, and the headers,
-  kept or given, are checked to be a chain to the block's parent on every request
-  (`Build.begin`). So nothing kept can make a wrong block, and that rests on the same hashing the
-  witness always rested on. What does change: which transactions go into a block, and whether one is
+  is, so it proves what the same bytes in the request would prove and nothing else. A header is
+  decoded and hashed when it is given, and joins the kept ones only if each of those given names the
+  one before it by that hash; the kept ones are then handed to every request as a chain already
+  checked (`Kept.take`, `Request.ancestry`), and that the newest of them is the block's parent is
+  checked on every request (`Build.begin`). Until the image after `a07875d4…` all 255 were decoded
+  and hashed again on every request, a tenth of what a request cost; what is believed in its place is
+  that headers this machine checked and has held in its own memory since are the ones it checked,
+  which is what it already believes of the nodes. Nothing that comes in a request can say that its
+  headers are checked. So nothing kept can make a wrong block, and that rests on the same hashing
+  the witness always rested on. What does change: which transactions go into a block, and whether one is
   built, now depends on what was sent before as well as on the request, and all of that is the
   host's, as the request is. Nothing of a sealed transaction is kept this way: the proofs one brings
   are added to the one request they are tried in (`Bid.buildWith`) and not to what is kept, and an

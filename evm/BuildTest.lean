@@ -95,12 +95,38 @@ def one (engine : Bool) (name : String) (bytes : ByteArray) (shorten : Bool) (ta
       let size := witness.codes.foldl (fun n code => n + code.size) (witness.nodes.foldl (fun n node => n + node.size) 0)
       tally ← tally.expect s!"{name}: what was given is not counted as {size} bytes, or the kept headers are not the request's"
         (kept.given == size && keptStill.given == size && (kept.take asked).2.given == 2 * size
-          && kept.chain.map (·.2) == witness.headers.toArray && keptStill.chain.map (·.2) == witness.headers.toArray)
+          && kept.chain.map (·.bytes) == witness.headers.toArray && keptStill.chain.map (·.bytes) == witness.headers.toArray)
       let (forgotten, nothing) := kept.take { bare with seen := some true }
       let (_, past) := ({} : Build.Kept).take asked (limit := size - 1)
       tally ← tally.expect s!"{name}: a block was built on what had been forgotten"
         ((Build.run forgotten).built.isNone && nothing.given == 0 && nothing.chain.isEmpty
           && (size == 0 || (past.given == 0 && (Build.run (past.take bare).1).built.isNone)))
+      -- The headers are decoded and checked when they are given and handed on as checked
+      -- (`Request.ancestry`): every one of them, to each of the three requests above, and never to one
+      -- as it comes off the wire. Headers given that do not follow one another, or one that is not a
+      -- header, join nothing: no block, and what is kept stays as it was, so the next request is
+      -- still answered from it.
+      let count255 := witness.headers.length
+      let handed (r : Build.Request) : Bool := match r.ancestry with
+        | some known => known.length == count255
+        | none => false
+      let backwards : Build.Request := { bare with witness := { bare.witness with headers := witness.headers.reverse } }
+      let (turned, keptTurned) := kept.take backwards
+      let noHeader : Build.Request := { bare with witness := { bare.witness with headers := [⟨#[0xc0]⟩] } }
+      let (broken, keptBroken) := kept.take noHeader
+      tally ← tally.expect s!"{name}: the kept headers are not handed on as checked, or headers that are no chain were joined"
+        (handed whole && handed second && handed third && asked.ancestry.isNone
+          && (match Build.Request.encode asked with
+              | some encoded => (match (Build.request encoded).run 0 with
+                | some (read, _) => read.ancestry.isNone
+                | none => false)
+              | none => false)
+          && (count255 < 2 || (turned.ancestry.isNone && (Build.run turned).built.isNone
+                && keptTurned.chain.map (·.bytes) == witness.headers.toArray
+                && (Build.run (keptTurned.take bare).1).encode == again.encode))
+          && broken.ancestry.isNone && (Build.run broken).built.isNone
+          && keptBroken.chain.map (·.bytes) == witness.headers.toArray
+          && (Build.run (keptBroken.take bare).1).encode == again.encode)
       -- Who signed each transaction, kept from one request for the next (`Build.Signers`): one for each
       -- transaction, and the same answer with them handed in. One kept under another signature or
       -- another chain is not taken, whoever it names; one kept under the transaction's own is, which

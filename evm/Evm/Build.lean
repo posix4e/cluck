@@ -87,8 +87,11 @@ It need give only the trie nodes and the codes that no request since the last fo
 headers only those after the newest it gave before: fewer than 255 headers are joined to the kept ones
 where the oldest given names a kept one as its parent, and none at all stands for the kept ones as they
 are. What it gives is kept in its turn, whatever becomes of the block. Nodes and codes are found by
-their hashes and headers by the hash the next one names, kept or given alike, so a kept one proves
-exactly what the same bytes would prove in the request, and nothing kept can make a block wrong. What
+their hashes, kept or given alike, so a kept one proves exactly what the same bytes would prove in the
+request. A header is decoded and hashed once, when it is given, and joins the kept ones only where each
+names the one before it by that hash; the kept ones are a chain for that reason and are not decoded or
+hashed again (`Link`, `Request.ancestry`), and every request still has to show that the newest of them
+is its block's parent. So nothing kept can make a block wrong. What
 is kept does change which requests can be answered: one that leaves out what was never given, or was
 forgotten, is answered as any request with a short witness is (6, or transactions left out), and whoever
 sends it has to know what it has sent. When the nodes and codes given since the last forgetting come to
@@ -182,6 +185,11 @@ structure Request where
   /-- Who signed the transactions of the request before this one, for a request read with what was sent
   before: `Kept.take` puts them here too. -/
   signers : Signers := {}
+  /-- The witness's headers decoded, oldest first, each with its hash, when they are already known to
+  be a chain: each names the one before it by that hash. Not part of a request as it is written:
+  `Kept.take` puts them here, from headers it decoded and checked as they were given, and `begin` then
+  does neither again. `none` for any other request, whose headers `begin` decodes and checks. -/
+  ancestry : Option (List (Header × U256)) := none
   /-- Of the transactions proposed, how many from the first came from whoever sent the request. The
   signers of the rest, which the machine added itself (`Evm/Bid.lean`), are neither looked for among
   those kept nor kept: how long a request takes then says nothing of them that it did not before. -/
@@ -230,13 +238,21 @@ def Request.encode (r : Request) : Option ByteArray := do
     Evm.Service.sized r.witness.block ++ list r.witness.headers ++ list r.witness.nodes.toList ++
     list r.witness.codes ++ list r.witness.keys
 
+/-- A header that is kept: its bytes as they were given, what they decode to, and the hash of that
+(`Header.hash`), by which the next header names it. -/
+structure Link where
+  hash : U256
+  bytes : ByteArray
+  header : Header
+
 /-- What is kept of the requests read with what was sent before: their nodes and codes by hash, the
 headers last built on, and how much has been given since nothing was kept. -/
 structure Kept where
   nodes : Store := .empty
   codes : Std.HashMap Fast.Word ByteArray := {}
-  /-- Oldest first, each with its hash; never more than 255. -/
-  chain : Array (U256 × ByteArray) := #[]
+  /-- Oldest first, never more than 255, and a chain: each names the one before it by its hash. `take`
+  lets nothing in that would break that. -/
+  chain : Array Link := #[]
   /-- The bytes of the nodes and codes given since nothing was kept, counted each time one is given. -/
   given : Nat := 0
   /-- Who signed the transactions of the last request built with what was sent before. `take` hands them
@@ -253,30 +269,35 @@ def Kept.limit : Nat := 16 * 1024 * 1024
 /-- A request read with what was sent before, made whole from what is kept, and what is kept after it.
 Any other request comes back as it is, and so does what is kept.
 
-The nodes and codes it gives join those kept, by their hashes. Its headers, when there are fewer than
-255, follow the kept ones up to the one the oldest given names as its parent; when there are none, the
-kept ones stand as they are. Whether the result is a chain to the block's parent is not looked at here:
-`begin` checks that of every request, joined or not. What was given is counted, and past `limit`
-none of those is kept after this request. The signers kept go with the request, unless it says to forget. -/
+The nodes and codes it gives join those kept, by their hashes. Its headers are decoded and hashed
+here, once. When there are fewer than 255 they follow the kept ones up to the one the oldest given
+names as its parent; when there are none, the kept ones stand as they are. The request is handed the
+result decoded (`Request.ancestry`), a chain because the kept ones were and the given ones are checked
+to follow one another; whether its newest is the block's parent is `begin`'s to check, of every
+request. When a given header does not decode, or does not name the one given before it, nothing is
+joined: the request keeps its own headers, for `begin` to refuse, and the kept ones stay as they were.
+What was given is counted, and past `limit` none of those is kept after this request. The signers
+kept go with the request, unless it says to forget. -/
 def Kept.take (kept : Kept) (r : Request) (limit : Nat := Kept.limit) : Request × Kept :=
   match r.seen with
   | none => (r, kept)
   | some forget =>
     let kept : Kept := if forget then {} else kept
-    let given := r.witness.headers.toArray.map fun header => (Trie.hashOf header, header)
-    let before : Array (U256 × ByteArray) :=
-      if given.size ≥ 255 then #[] else
-      match r.witness.headers.head? with
-      | none => kept.chain
-      | some oldest =>
-        match Stateless.header oldest with
-        | none => #[]
-        | some header =>
-          match kept.chain.findIdx? (·.1 == header.parentHash) with
+    let given : Option (Array Link) := r.witness.headers.toArray.mapM fun bytes =>
+      (Stateless.header bytes).map fun header => { hash := header.hash, bytes, header }
+    let joined : Option (Array Link) := given.bind fun given =>
+      if !(given.toList.zip (given.toList.drop 1)).all (fun (a, b) => a.hash == b.header.parentHash) then none else
+      let before : Array Link :=
+        if given.size ≥ 255 then #[] else
+        match given[0]? with
+        | none => kept.chain
+        | some oldest =>
+          match kept.chain.findIdx? (·.hash == oldest.header.parentHash) with
           | some i => kept.chain.extract 0 (i + 1)
           | none => #[]
-    let chain := before ++ given
-    let chain := chain.extract (chain.size - 255) chain.size
+      let chain := before ++ given
+      some (chain.extract (chain.size - 255) chain.size)
+    let chain := joined.getD kept.chain
     let nodes := r.witness.nodes.foldl (fun store node => store.insert (Trie.hashOf node) node) kept.nodes
     let codes := r.witness.codes.foldl (fun codes code => codes.insert (Fast.keccak code) code) kept.codes
     let size := r.witness.codes.foldl (fun n code => n + code.size)
@@ -284,7 +305,12 @@ def Kept.take (kept : Kept) (r : Request) (limit : Nat := Kept.limit) : Request 
     let whole : Request :=
       { r with
         held := nodes, heldCodes := codes, signers := kept.signers
-        witness := { r.witness with headers := chain.toList.map (·.2), nodes := #[], codes := [] } }
+        ancestry := joined.map fun chain => chain.toList.map fun link => (link.header, link.hash)
+        witness := { r.witness with
+          headers := match joined with
+            | some chain => chain.toList.map (·.bytes)
+            | none => r.witness.headers
+          nodes := #[], codes := [] } }
     (whole, if size > limit then { signers := kept.signers } else { nodes, codes, chain, given := size, signers := kept.signers })
 
 /-- A block that was built. -/
@@ -572,8 +598,8 @@ def short (witness : Bridge.Witness) (world : Fast.World) (notes : Array Note :=
 /-- The same beginning for the fast engine: the template checked against the parent, the engine's world
 over the witness, the block's two opening calls, and what the fee recipient has before any transaction.
 Beside the stage, who signed the transactions proposed, for whoever keeps that for the next request. -/
-def startFastKeeping (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (template : Block) :
-    Stage × Signers :=
+def startFastKeeping (r : Request) (fork : Fork) (parent : Header) (ancestors : List Header) (named : List U256)
+    (template : Block) : Stage × Signers :=
   if !Bridge.supported fork then (.done { status := 4 } #[] "the engine has no rules for this fork", {}) else
   -- Jaune's checks of a header want a chain with a state, and read none of it.
   let chain : BlockChain :=
@@ -586,7 +612,7 @@ def startFastKeeping (r : Request) (fork : Fork) (parent : Header) (ancestors : 
     | some body => (·, signers) <|
       let body := { body with work := r.work }
       let witness := Bridge.Witness.of r.witness parent.stateRoot r.held r.heldCodes
-      let blk := Bridge.environment fork r.witness.chainId blank ancestors
+      let blk := Bridge.environment fork r.witness.chainId blank ancestors named
       let host := Bridge.host fork
       let (world, stack) := Fast.openBlock blk host body ByteArray.empty (Fast.World.new witness.backing)
       let (world, recipient) := world.account blk.coinbase
@@ -738,17 +764,24 @@ def beginKeeping (r : Request) (other : Other) : Stage × Signers :=
         match mainnetChainConfig.forkAt template.header.number template.header.timestamp with
         | .ok fork => if (Stateless.forkCode fork).isSome then some fork else none
         | .error _ => none
-    match fork, r.witness.headers.mapM Stateless.header with
+    -- The headers decoded, each with its hash: as whoever kept them hands them, or worked out here.
+    let ancestry : Option (List (Header × U256)) := match r.ancestry with
+      | some known => some known
+      | none => (r.witness.headers.mapM Stateless.header).map fun headers => headers.map fun h => (h, h.hash)
+    match fork, ancestry with
     | none, _ | _, none => only { status := 5 } "no fork, or a header that does not decode"
-    | some fork, some ancestors =>
-      let linked := (ancestors.zip (ancestors.drop 1)).all fun (a, b) => a.hash == b.parentHash
-      match ancestors.getLast? with
+    | some fork, some ancestry =>
+      -- Those handed over are a chain already (`Kept.take`); any others are checked to be one.
+      let linked := r.ancestry.isSome ||
+        (ancestry.zip (ancestry.drop 1)).all fun ((_, hash), (next, _)) => hash == next.parentHash
+      match ancestry.getLast? with
       | none => only { status := 6 } "no headers"
-      | some parent =>
-        if !linked || parent.hash != template.header.parentHash then only { status := 5 } "the headers are not a chain to the parent"
-        else if ancestors.length != min 255 template.header.number then only { status := 6 } "too few headers"
+      | some (parent, hash) =>
+        if !linked || hash != template.header.parentHash then only { status := 5 } "the headers are not a chain to the parent"
+        else if ancestry.length != min 255 template.header.number then only { status := 6 } "too few headers"
         else
-          if r.engine then startFastKeeping r fork parent ancestors template
+          let ancestors := ancestry.map (·.1)
+          if r.engine then startFastKeeping r fork parent ancestors (ancestry.map (·.2)) template
           else (other r fork parent ancestors template, {})
 
 /-- Where a request to build starts, without the signers. -/

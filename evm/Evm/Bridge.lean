@@ -216,9 +216,11 @@ def transaction (chainId : UInt64) (tx : Transaction) : Option Fast.Tx := do
   transactionFrom tx (← (recoverSender chainId tx).toOption)
 
 /-- What the block fixes, from its header and the headers before it. -/
-def environment (fork : Fork) (chainId : UInt64) (header : Header) (ancestors : List Header) : Fast.BlockEnv :=
+def environment (fork : Fork) (chainId : UInt64) (header : Header) (ancestors : List Header)
+    (named : List U256 := ancestors.map (·.hash)) : Fast.BlockEnv :=
+  -- `named` is each ancestor's hash, for a caller that has them already: 255 headers are not hashed twice.
   let hashes : Std.HashMap UInt64 Fast.Word :=
-    ancestors.foldl (fun hashes h => hashes.insert h.number.toUInt64 (word h.hash)) {}
+    (ancestors.zip named).foldl (fun hashes (h, hash) => hashes.insert h.number.toUInt64 (word hash)) {}
   -- The oldest header names its own parent, which is one more block that BLOCKHASH can reach.
   let hashes := match ancestors.head? with
     | some oldest => if oldest.number == 0 then hashes else hashes.insert (oldest.number - 1).toUInt64 (word oldest.parentHash)

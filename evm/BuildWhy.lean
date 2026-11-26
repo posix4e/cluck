@@ -14,7 +14,8 @@ names with what the ones before gave kept, as the machine keeps it. For each: th
 reading it with what is kept (`Kept.take`), of everything before the first transaction
 (`beginKeeping`: the headers, who signed what is proposed, the block opened), of the transactions,
 and of ending the block (`FastJob.finish`: the roots and the header). Then parts of those done once
-more by themselves: the headers decoded and checked to be a chain, which is inside "before the first";
+more by themselves: the headers decoded and checked to be a chain, which a request read with what is
+kept pays only for the headers it brings, and any other pays whole inside "before the first";
 and of the ending, what closes the block, the state root, the receipts' root and bloom, and the
 transactions' root. No clock cuts a block short here, and nothing is signed: signing a bid is the same
 work every time (`bls-test` times it). -/

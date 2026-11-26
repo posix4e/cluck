@@ -1700,6 +1700,17 @@ by the guest itself.
         roots). Next, in this order: the headers checked once and kept as checked; the
         message made a point of G2 by this project's own arithmetic; then going on from the
         block before, and the roots with it.
+      - **The headers are checked once, when given, and kept as checked** (2026-11-26, not in
+        an image yet; `Build.Link`, `Request.ancestry`). `Kept.take` decodes and hashes the
+        headers a request brings, one for a new head and none for the rounds after, and
+        `begin` and the block's environment take the kept ones as they are, where each of
+        them decoded and hashed all 255 again. `build-test`: 940 checks with three blocks of
+        mainnet (the three requests of the keeping checks are each handed all their headers
+        as checked, and one read from bytes never is; headers given out of order, or one that
+        is no header, join nothing, build nothing and leave what is kept as it was).
+        `build-why --each` on the 74 requests: before the first transaction 14 ms on average
+        where 33, the rest as it was, so 72 ms a request where 92, signing apart. Not run:
+        an image, a trust domain, slots.
       - **On Compute Engine since 2026-11-26 15:18 UTC** (`evm-os` `a07875d4…174a38df`,
         4,045,312 bytes, built from commit 77d8cb4: the stack guard, what a request gave kept,
         the signers kept; in place of `93068517…`, which had run since 17:09 UTC on the 25th).

@@ -194,6 +194,9 @@ structure State where
   need not give them again. Taken out of here while a request is built and put back as the request
   leaves it. -/
   kept : Evm.Build.Kept := {}
+  /-- The clock at each moment the request to build now being answered has marked (`Bid.buildWith`'s
+  `mark`): emptied when one begins. For the console. -/
+  marks : Array Nat := #[]
 
 namespace State
 
@@ -544,10 +547,10 @@ def buildWith (request : ByteArray) (added : ByteArray → Evm.Bid.Extra := fun 
     if allowed == 0 then pure false else return (← Efi.millis).toNat ≥ stopAt
   let kept ← modifyGet fun s => (s.kept, { s with kept := {} })
   -- When each part of the work was done (`Bid.buildWith`'s `mark`), for the console.
-  let marks ← IO.mkRef (#[] : Array Nat)
+  modify fun s => { s with marks := #[] }
   let mark : M Unit := do
     let time ← Efi.millis
-    marks.modify (·.push time.toNat)
+    modify fun s => { s with marks := s.marks.push time.toNat }
   let outcome ← Evm.Bid.buildWith over key request added serving.other kept mark
   -- Put back before anything else is done with the outcome; it is not part of what is answered.
   modify fun s => { s with kept := outcome.kept }
@@ -556,7 +559,7 @@ def buildWith (request : ByteArray) (added : ByteArray → Evm.Bid.Extra := fun 
   -- of ending the block, and of signing the bid. Of a block that sealed transactions were tried in,
   -- nothing is said beyond how long all of it took, which the host sees for itself.
   let ended := (← Efi.millis).toNat
-  let parts := match (← marks.get) with
+  let parts := match (← get).marks with
     | #[read, tried, built] =>
       if outcome.tried then "" else s!" ({read - now} to read, {tried - read} to the last transaction, {built - tried} to end the block, {ended - built} to sign)"
     | _ => ""

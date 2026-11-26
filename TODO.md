@@ -1365,6 +1365,20 @@ by the guest itself.
     and 3 did not come in time; two bids were answered after their slot began, one by 0.79 s; six
     builds a slot, 1.08 s apart. Not done: what the taken blocks held that was public (the
     watcher that says so was not running).
+  - **And again on the image of 17:09, with what was public** (the feed's three records from
+    23:12 UTC on 2026-11-25 to 01:46 on the 26th, 769 slots; `evm/builder/tools/gap.py` on them,
+    its output kept in `/data/eth/shadow/gce-live/gap-20261125-231236.txt`): 651 slots had a
+    relay's figure. Ours 0.00187 ETH at the median against 0.00601: 31.5% at the median, 84.9% at
+    best, never more; summed 1.47 ETH against 13.00 (11.3%), so the hour of 04:28 was a quiet
+    one. Beside it `tools/seen.py` watched this box's pool for 600 blocks from 23:50 UTC
+    (`/data/eth/shadow/gce-seen/`), and `tools/cover.py` joined the two, 600 slots in both: of
+    the fees of what the taken blocks held that had been public a second before the slot, ours
+    held 86% summed (1.24 of 1.44 ETH) and 90% at the median; three seconds before, 95% and 99%;
+    at the slot's start, 80% and 84%. Our last block was ready 0.78 s before the slot at the
+    median. So eleven parts in a hundred of the taken blocks' worth was ours, and of the rest
+    nearly all was never in this node's pool: the public fees in those 600 blocks come to 1.56
+    ETH in all. Not done: saying which of the missing public fees were lost to time (public
+    less than 0.78 s before) and which to the order transactions are taken in.
   - **The first two hours on that image together** (04:28 to 06:28 UTC, 600 slots; the feed's
     records `20261125-042803.jsonl` and `20261125-052810.jsonl`, counted by a few lines of Python
     over their rounds; REPORT.md's figures are these): 3,172 blocks built, 3,102 sent, all judged

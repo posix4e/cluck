@@ -329,13 +329,15 @@ relays and their certificates' roots.
   late), 7,017 and 6,415 blocks, all valid, none late.
 - Three runs of 1,000 slots on earlier images: two with a block for every slot, one with 998.
 
-**Against the blocks proposers took**, as relays' public lists give what each paid. Measured eight
+**Against the blocks proposers took**, as relays' public lists give what each paid. Measured nine
 times, over up to 875 slots each: ours was 18% to 34% of theirs at the median, and 4.5% to 31%
 summed. The largest and latest of them:
 
 - From Google Cloud at the real relays (the hour from 04:28 UTC on 2026-11-25, 267 slots for which a
   relay listed what the proposer was paid): ours 34% of theirs at the median and 31% summed; 80% at
   best, never more.
+- From Google Cloud again, on the image now running (23:12 UTC on 2026-11-25 to 01:46 on the 26th, 651
+  slots a relay listed): 32% at the median and 11% summed; 85% at best, never more.
 - On one machine against the test relay (2026-11-22 and 23, three runs of 1,000 slots): 29%, 27% and 29%
   at the median; 19% and 17% summed in the first two, and the third was not summed.
 - On one machine at the real relays (2026-11-24, 253 slots): 18% at the median and 4.5% summed, in an
@@ -343,8 +345,10 @@ summed. The largest and latest of them:
 
 The summed figure is the truer one: the slots that pay are far above the median, and in those ours is
 furthest behind. Of what the taken blocks held that was public a second before the slot, ours held 84%
-to 91% by fees summed over a run, and 89% to 94% at the median (four runs on one machine; public
-means in the pool of the one node that feeds it, and this was not measured on Google Cloud). So most of
+to 91% by fees summed over a run, and 89% to 94% at the median (four runs on one machine), and from
+Google Cloud 86% summed and 90% at the median (600 slots from 23:50 UTC on 2026-11-25, the last block
+ready 0.78 s before the slot; of what was public three seconds before, 95% and 99%). Public means in
+the pool of the one node that feeds it. So most of
 what it lacks was not public as that node saw it, and some of it was public and not taken.
 
 **How fast the parts are.** Building a block takes the guest 0.33 s at the median on the machine it was

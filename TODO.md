@@ -1723,6 +1723,21 @@ by the guest itself.
         as bytes. Not done: the field's own squaring and a three-product multiplication in
         the extension, which would take a third off again. Not run: an image,
         `check-secret-code`, slots.
+      - **Those two together, in a trust domain: a request takes less than half** (2026-11-26;
+        images `evm-os` `b1f0683b…` (4,057,600 bytes) and the stand-in's twin `e9bf5a55…`,
+        commit 224624c; `check-secret-code tdx`, `stack-check tdx` and `run-fixtures tdx
+        --limits --key` as they should be, the bid's signature found good from outside). The
+        74 requests put three times each, turn about, to the image running on Compute Engine
+        (`a07875d4…`) and to this one: by the guest's own count 258, 252 and 217 ms a request
+        at the median before and 106, 116 and 115 now; request by request, by the median of
+        three, 240 before and 108 now, 142 ms less at the median (57 to 171), and every answer
+        the same block (`/data/eth/shadow/signers-try/again2`). That is far more than the 44
+        ms the same two changes save outside a trust domain: what they took out is Jaune's
+        work on `Nat` and on lists, which the guest's own small runtime does much more slowly
+        than Lean's does on a workstation. So what is still Jaune's in a request is where to
+        look next: decoding the transactions, the receipts' root, the header's checks.
+        **1,000 slots on the twin** began at 15:48 UTC (`/data/eth/shadow/gate1000s`), with
+        nothing else built or run on the machine but the feed until it ends.
       - **On Compute Engine since 2026-11-26 15:18 UTC** (`evm-os` `a07875d4…174a38df`,
         4,045,312 bytes, built from commit 77d8cb4: the stack guard, what a request gave kept,
         the signers kept; in place of `93068517…`, which had run since 17:09 UTC on the 25th).

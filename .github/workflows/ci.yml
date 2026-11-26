@@ -137,6 +137,56 @@ jobs:
           wc -l < live.txt
           diff rt/live-symbols/demo-sim.txt live.txt && echo "same as rt/live-symbols/demo-sim.txt" || echo "differs from rt/live-symbols/demo-sim.txt (see above)"
 
+  # The builder's Lean (evm/) as ordinary processes: what checks and builds blocks, the cryptography and
+  # the TLS, each against what it must agree with, and then the service itself on the fixtures, on Lean's
+  # runtime and on the minimal one. No machine is started and nothing of a real chain is asked for. What
+  # this leaves to be run by hand: Ethereum's own suites, the image in a trust domain, the runs of slots.
+  builder:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: evm
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      # mathlib's modules as mathlib's own cache serves them; compiling them here would take hours.
+      - name: mathlib's ready-made modules
+        run: |
+          lake exe cache get Mathlib.Data.Nat.Basic Mathlib.Data.List.Lemmas Mathlib.Data.List.TakeDrop \
+            Mathlib.Data.List.TakeWhile Mathlib.Data.UInt Mathlib.Tactic.NormNum Mathlib.Data.List.Chain
+      - name: Build the tests and the service
+        run: |
+          lake build evm-test trie-test stateless-test build-test bls-test bn254-test fast-word-test \
+            fast-op-test tls-test evm-serve
+          scripts/build-min evm-serve
+      - name: The engine's parts against Jaune's and against known answers
+        run: |
+          .lake/build/bin/evm-test
+          .lake/build/bin/fast-word-test
+          .lake/build/bin/fast-op-test
+      - name: The trie, and blocks checked from a witness
+        run: |
+          .lake/build/bin/trie-test
+          .lake/build/bin/stateless-test
+      - name: Blocks built, by both engines
+        run: .lake/build/bin/build-test
+      - name: The pairings and the signature of a bid
+        run: |
+          .lake/build/bin/bn254-test
+          .lake/build/bin/bls-test
+      - name: TLS
+        run: .lake/build/bin/tls-test
+      - name: The tests wrote nothing over the fixtures
+        run: git diff --exit-code -- fixtures
+      - name: The service answers every fixture as kept, on both runtimes
+        run: |
+          for request in fixtures/*.req fixtures/stateless/*.req; do
+            .lake/build/bin/evm-serve     < "$request" | cmp - "${request%.req}.expected"
+            .lake/build/bin/evm-serve-min < "$request" | cmp - "${request%.req}.expected"
+          done
   # The same compiled Lean with no operating system under it: boot stub, minimal runtime, and an emulated
   # x86-64 machine. What the image prints on its serial port must be what the program prints as a process.
   bare:

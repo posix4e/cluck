@@ -1478,6 +1478,21 @@ by the guest itself.
     that needs a build or a run, the Lean and C behind the security statements, the threat model
     outside the EVM section, most of this file.
   - Not done there: a look at how often the guest leaves the trust domain there.
+  - [ ] **The feed stopped itself at 06:40 UTC on 2026-11-26, and is stopped**: 65 of the 966
+    answers from relays over fifty slots were refusals, 64 of them "block accesses blacklisted
+    address: 0x6Fac4D18c912343BF86fa7049364Dd4E424Ab9C0", from Flashbots' relay and Titan's, for
+    blocks of slots 15737590 and 15737594 to 15737598 (25 in one slot: every round's block, to
+    both). Ultrasound's and Aestus's took the same blocks, and the node here judged them valid.
+    Such refusals had come before (37 in the hour from 23:12 UTC, 25 in the next) and stayed
+    under one in twenty. The last blocks of three of those slots have no transaction in common,
+    so it was several transactions touching that address, not one left pending. Whether to leave
+    such transactions out, or to keep such blocks from the relays that refuse them, is the user's
+    to say and is not decided; the feed is not started again until they say so
+    (`/data/eth/shadow/gce-live/STOPPED` holds the reason and has to be removed).
+    - Done meanwhile, in `builder/shadow` (not run against a relay): a relay that refuses a block
+      for that reason is sent no more on that head, so a slot costs it one refused block and not
+      one a round. With that the five slots would have been about a dozen refusals, under the
+      feed's limit. The blocks still go to the relays that take them.
   - [ ] **One slot in twenty, the last round comes to nothing: its request is too long in coming**
     (found 2026-11-26, looking for why public transactions seen in time were not in our blocks).
     From Compute Engine since 17:13 UTC on 2026-11-25, 3,096 slots: in 143 the slot's last round

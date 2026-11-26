@@ -15,7 +15,9 @@
 # minute over the last fifty slots, and over the whole hour at its end. A relay's answer of 500 or more
 # is not counted a refusal: it says the relay cannot serve, builder/shadow then leaves that relay alone
 # for a while, and the blocks go to the others. (Until 2026-11-25 it was counted, and three minutes of
-# 503 from one relay stopped the bids to all four.) A guest that cannot be reached is
+# 503 from one relay stopped the bids to all four.) A relay that refuses a block for touching an address
+# on its list is sent no more on that head by builder/shadow; the one refusal still counts here. A guest
+# that cannot be reached is
 # tried again every minute. A guest whose key for bids is no longer the one docs/live names (it began
 # again) is said after each hour and noted in DIR/BEGAN-AGAIN; the feed goes on. A block of ours that
 # becomes the chain's head ends that hour's run early, as builder/shadow does, and the next begins.

@@ -203,6 +203,27 @@ def one (engine : Bool) (name : String) (bytes : ByteArray) (shorten : Bool) (ta
       IO.FS.writeBinFile s!"fixtures/build/{name}.expected" ruled.encode
   IO.println s!"{name}: {count} transactions; as given {took} ms; by the rule {went} went in \
     (status {ruled.status}), {ruledTook} ms"
+  -- The engine, with a node of the witness left out, for a block too big to try every node of: eight
+  -- of them, spread over the witness, each under both rules. What the engine could not read it must
+  -- not remember as anything: a transaction after the one left out, reading the same slot or
+  -- account, is then left out too, and the block is one the checker accepts with the whole witness.
+  if engine && !shorten && witness.nodes.size ≥ 8 then
+    let mut smaller := 0
+    let mut nothing := 0
+    for turn in [0:8] do
+      let lacked := turn * (witness.nodes.size / 8) + witness.nodes.size / 16
+      for rule in [0, 1] do
+        let answer := Build.run { witness := { witness with nodes := witness.nodes.eraseIdx! lacked }, rule, gasCap := limit, engine }
+        match answer.built with
+        | some b =>
+          if b.included.length < count then smaller := smaller + 1
+          tally ← tally.expect s!"{name}: without node {lacked}, rule {rule}, a block was built that the checker \
+            does not accept" (accepted witness template b)
+        | none =>
+          nothing := nothing + 1
+          tally ← tally.expect s!"{name}: without node {lacked}, rule {rule}, status {answer.status}"
+            (answer.status == 4 || answer.status == 6 || answer.status == 7)
+    IO.println s!"{name}: 16 witnesses with a node left out; {nothing} built nothing, {smaller} built a smaller block"
   -- A witness that falls short.
   if shorten then
     let mut variants : List (String × Stateless.Request) := []
@@ -312,8 +333,45 @@ def ordered (tally : Tally) : IO Tally := do
       (got == (byTipByPairs waiting).map (·.place) && got.size == count)
   return tally
 
+/-- What the engine's world could not be told it does not remember as anything (`Fast/State.lean`). A
+transaction that asks for a slot or an account nothing can answer for is undone, and after the undoing
+the world must hold of that slot and that account what it held before: nothing. (Until 2026-11-26 it
+held a slot of nothing, and an account that was not there, and the next transaction to ask was told
+so.) What was written before the question is undone as ever, and what was fetched and answered stays. -/
+def worldChecks (tally : Tally) : IO Tally := do
+  let known : Fast.Word := Fast.Word.ofNat 0x1111
+  let other : Fast.Word := Fast.Word.ofNat 0x2222
+  let key : Fast.Word := Fast.Word.ofNat 7
+  let proven : Fast.Word := Fast.Word.ofNat 8
+  let backing : Fast.Backing :=
+    { account := fun a =>
+        if a == known then .found { nonce := 3, balance := Fast.Word.ofNat 100, codeHash := Fast.emptyCodeHash,
+                                    storageEmpty := false, storage := Fast.Word.ofNat 1 }
+        else .missing
+      slot := fun _ slot => if slot == proven then .found (Fast.Word.ofNat 9) else .missing
+      code := fun _ => none }
+  let world := Fast.World.new backing
+  let mark := world.checkpoint
+  -- Written before anything went unanswered: undone by the journal.
+  let (world, held) := world.slot known proven
+  let world := world.setSlot known proven held (Fast.Word.ofNat 10)
+  -- A slot nothing answers for, read and then written; an account nothing answers for, paid.
+  let (world, lacked) := world.slot known key
+  let world := world.setSlot known key lacked (Fast.Word.ofNat 5)
+  let world := world.credit other (Fast.Word.ofNat 1)
+  let marked := world.missing
+  let world := world.revert mark
+  let (again, slot) := ({ world with missing := false, lacks := #[] }).slot known key
+  let (again, account) := again.account other
+  let (_, kept) := again.slot known proven
+  tally.expect "the engine's world remembers a slot or an account it could not be told"
+    (marked && !world.slots.contains ⟨known, key⟩ && !world.accounts.contains other && again.missing
+      && slot.value.isZero && !account.present
+      && world.accounts.contains known && kept.value == Fast.Word.ofNat 9)
+
 def main (args : List String) : IO UInt32 := do
   let mut tally : Tally := {}
+  tally ← worldChecks tally
   tally ← sealedFor tally
   tally ← ordered tally
   -- Every case is put to Jaune's builder and then to the fast engine's.

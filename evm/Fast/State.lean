@@ -250,8 +250,12 @@ def account (w : World) (a : Word) : World × Account :=
     | .absent => ({ w with accounts := w.accounts.insert a noAccount }, noAccount)
     | .missing => (w.lack a, noAccount)
 
-/-- An account's entry replaced, what was there going on the journal. -/
+/-- An account's entry replaced, what was there going on the journal. In a world that is marked nothing
+is replaced: `old` may then be what `account` hands back for an account it could not fetch, which is
+no answer, and undoing the change would put that in the world as if it were one. Nothing computed in a
+marked world means anything, so nothing is lost by it. -/
 def setAccount (w : World) (a : Word) (old new : Account) : World :=
+  if w.missing then w else
   { w with accounts := w.accounts.insert a { new with dirty := true }, journal := w.journal.push (.account a old) }
 
 /-- The account at `a` with its code's bytes, fetched if they have not been. -/
@@ -272,26 +276,31 @@ def warm (w : World) (a : Word) : World × Bool :=
   if old == w.epoch then (w, false)
   else ({ w with warmAccounts := w.warmAccounts.insert a w.epoch, journal := w.journal.push (.warmAccount a old) }, true)
 
-/-- The slot `key` of `a`, fetched if it has not been, and stamped for this transaction. -/
+/-- The slot `key` of `a`, fetched if it has not been, and stamped for this transaction. When it cannot
+be fetched the world is marked and a slot holding nothing is handed back, which the caller must not take
+for an answer and which the world does not keep: neither here nor when the owner could not be fetched,
+whose slots are not known to hold nothing. (Until 2026-11-26 it was kept, stamped like any other, and
+the next transaction to read the slot was told it held nothing.) -/
 def slot (w : World) (a key : Word) : World × Slot :=
   let name : SlotKey := ⟨a, key⟩
-  let (w, entry) :=
+  let (w, entry, known) :=
     match w.slots[name]? with
-    | some entry => (w, entry)
+    | some entry => (w, entry, true)
     | none =>
       let (w, owner) := w.account a
+      if w.missing then (w, default, false) else
       let fetched : Fetched Word :=
         if owner.fresh || owner.storageWasEmpty then .absent else w.backing.slot owner.storage key
       match fetched with
       | .found value =>
         let entry : Slot := { value, original := value, originalAt := 0, before := value }
-        ({ w with slots := w.slots.insert name entry }, entry)
+        ({ w with slots := w.slots.insert name entry }, entry, true)
       | .absent =>
         let entry : Slot :=
           { value := Word.zero, original := Word.zero, originalAt := 0, before := Word.zero }
-        ({ w with slots := w.slots.insert name entry }, entry)
-      | .missing => (w.lackOf 1 a key, default)
-  if entry.originalAt == w.epoch then (w, entry)
+        ({ w with slots := w.slots.insert name entry }, entry, true)
+      | .missing => (w.lackOf 1 a key, default, false)
+  if !known || entry.originalAt == w.epoch then (w, entry)
   else
     -- First touch in this transaction: what it holds now is what the transaction began with. This is a
     -- fact about the transaction and not a change, so it is not journaled; a later undo puts back an
@@ -318,8 +327,10 @@ def warmSlotOnly (w : World) (a key : Word) : World :=
   if old == w.epoch then w
   else { w with warmSlots := w.warmSlots.insert name w.epoch, journal := w.journal.push (.warmSlot name old) }
 
-/-- A slot given a new value. `old` is the entry as `slot` or `warmSlot` last gave it. -/
+/-- A slot given a new value. `old` is the entry as `slot` or `warmSlot` last gave it. In a world that is
+marked nothing is written, as with `setAccount` and for the same reason: `old` may be no answer. -/
 def setSlot (w : World) (a key : Word) (old : Slot) (value : Word) : World :=
+  if w.missing then w else
   { w with slots := w.slots.insert ⟨a, key⟩ { old with value }, journal := w.journal.push (.slot ⟨a, key⟩ old) }
 
 def transientGet (w : World) (a key : Word) : Word := w.transient.getD ⟨a, key⟩ Word.zero

@@ -522,6 +522,29 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   sender could already cost it by keeping the machine busy. Not measured: the heap with the most kept
   and a request of the longest allowed at once. A request that begins `JBLF1` reads nothing kept and
   keeps nothing.
+- *The engine remembered a storage slot it could not read as an empty one* (found and put right
+  2026-11-26, `Fast/State.lean`; in every image up to and including `a07875d4…` and the one tested
+  after it). A transaction that reads what the witness does not prove is undone and left out of the
+  block. The undoing put back everything the transaction wrote, but a slot whose proof was missing
+  had been put among the slots the engine knows, holding nothing, and stayed there; and an account
+  whose proof was missing, if the transaction paid it or wrote to it, was put back as an account
+  that is not there. A later transaction of the same block that read that slot or account was then
+  told so, with nothing to say the witness had not proven it. If it also wrote there, the block
+  failed at its end for want of the same proof (status 6) and no block came of the request; if it
+  only read, a block could be built on a value the state does not have: an invalid block, bid for.
+  It took a witness that lacks a proof one transaction needs and a later transaction reading the
+  same place without writing it. No such block is known: every block the feeder was sent, in tests
+  and live, was judged by a node (11,466 in the last 1,000-slot test, 4,902 so far in the one
+  running, all valid), and a relay that checks blocks would have refused one. It was found by a new
+  test that gives a block's missing node in a second request and has the left-out transaction tried
+  again, which read the slot remembered as empty and paid for a write as if to an empty slot.
+  Now a slot or account that could not be fetched is not kept, and nothing is written in a world
+  already marked as having asked for what cannot be answered (`World.slot`, `setAccount`,
+  `setSlot`). Checked in `build-test`: the world after such a transaction is undone holds nothing of
+  the slot or the account; and each of three blocks of mainnet built with one node of its witness
+  left out, for 8 nodes and both rules, is a block the checker accepts. The engine as a checker of
+  blocks (`JENG1`, and the chain the machine follows) was not affected in its verdicts: there a
+  block that reads what the witness lacks gets no verdict at all.
 - *The loop was rewritten for it* (`Evm/Machine.lean`). Requests are run in the order they came on each
   connection, one at a time over all; a client waiting on a relay holds up only itself. While a block is
   built for a bid the network is looked at before each transaction, so frames are now read in the

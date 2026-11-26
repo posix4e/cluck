@@ -839,11 +839,17 @@ field elements as fifteen 26-bit limbs in machine words; where a value decides s
 computed and `Secret.select` (checked in `Mini/Constant.lean`) picks one; points are added by one formula
 that is right in every case, so nothing asks which case it is in; and the multiplication does a doubling
 and an addition for each of 255 bits whatever they are. Hashing the message to a point and writing the
-signature out are public and are `JauneConsensus`'s.
+signature out are public. The hashing is on the same field arithmetic from the image after `a07875d4…`
+on (2026-11-26; `evm/Evm/Sign/Hash.lean`: the map to the curve, the isogeny and the clearing of the
+cofactor, following Jaune's step for step, with the first step, SHA-256, and the constants still
+`JauneConsensus`'s); until then all of it was `JauneConsensus`'s on `Nat`. Its branches are on values
+worked out from the message, which is the bid and public, and the key does not come near it: the
+point it returns is what the key is multiplied by. A wrong point would make a signature no relay
+accepts, not one that says something else. Writing the signature out is `JauneConsensus`'s.
 
 What holds that: for correctness, `bls-test` (54,850 field operations against `Nat`, 242 sums of points
 against Jaune's in every case the formula covers, the public keys and signatures of 23 keys byte for byte
-`JauneConsensus`'s, a bid's hashing against `JauneConsensus`'s and against a registration a validator
+`JauneConsensus`'s, the points of 90 messages those `JauneConsensus` hashes them to, a bid's hashing against `JauneConsensus`'s and against a registration a validator
 signed for a relay on mainnet). For time there is less. `evm/scripts/check-secret-code` reads the image's
 own machine code: the product, the sum and the reduction have no conditional jump and no division; the
 difference and the choice have four jumps each, read by hand to be on the reference counts of their

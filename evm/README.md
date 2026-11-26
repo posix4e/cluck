@@ -50,8 +50,9 @@ it, and continuous integration does not build it. What has been run and what it 
   `openssl s_server`.
 - `Evm/Sign.lean`, `Evm/Sign/`: a BLS key used without ever being a `Nat`. `Field.lean` is the base field on
   fixed-width words with every value-dependent choice made by the OS's `Secret.select`; `Curve.lean` is
-  the key times a point by the same steps whatever the key; `Sign.lean` is public keys and signatures over
-  those. Not yet reached from the service. `BlsTest.lean` holds it to `Jaune` and `JauneConsensus`.
+  the key times a point by the same steps whatever the key; `Hash.lean` is a message made a point of
+  the curve on that arithmetic, which is public work; `Sign.lean` is public keys and signatures over
+  those. `BlsTest.lean` holds it to `Jaune` and `JauneConsensus`.
 - `Evm/Machine.lean`: the service as a whole machine, an EFI guest answering framed requests on TCP port
   5005 over the OS's own Ethernet, IP and TCP, and opening connections of its own to relays.
   `Evm/Outbound.lean` is one such connection, from a name to an answer over TLS; `Evm/Relays.lean` and

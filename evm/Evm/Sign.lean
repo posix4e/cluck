@@ -1,12 +1,13 @@
-import Evm.Sign.Curve
+import Evm.Sign.Hash
 import JauneConsensus.Crypto.Codec
 
 /-! A BLS key that is used without ever being a `Nat`: its public key, and signatures with it.
 
-The curve arithmetic on the key is `Evm/Sign/Curve.lean`. Everything else a signature needs is public and
-is `JauneConsensus`'s: hashing a message to a point (the message is public), and writing a point as bytes
-(the signature and the public key are public). So this file is the three crossings between the two: a
-public point in, the key applied, a public point out.
+The curve arithmetic on the key is `Evm/Sign/Curve.lean`. Everything else a signature needs is public:
+hashing a message to a point, which is `Evm/Sign/Hash.lean` on the same arithmetic (and
+`JauneConsensus`'s for the first step, SHA-256), and writing a point as bytes, which is
+`JauneConsensus`'s. So this file is the crossings: a public point in, the key applied, a public point
+out.
 
 The scheme is the one Ethereum's consensus layer and its builders use, BLS signatures with public keys in
 G1 and signatures in G2, and a signature made here is byte for byte the one `JauneConsensus.sign` makes
@@ -18,9 +19,6 @@ open Jaune JauneConsensus
 
 /-- Three times the `4` of `y^2 = x^3 + 4`. -/
 def b3G1 : Fp := Fp.ofPublic 12
-
-/-- Three times the `4 + 4u` of the curve signatures are on. -/
-def b3G2 : Fp2 := ⟨Fp.ofPublic 12, Fp.ofPublic 12⟩
 
 def generatorG1 : Point Fp :=
   Point.ofAffine (Fp.ofPublic blsG1Generator.x.val) (Fp.ofPublic blsG1Generator.y.val)
@@ -61,7 +59,7 @@ def messageTag : Bytes := "BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_".toUTF8.t
 
 /-- The signature of a message: the key times the message's point, as its 96 bytes. -/
 def sign (k : Scalar) (message : Bytes) : Except String Bytes := do
-  let q ← hashToG2 message messageTag
-  pure (g2Compress (applyG2 k q))
+  let q ← Hash.toPoint message messageTag
+  pure (g2Compress (toPublicG2 (Point.mul b3G2 k q)))
 
 end Evm.Sign

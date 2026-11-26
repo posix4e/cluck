@@ -1711,6 +1711,18 @@ by the guest itself.
         `build-why --each` on the 74 requests: before the first transaction 14 ms on average
         where 33, the rest as it was, so 72 ms a request where 92, signing apart. Not run:
         an image, a trust domain, slots.
+      - **A bid's message is made a point by this project's arithmetic** (2026-11-26, not in
+        an image yet; `Evm/Sign/Hash.lean`). The map to the curve, the isogeny and the
+        cofactor are done on `Evm/Sign/Field.lean`'s elements with projective points, where
+        `JauneConsensus` did them on `Nat` with a division for every addition of points.
+        `bls-test`: 55,245 checks passed, among them the points of 90 messages the same as
+        `JauneConsensus.hashToG2`'s and the signatures of 23 keys byte for byte its own;
+        hashing a message 5.2 ms where Jaune's took 28 in the same run, the key's part 8 as
+        before (with the feed running beside; 20 and 5 on a quiet machine before). Still
+        Jaune's in a signature: SHA-256 for the first step, the constants, writing the point
+        as bytes. Not done: the field's own squaring and a three-product multiplication in
+        the extension, which would take a third off again. Not run: an image,
+        `check-secret-code`, slots.
       - **On Compute Engine since 2026-11-26 15:18 UTC** (`evm-os` `a07875d4…174a38df`,
         4,045,312 bytes, built from commit 77d8cb4: the stack guard, what a request gave kept,
         the signers kept; in place of `93068517…`, which had run since 17:09 UTC on the 25th).

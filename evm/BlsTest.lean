@@ -234,6 +234,19 @@ def main : IO UInt32 := do
           failures := failures + 1; IO.println s!"FAILED: the signature with {key} does not verify"
     | _, _ => failures := failures + 1; IO.println s!"FAILED: no signature with {key}"
   IO.println s!"keys: {keys.length} public keys and signatures, {checks - before} checks"
+  -- A message made a point by this project's arithmetic (`Evm/Sign/Hash.lean`) is the point
+  -- `JauneConsensus` makes of it: messages of every length to 70 bytes, and some long ones.
+  let before := checks
+  for i in [0 : 90] do
+    let length := if i < 71 then i else i * 37
+    let message : Bytes := (List.range length).map fun j => (scramble (i * 977 + j) 8).toUInt8
+    checks := checks + 1
+    match Evm.Sign.Hash.toPoint message messageTag, hashToG2 message messageTag with
+    | .ok point, .ok wanted =>
+      if toPublicG2 point != wanted then
+        failures := failures + 1; IO.println s!"FAILED: the point of a message of {length} bytes"
+    | _, _ => failures := failures + 1; IO.println s!"FAILED: no point for a message of {length} bytes"
+  IO.println s!"points: {checks - before} messages hashed to the point Jaune's hashing gives"
   -- How long the key's part of a signature takes, apart from hashing the message to a point.
   if let .ok q := hashToG2 [1, 2, 3] messageTag then
     let k := scalarOf (scramble 999 254 + 1)
@@ -242,10 +255,15 @@ def main : IO UInt32 := do
     for _ in [0 : 5] do last := applyG2 k last
     let applied := (← IO.monoMsNow) - started
     let started ← IO.monoMsNow
-    let _ ← IO.lazyPure fun _ => (hashToG2 [4, 5, 6] messageTag).toOption.map g2Compress
+    let theirs ← IO.lazyPure fun _ => (hashToG2 [4, 5, 6] messageTag).toOption.map g2Compress
     let hashed := (← IO.monoMsNow) - started
-    IO.println s!"time: the key times a point of G2, {applied / 5} ms; hashing a message to a point, {hashed} ms \
-      (last byte {(g2Compress last).getLastD 0})"
+    let started ← IO.monoMsNow
+    let mut ours : Option Bytes := none
+    for i in [0 : 10] do
+      ours ← IO.lazyPure fun _ => (Evm.Sign.Hash.toPoint [4, 5, 6 + (i / 10).toUInt8] messageTag).toOption.map fun p => g2Compress (toPublicG2 p)
+    let here := (← IO.monoMsNow) - started
+    IO.println s!"time: the key times a point of G2, {applied / 5} ms; hashing a message to a point, {here / 10}.{here % 10} ms here \
+      and {hashed} ms by Jaune's{if ours == theirs then "" else ", AND NOT THE SAME POINT"} (last byte {(g2Compress last).getLastD 0})"
   if failures == 0 then IO.println s!"bls-test: all {checks} checks passed"
   else IO.println s!"bls-test: {failures} of {checks} FAILED"
   return if failures == 0 then 0 else 1

@@ -1,5 +1,6 @@
 import Evm.Stateless
 import Evm.Engine
+import Evm.Submit
 
 /-! Building one block, from transactions somebody else proposes and a witness for the state they touch.
 
@@ -80,7 +81,8 @@ A request that begins `JBLF2` is one for the fast engine with one more byte afte
 with what whoever answers has kept of earlier such requests (`Kept`):
 
     "JBLF2"
-    1   0 to build on what is kept; 1 to have everything kept forgotten first
+    1   0 to build on what is kept; 1 to have everything kept forgotten first; 2 as 0, and the block
+        may go on from the one built for the request before (see "Going on from the block before")
     then everything a request has after its own five bytes
 
 It need give only the trie nodes and the codes that no request since the last forgetting gave, and of the
@@ -103,11 +105,47 @@ propose mostly the same transactions. A signer is kept under the hash that was s
 signature and the chain it was found for, and is taken for a transaction only when all of those are the
 transaction's own; it was worked out here, from a transaction given here, and is what working it out
 again would give. Nobody sends one. They are not counted in the limit: there are no more of them than the
-last request had transactions. The transactions a machine adds to a request itself are left out of this
+last request built from nothing had transactions, and the requests that went on from it since had new
+ones. The transactions a machine adds to a request itself are left out of this
 altogether (`Request.fromSender`). A
 request that begins `JBLF1` neither reads what is kept nor adds to it, and is still a function of its
 bytes. So is one that begins `JBLF2` where nothing is kept: `serve` here keeps nothing, and only a
 machine that builds for relays does (`Evm/Machine.lean`).
+
+## Going on from the block before
+
+A slot's requests come one after another, each proposing what the one before proposed and a few
+transactions more, for the same header. A request whose byte is 2 says its block may go on from the one
+built for the request before it (`Before`, `runGoingOn`): that block's transactions stay, in their order,
+and only what is proposed now and is not among them is tried, after them, in the rule's order among
+themselves. What a round costs is then what is new in it and the block's ending, not the whole block
+again; and a round cut short by the clock ends with at least the block before, where one built from
+nothing can end with nothing in it.
+
+What is kept for this is the block as it stood after the last transaction tried and before anything
+that ends a block: the engine's state, the receipts, and what is known of each transaction the request
+proposed (in the block; or decoded, with its signer; or not a transaction at all). A transaction is
+known again by the hash of its bytes as they stand in the block's list, and the header and withdrawals
+by the hash of the block's bytes outside that list (`Proposal`), so a request that goes on has its
+header, its withdrawals and the transactions seen before neither decoded nor checked again: they are,
+byte for byte, what was decoded and checked when first given. A transaction not seen before is decoded
+as the whole block's decoder would decode it there (`listedTransaction`).
+
+A request goes on only when it is for the same block (`Before.next` says what that takes: everything
+the running reads of the block's surroundings is the same, every transaction of the block before is
+proposed again, and the block before is not yet half full). Otherwise it is built from nothing, as the
+same request with byte 0 would be, and its block is the one kept. So the block before is one this
+program built, for this header on this parent, by running transactions it was given on a state every
+answer of which a witness proved; going on runs more transactions on that state, as building from
+nothing runs them one after another. The block is a valid one either way. It is not the same block:
+under rule 1 a transaction proposed late that pays more than one already in goes after it, where built
+from nothing it would go before. Which transactions are in a block, and their order, now depend on the
+requests before as well as on this one; whoever sends the requests decided what was proposed when.
+
+The block kept is forgotten with everything else kept (byte 1, or the limit passed), is replaced by
+each request with byte 2, and is neither used nor changed by any other request. A request the machine
+adds transactions of its own to does not go on and leaves the block kept as it was (`Evm/Bid.lean`), so
+nothing that came of a transaction its sender has not seen is carried to a later request.
 
 Statuses 0 and 3 are about the request alone, or for `JBLF2` about it and what is kept. A block built here was not then put to `Evm.Stateless` as a
 check: `build-test` does that, on test chains and on blocks of mainnet built again from their own
@@ -178,6 +216,9 @@ structure Request where
   /-- For a request read with what was sent before: whether that is to be forgotten first. `none` for
   any other request. -/
   seen : Option Bool := none
+  /-- For a request read with what was sent before: whether its block may go on from the block built
+  for the request before it (`Before`), where that is a block for the same place. -/
+  goesOn : Bool := false
   /-- Nodes and codes held already, by their hashes, beside those the witness lists. Not part of a
   request as it is written: `Kept.take` puts them here. -/
   held : Store := .empty
@@ -205,10 +246,12 @@ def txWork : UInt64 := 250000
 def request (input : ByteArray) : P Request := do
   let begins ← take input magic.size
   let engine ← if begins == magic then pure false else if begins == magicFast || begins == magicSeen then pure true else stop
-  let seen : Option Bool ← if begins != magicSeen then pure none else do
-    let forget ← nat input 1
-    if forget > 1 then stop
-    pure (some (forget == 1))
+  let flag : Option Nat ← if begins != magicSeen then pure none else do
+    let flag ← nat input 1
+    if flag > 2 then stop
+    pure (some flag)
+  let seen : Option Bool := flag.map (· == 1)
+  let goesOn := flag == some 2
   let code ← nat input 1
   let fork ← if code == 255 then pure none else match Stateless.forkOf code with
     | some fork => pure (some fork)
@@ -223,7 +266,7 @@ def request (input : ByteArray) : P Request := do
   let codes ← many (← nat input 4) (sized input)
   let keys ← many (← nat input 4) (sized input)
   pure { witness := { fork, chainId := chainId.toUInt64, block, headers, nodes := nodes.toArray, codes, keys },
-         rule, gasCap, engine, seen }
+         rule, gasCap, engine, seen, goesOn }
 
 def Request.encode (r : Request) : Option ByteArray := do
   let fork ← match r.witness.fork with
@@ -232,86 +275,11 @@ def Request.encode (r : Request) : Option ByteArray := do
   let list (items : List ByteArray) : ByteArray :=
     items.foldl (fun out item => out ++ Evm.Service.sized item) (be 4 items.length)
   let begins := match r.seen with
-    | some forget => magicSeen ++ be 1 (if forget then 1 else 0)
+    | some forget => magicSeen ++ be 1 (if forget then 1 else if r.goesOn then 2 else 0)
     | none => if r.engine then magicFast else magic
   pure <| begins ++ be 1 fork ++ be 8 r.witness.chainId.toNat ++ be 1 r.rule ++ be 8 r.gasCap ++
     Evm.Service.sized r.witness.block ++ list r.witness.headers ++ list r.witness.nodes.toList ++
     list r.witness.codes ++ list r.witness.keys
-
-/-- A header that is kept: its bytes as they were given, what they decode to, and the hash of that
-(`Header.hash`), by which the next header names it. -/
-structure Link where
-  hash : U256
-  bytes : ByteArray
-  header : Header
-
-/-- What is kept of the requests read with what was sent before: their nodes and codes by hash, the
-headers last built on, and how much has been given since nothing was kept. -/
-structure Kept where
-  nodes : Store := .empty
-  codes : Std.HashMap Fast.Word ByteArray := {}
-  /-- Oldest first, never more than 255, and a chain: each names the one before it by its hash. `take`
-  lets nothing in that would break that. -/
-  chain : Array Link := #[]
-  /-- The bytes of the nodes and codes given since nothing was kept, counted each time one is given. -/
-  given : Nat := 0
-  /-- Who signed the transactions of the last request built with what was sent before. `take` hands them
-  to the next and does not change them: whoever runs the request puts that request's in their place
-  (`runKeeping`, `Evm/Bid.lean`). -/
-  signers : Signers := {}
-
-/-- The most the nodes and codes given may come to before everything is forgotten. A request gives a
-megabyte or two when nothing is kept and a tenth of that when the last one's are, so this is some
-minutes of requests; held by hash in a tree it takes about a third more than its bytes, out of a heap
-of 256 MiB that also holds a request of up to 32 MiB while it is read. -/
-def Kept.limit : Nat := 16 * 1024 * 1024
-
-/-- A request read with what was sent before, made whole from what is kept, and what is kept after it.
-Any other request comes back as it is, and so does what is kept.
-
-The nodes and codes it gives join those kept, by their hashes. Its headers are decoded and hashed
-here, once. When there are fewer than 255 they follow the kept ones up to the one the oldest given
-names as its parent; when there are none, the kept ones stand as they are. The request is handed the
-result decoded (`Request.ancestry`), a chain because the kept ones were and the given ones are checked
-to follow one another; whether its newest is the block's parent is `begin`'s to check, of every
-request. When a given header does not decode, or does not name the one given before it, nothing is
-joined: the request keeps its own headers, for `begin` to refuse, and the kept ones stay as they were.
-What was given is counted, and past `limit` none of those is kept after this request. The signers
-kept go with the request, unless it says to forget. -/
-def Kept.take (kept : Kept) (r : Request) (limit : Nat := Kept.limit) : Request × Kept :=
-  match r.seen with
-  | none => (r, kept)
-  | some forget =>
-    let kept : Kept := if forget then {} else kept
-    let given : Option (Array Link) := r.witness.headers.toArray.mapM fun bytes =>
-      (Stateless.header bytes).map fun header => { hash := header.hash, bytes, header }
-    let joined : Option (Array Link) := given.bind fun given =>
-      if !(given.toList.zip (given.toList.drop 1)).all (fun (a, b) => a.hash == b.header.parentHash) then none else
-      let before : Array Link :=
-        if given.size ≥ 255 then #[] else
-        match given[0]? with
-        | none => kept.chain
-        | some oldest =>
-          match kept.chain.findIdx? (·.hash == oldest.header.parentHash) with
-          | some i => kept.chain.extract 0 (i + 1)
-          | none => #[]
-      let chain := before ++ given
-      some (chain.extract (chain.size - 255) chain.size)
-    let chain := joined.getD kept.chain
-    let nodes := r.witness.nodes.foldl (fun store node => store.insert (Trie.hashOf node) node) kept.nodes
-    let codes := r.witness.codes.foldl (fun codes code => codes.insert (Fast.keccak code) code) kept.codes
-    let size := r.witness.codes.foldl (fun n code => n + code.size)
-      (r.witness.nodes.foldl (fun n node => n + node.size) kept.given)
-    let whole : Request :=
-      { r with
-        held := nodes, heldCodes := codes, signers := kept.signers
-        ancestry := joined.map fun chain => chain.toList.map fun link => (link.header, link.hash)
-        witness := { r.witness with
-          headers := match joined with
-            | some chain => chain.toList.map (·.bytes)
-            | none => r.witness.headers
-          nodes := #[], codes := [] } }
-    (whole, if size > limit then { signers := kept.signers } else { nodes, codes, chain, given := size, signers := kept.signers })
 
 /-- A block that was built. -/
 structure Built where
@@ -500,6 +468,154 @@ structure FastJob where
   wanted : Array Fast.Lack := #[]
   /-- The place from which nothing is said of what a transaction lacked. -/
   loud : Nat := 1000000000
+
+/-- A block as a request proposes it, taken apart where its bytes say and not decoded: each transaction
+as it stands in the block's list, the hash of each, and the hash of everything that is not a
+transaction (the header, the ommers and the withdrawals, as they stand). `none` when the bytes are not
+a list of those four whose own heading and whose list of transactions are headed as RLP heads them;
+a block that Jaune's decoder takes is. Two requests alike in `bare` propose transactions for the same
+header and the same withdrawals, byte for byte. -/
+structure Proposal where
+  bare : Fast.Word
+  items : Array ByteArray
+  hashes : Array Fast.Word
+
+def Proposal.of? (block : ByteArray) : Option Proposal := do
+  let whole ← Submit.item? block 0 block.size
+  if !whole.list || whole.stop != block.size then none
+  if block.extract 0 whole.start != Submit.heading true (whole.stop - whole.start) then none
+  let parts ← Submit.items? block whole
+  if parts.size != 4 then none
+  let list ← parts[1]?
+  if !list.list then none
+  if block.extract list.first list.start != Submit.heading true (list.stop - list.start) then none
+  let items := (← Submit.items? block list).map fun item => block.extract item.first item.stop
+  pure { bare := Fast.keccak (block.extract whole.start list.first ++ block.extract list.stop whole.stop),
+         items, hashes := items.map Fast.keccak }
+
+/-- One transaction as it stands in a block's list, decoded as Jaune's decoder of a whole block decodes
+it there: the bytes have to be the one way of writing what they decode to, one of the first kind is
+read as a list, and any other is the bytes the list holds, read by the rules' kinds. -/
+def listedTransaction (rules : ForkRules) (listed : ByteArray) : Option Transaction :=
+  let bytes := listed.toList
+  match Bytes.toRlpItem? bytes with
+  | none => none
+  | some item =>
+    if item.toBytes != bytes then none else
+    let slot : Option (Bytes ⊕ Transaction) := match item with
+      | .list fields => match Rlp.Item.toExceptLegacyTransaction fields with
+        | .ok tx => some (.inr tx)
+        | .error _ => none
+      | .bytes inner => some (.inl inner)
+    match slot.map (decodeTransaction rules) with
+    | some (.ok tx) => some tx
+    | _ => none
+
+/-- A block built for a request that said its block may go on from the one before (see "Going on from
+the block before" above): what it was built for, the block as it stood after the last transaction tried
+and before anything that ends a block, and what is known of every transaction that request proposed. -/
+structure Before where
+  /-- What it was built for. The fork as the request named it (`none` for mainnet's schedule), with the
+  chain, the rule, the gas and the work allowed; the hash of the proposed block's bytes outside its
+  transactions (`Proposal.bare`); the hash of the header built on, and how many headers stood before
+  the block. -/
+  fork : Option (Option Nat)
+  chainId : UInt64
+  rule : Nat
+  gasCap : Nat
+  work : UInt64
+  bare : Fast.Word
+  parent : U256
+  ancestors : Nat
+  /-- The block with nothing still proposed, before `FastJob.finish`. -/
+  job : FastJob
+  /-- The hashes of the transactions in it as each stood in the block's list, in the block's order. -/
+  taken : Array Fast.Word
+  /-- Every other transaction the request proposed, by the same hash: decoded, with its signer and what
+  it pays, or `none` for one that is no transaction, has no signer to be found, or pays too little to be
+  tried. Its place is the one it had in that request. -/
+  seen : Std.HashMap Fast.Word (Option Candidate)
+
+/-- A header that is kept: its bytes as they were given, what they decode to, and the hash of that
+(`Header.hash`), by which the next header names it. -/
+structure Link where
+  hash : U256
+  bytes : ByteArray
+  header : Header
+
+/-- What is kept of the requests read with what was sent before: their nodes and codes by hash, the
+headers last built on, and how much has been given since nothing was kept. -/
+structure Kept where
+  nodes : Store := .empty
+  codes : Std.HashMap Fast.Word ByteArray := {}
+  /-- Oldest first, never more than 255, and a chain: each names the one before it by its hash. `take`
+  lets nothing in that would break that. -/
+  chain : Array Link := #[]
+  /-- The bytes of the nodes and codes given since nothing was kept, counted each time one is given. -/
+  given : Nat := 0
+  /-- Who signed the transactions of the last request built with what was sent before. `take` hands them
+  to the next and does not change them: whoever runs the request puts that request's in their place
+  (`runKeeping`, `Evm/Bid.lean`). -/
+  signers : Signers := {}
+  /-- The block last built for a request that said its block may go on from the one before, as far as
+  its last transaction: `take` hands it on unchanged, or drops it with everything else, and whoever
+  runs the request puts that request's in its place (`runGoingOn`, `Evm/Bid.lean`). -/
+  before : Option Before := none
+
+/-- The most the nodes and codes given may come to before everything is forgotten. A request gives a
+megabyte or two when nothing is kept and a tenth of that when the last one's are, so this is some
+minutes of requests; held by hash in a tree it takes about a third more than its bytes, out of a heap
+of 256 MiB that also holds a request of up to 32 MiB while it is read. -/
+def Kept.limit : Nat := 16 * 1024 * 1024
+
+/-- A request read with what was sent before, made whole from what is kept, and what is kept after it.
+Any other request comes back as it is, and so does what is kept.
+
+The nodes and codes it gives join those kept, by their hashes. Its headers are decoded and hashed
+here, once. When there are fewer than 255 they follow the kept ones up to the one the oldest given
+names as its parent; when there are none, the kept ones stand as they are. The request is handed the
+result decoded (`Request.ancestry`), a chain because the kept ones were and the given ones are checked
+to follow one another; whether its newest is the block's parent is `begin`'s to check, of every
+request. When a given header does not decode, or does not name the one given before it, nothing is
+joined: the request keeps its own headers, for `begin` to refuse, and the kept ones stay as they were.
+What was given is counted, and past `limit` none of those is kept after this request, nor the block
+before; such a request does not go on from that block either. The signers kept go with the request,
+unless it says to forget. -/
+def Kept.take (kept : Kept) (r : Request) (limit : Nat := Kept.limit) : Request × Kept :=
+  match r.seen with
+  | none => (r, kept)
+  | some forget =>
+    let kept : Kept := if forget then {} else kept
+    let given : Option (Array Link) := r.witness.headers.toArray.mapM fun bytes =>
+      (Stateless.header bytes).map fun header => { hash := header.hash, bytes, header }
+    let joined : Option (Array Link) := given.bind fun given =>
+      if !(given.toList.zip (given.toList.drop 1)).all (fun (a, b) => a.hash == b.header.parentHash) then none else
+      let before : Array Link :=
+        if given.size ≥ 255 then #[] else
+        match given[0]? with
+        | none => kept.chain
+        | some oldest =>
+          match kept.chain.findIdx? (·.hash == oldest.header.parentHash) with
+          | some i => kept.chain.extract 0 (i + 1)
+          | none => #[]
+      let chain := before ++ given
+      some (chain.extract (chain.size - 255) chain.size)
+    let chain := joined.getD kept.chain
+    let nodes := r.witness.nodes.foldl (fun store node => store.insert (Trie.hashOf node) node) kept.nodes
+    let codes := r.witness.codes.foldl (fun codes code => codes.insert (Fast.keccak code) code) kept.codes
+    let size := r.witness.codes.foldl (fun n code => n + code.size)
+      (r.witness.nodes.foldl (fun n node => n + node.size) kept.given)
+    let whole : Request :=
+      { r with
+        held := nodes, heldCodes := codes, signers := kept.signers
+        goesOn := r.goesOn && size ≤ limit
+        ancestry := joined.map fun chain => chain.toList.map fun link => (link.header, link.hash)
+        witness := { r.witness with
+          headers := match joined with
+            | some chain => chain.toList.map (·.bytes)
+            | none => r.witness.headers
+          nodes := #[], codes := [] } }
+    (whole, if size > limit then { signers := kept.signers } else { nodes, codes, chain, given := size, signers := kept.signers, before := kept.before })
 
 /-- How far a request to build has got: answered, or a block still being filled. The fast engine's block
 is here as what it is. Another engine's is here only as what can be asked of it: how many transactions are
@@ -842,6 +958,137 @@ def runKeeping {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (othe
     m ((Response × Array Note × String) × Signers) := do
   let (stage, signers) := beginKeeping r other
   return ((← stage.finishWith over stage.left).answer, signers)
+
+/-- A stage taken to its answer as `finishWith` takes it, and beside the answer the fast engine's block
+as it stood when nothing was proposed any more and nothing had yet been done to end it: `none` when
+the stage is not the fast engine's or never got that far. `last` is what to answer when it did not. -/
+def Stage.finishKeeping {m : Type → Type} [Monad m] (over : m Bool) : Nat → Stage → Option FastJob → m (Stage × Option FastJob)
+  | 0, stage, last => pure (stage, last)
+  | steps + 1, stage, last => do
+    let stage ← if stage.filling then (do if (← over) then pure stage.cut else pure stage) else pure stage
+    let last := match stage with
+      | .goingFast job => if job.rest.isEmpty then some job else last
+      | _ => last
+    finishKeeping over steps stage.step last
+
+/-- What is kept of a block for the next request to go on from: `job` is the block before its ending,
+built for `r`, whose block's bytes are `proposal`; `seen` is what is known of the transactions proposed
+and not in it. The transactions the block's template listed are let go of: what went in is in `taken`,
+and the rest is in `seen`. -/
+def Before.of (r : Request) (proposal : Proposal) (seen : Std.HashMap Fast.Word (Option Candidate))
+    (ancestors : Nat) (job : FastJob) : Before :=
+  { fork := r.witness.fork.map Stateless.forkCode, chainId := r.witness.chainId, rule := r.rule, gasCap := r.gasCap,
+    work := r.work, bare := proposal.bare, parent := job.blank.parentHash, ancestors,
+    job := { job with template := { job.template with transactions := [] }, rest := [], notes := #[], wanted := #[] },
+    taken := job.included.map fun place => proposal.hashes.getD place Fast.Word.zero,
+    seen }
+
+/-- The block before, made ready to go on for `r`, whose block's bytes are `proposal`: with everything
+`r` proposes that is not in it still to be tried, in the rule's order among themselves. Beside it, the
+signers the request holds with those of the transactions decoded here for the first time, and what is
+known of every transaction proposed that is not in the block (`Before.seen`, for the block after).
+
+`none`, and the request is then built from nothing, unless all of this holds. The request is for the
+same block: the same fork, chain, rule, gas and work allowed, the same bytes outside the transactions,
+and its headers are a chain (`Request.ancestry`) of the same length ending in the header the block
+before was built on. Every transaction in the block before is proposed again; they stay where they
+are, and the places said of them in the answer are this request's. And the block before has used no
+more than half the gas allowed: a fuller block is built from nothing, so that when there is not room
+for everything, what pays most goes in whenever it was proposed.
+
+What stands behind the block's state becomes this request's witness: the same root, with every node
+and code held now. The state remembers only what a witness proved (`Fast.World.account`, `slot`),
+never that something could not be answered, so it holds nothing a wider witness would answer
+differently. A transaction left out before is tried again, since what it lacked may have come. -/
+def Before.next (b : Before) (r : Request) (proposal : Proposal) :
+    Option (FastJob × Signers × Std.HashMap Fast.Word (Option Candidate)) := do
+  if !(r.engine && r.goesOn) then none
+  if r.witness.fork.map Stateless.forkCode != b.fork || r.witness.chainId != b.chainId || r.rule != b.rule
+      || r.gasCap != b.gasCap || r.work != b.work || proposal.bare != b.bare then none
+  if r.fromSender < proposal.items.size then none
+  let ancestry ← r.ancestry
+  let (_, newest) ← ancestry.getLast?
+  if newest != b.parent || ancestry.length != b.ancestors then none
+  if b.job.out.gasUsed.toNat * 2 > b.job.gasCap then none
+  -- Where each transaction of the block before stands in this request: the first place its bytes have.
+  let places : Std.HashMap Fast.Word Nat := proposal.hashes.zipIdx.foldl (init := {})
+    fun places (hash, place) => places.insertIfNew hash place
+  let included ← b.taken.mapM (places[·]?)
+  let inBlock : Std.HashSet Fast.Word := b.taken.foldl (·.insert ·) {}
+  let rules := b.job.fork.ruleSet
+  let fee := b.job.blank.baseFeePerGas.getD 0
+  let (candidates, signers, seen) := proposal.hashes.zipIdx.foldl
+    (init := ((#[] : Array Candidate), r.signers, ({} : Std.HashMap Fast.Word (Option Candidate))))
+    fun (candidates, signers, seen) (hash, place) =>
+      if inBlock.contains hash || seen.contains hash then (candidates, signers, seen) else
+      match b.seen[hash]? with
+      | some (some known) => (candidates.push { known with place }, signers, seen.insert hash (some { known with place }))
+      | some none => (candidates, signers, seen.insert hash none)
+      | none =>
+        let found : Option (Candidate × U256 × Signer) := do
+          let tx ← listedTransaction rules (proposal.items.getD place ByteArray.empty)
+          let (signed, signer) ← r.signers.signer r.witness.chainId tx
+          let pays ← if r.rule == 0 then some 0 else tip fee tx
+          pure ({ place, tx, sender := signer.sender, tip := pays }, signed, signer)
+        match found with
+        | some (candidate, signed, signer) =>
+          (candidates.push candidate, signers.insert signed signer, seen.insert hash (some candidate))
+        | none => (candidates, signers, seen.insert hash none)
+  let witness := Bridge.Witness.of r.witness b.job.witness.root r.held r.heldCodes
+  let out := b.job.out
+  let job : FastJob :=
+    { b.job with
+      witness, loud := r.loud, included
+      rest := if r.rule == 0 then candidates.toList else (byTip candidates.toList).toList
+      notes := (included.zip out.receipts).map fun (place, receipt) => ⟨place, true, s!"{receipt.cumulativeGas.toNat}"⟩
+      wanted := #[]
+      out := { out with world := { out.world with backing := witness.backing } } }
+  pure (job, signers, seen)
+
+/-- The answer to a request to build as `runKeeping` gives it, for a request that may go on from the
+block before (`Request.goesOn`): with that block when it is one for the same place (`Before.next`), and
+from nothing otherwise. Beside the answer and the signers, the block to go on from next time, and, when
+this one went on, how many transactions it had to begin with.
+
+A request that does not say it may go on is `runKeeping`'s, and what is kept to go on from is handed
+back as it came. -/
+def runGoingOn {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (before : Option Before)
+    (other : Other := byJaune) : m ((Response × Array Note × String) × Signers × Option Before × Option Nat) := do
+  if !r.goesOn then
+    let (answer, signers) ← runKeeping over r other
+    return (answer, signers, before, none)
+  let proposal := Proposal.of? r.witness.block
+  let going : Option (Before × Proposal × FastJob × Signers × Std.HashMap Fast.Word (Option Candidate)) :=
+    match before, proposal with
+    | some b, some proposal => (b.next r proposal).map fun (job, signers, seen) => (b, proposal, job, signers, seen)
+    | _, _ => none
+  match going with
+  | some (b, proposal, job, signers, seen) =>
+    let had := job.included.size
+    let (stage, last) ← Stage.finishKeeping over (job.rest.length + 1) (.goingFast job) none
+    return (stage.answer, signers, last.map (Before.of r proposal seen b.ancestors), some had)
+  | none =>
+    let (stage, signers) := beginKeeping r other
+    -- Everything proposed that can be tried, before any of it is: for what is known of those left out.
+    let tried : List Candidate := match stage with
+      | .goingFast job => job.rest
+      | _ => []
+    let (stage, last) ← stage.finishKeeping over stage.left none
+    let kept : Option Before := match last, proposal with
+      | some job, some proposal =>
+        if r.fromSender < proposal.items.size then none else
+        let inBlock : Std.HashSet Nat := job.included.foldl (·.insert ·) {}
+        let known : Std.HashMap Nat Candidate :=
+          tried.foldl (fun (known : Std.HashMap Nat Candidate) (c : Candidate) => known.insert c.place c) {}
+        let seen : Std.HashMap Fast.Word (Option Candidate) := proposal.hashes.zipIdx.foldl (init := {})
+          fun (seen : Std.HashMap Fast.Word (Option Candidate)) ((hash, place) : Fast.Word × Nat) =>
+            if inBlock.contains place then seen else seen.insertIfNew hash known[place]?
+        let ancestors := match r.ancestry with
+          | some ancestry => ancestry.length
+          | none => r.witness.headers.length
+        some (Before.of r proposal seen ancestors job)
+      | _, _ => none
+    return (stage.answer, signers, kept, none)
 
 def runWithNotes (r : Request) (other : Other := byJaune) : Response × Array Note × String :=
   Id.run (runWith (pure false) r other)

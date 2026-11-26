@@ -143,13 +143,101 @@ def one (engine : Bool) (name : String) (bytes : ByteArray) (shorten : Bool) (ta
           && (Build.run { whole with signers := made fun s => { s with chain := s.chain + 1, sender := nobody } }).encode == again.encode
           && (Build.run { whole with signers := made fun s => { s with r := 1 :: s.r, sender := nobody } }).encode == again.encode
           && (count == 0 || (Build.run { whole with signers := made fun s => { s with sender := nobody } }).encode != again.encode))
-      match Build.Request.encode asked, Build.Request.encode { asked with seen := some true } with
-      | some encoded, some forgetting =>
+      -- Going on from the block before (`Build.runGoingOn`). The block's transactions proposed in two
+      -- parts, the first half and then all of them, as given: the second request's block goes on from
+      -- the first's and is the very block built at once; asked again, it goes on from itself and is
+      -- that block still. (A first half that used more than half the gas is not gone on from, and the
+      -- answer is then the same, built from nothing.)
+      let going : Build.Request := { asked with goesOn := true }
+      let goingBare : Build.Request := { bare with goesOn := true }
+      let part (transactions : List (Bytes ⊕ Transaction)) (header : Header := template.header) : ByteArray :=
+        ({ template with header, transactions } : Block).toRlpItem.toBytes.toByteArray
+      let half := count / 2
+      let run (r : Build.Request) (before : Option Build.Before) := Id.run (Build.runGoingOn (pure false) r before)
+      let fuller (before : Option Build.Before) : Bool := match before with
+        | some b => b.job.out.gasUsed.toNat * 2 > b.job.gasCap
+        | none => true
+      let wentFrom (went : Option Nat) (had : Nat) (before : Option Build.Before) : Bool :=
+        if fuller before then went.isNone else went == some had
+      let (firstWhole, keptFirst) := ({} : Build.Kept).take
+        { going with witness := { witness with block := part (template.transactions.take half) } }
+      let ((_, _, _), _, before, wentFirst) := run firstWhole none
+      let (secondWhole, _) := keptFirst.take goingBare
+      let ((second, _, _), _, beforeAll, wentSecond) := run secondWhole before
+      let ((third, _, _), _, _, wentThird) := run secondWhole beforeAll
+      tally ← tally.expect s!"{name}: proposed in two parts, the block that went on is not the block built at once"
+        (wentFirst.isNone && before.isSome && beforeAll.isSome && second.encode == again.encode && third.encode == again.encode
+          && wentFrom wentSecond half before && wentFrom wentThird count beforeAll)
+      -- Out of time while going on, before the first of the new transactions and half way through
+      -- them: a whole block that the checker accepts, holding the block before and what went in by
+      -- then; and the request after it goes on from that to the block built at once.
+      for k in [0, (count - half) / 2] do
+        let over : StateM Nat Bool := modifyGet fun asked => (asked ≥ k, asked + 1)
+        let (((cut, _, _), _, beforeCut, wentCut), _) := (Build.runGoingOn over secondWhole before).run 0
+        let ((rest, _, _), _, _, _) := run secondWhole beforeCut
+        let had := if wentCut.isSome then half else 0
+        match cut.built with
+        | some b =>
+          tally ← tally.expect s!"{name}: going on and out of time after {k} more, {b.included.length} are in, the             checker does not accept the block, or the next request does not finish it"
+            (b.included == List.range (had + k) && accepted witness template b && wentFrom wentCut half before
+              && rest.encode == again.encode)
+        | none =>
+          tally ← tally.expect s!"{name}: going on and out of time after {k} more, status {cut.status}"
+            (cut.status == 6 && rest.encode == again.encode)
+      -- What is not the same block is built from nothing, as the same request without the word would
+      -- be: another gas allowed, another rule, another fee recipient, a transaction of the block before
+      -- no longer proposed, transactions the machine added. And what is kept to go on from goes when
+      -- everything kept goes: on being told to forget, and past the limit.
+      let startsOver (r : Build.Request) : Bool :=
+        let ((answer, _, _), _, _, went) := run r before
+        went.isNone && answer.encode == (Build.run { r with goesOn := false }).encode
+      let proposing (block : ByteArray) : Build.Request := { secondWhole with witness := { secondWhole.witness with block } }
+      let holding : Build.Kept := { keptFirst with before }
+      let (overRequest, overKept) := holding.take going (limit := size - 1)
+      tally ← tally.expect s!"{name}: a block went on from one that was not for the same place, or one forgotten was kept"
+        (startsOver { secondWhole with gasCap := limit - 1 } && startsOver { secondWhole with rule := 1 }
+          && startsOver (proposing (part template.transactions { template.header with coinbase := nobody }))
+          && (half == 0 || startsOver (proposing (part (template.transactions.drop 1))))
+          && (count == 0 || startsOver { secondWhole with fromSender := count - 1 })
+          && (holding.take goingBare).1.goesOn && (holding.take goingBare).2.before.isSome
+          && (holding.take { goingBare with seen := some true, goesOn := false }).2.before.isNone
+          && (size == 0 || (!overRequest.goesOn && overKept.before.isNone)))
+      -- By the rule: the block that went on is one the checker accepts, with the block before in it.
+      let ((ruledFirst, _, _), _, beforeRuled, _) := run { firstWhole with rule := 1 } none
+      let ((ruledSecond, _, _), _, _, wentRuled) := run { secondWhole with rule := 1 } beforeRuled
+      let hadRuled := (ruledFirst.built.map (·.included.length)).getD 0
+      match ruledSecond.built with
+      | some b =>
+        tally ← tally.expect s!"{name}: by the rule, the block that went on is not one the checker accepts, or lost what it had"
+          (accepted witness template b && b.included.length ≥ hadRuled
+            && (ruledFirst.built.isNone || wentFrom wentRuled hadRuled beforeRuled))
+      | none => tally ← tally.expect s!"{name}: by the rule and going on, status {ruledSecond.status}" (ruledSecond.status == 6)
+      -- A node the first request lacked, given with the second: what was left out for want of it is
+      -- tried again, and the block is one the checker accepts with no less in it.
+      if witness.nodes.size > 0 then
+        let lacked := witness.nodes.size / 2
+        let (shortWhole, keptShort) := ({} : Build.Kept).take
+          { going with witness := { witness with nodes := witness.nodes.eraseIdx! lacked } }
+        let ((short, _, _), _, beforeShort, _) := run shortWhole none
+        let (mended, _) := keptShort.take { goingBare with witness := { goingBare.witness with nodes := #[witness.nodes[lacked]!] } }
+        let ((whole, _, _), _, _, _) := run mended beforeShort
+        match whole.built with
+        | some b =>
+          tally ← tally.expect s!"{name}: with the node it lacked given, the block that went on is not accepted, or has less"
+            (accepted witness template b && b.included.length ≥ (short.built.map (·.included.length)).getD 0
+              && (beforeShort.isSome || whole.encode == again.encode))
+        | none => tally ← tally.expect s!"{name}: with the node it lacked given, status {whole.status}" (whole.status == 6)
+      match Build.Request.encode asked, Build.Request.encode { asked with seen := some true }, Build.Request.encode going with
+      | some encoded, some forgetting, some goingOn =>
+        let read (bytes : ByteArray) : Option Build.Request := ((Build.request bytes).run 0).map (·.1)
         tally ← tally.expect s!"{name}: read with what was sent before, the request as bytes is answered differently"
-          (Build.serve encoded == again.encode && Build.serve forgetting == again.encode
+          (Build.serve encoded == again.encode && Build.serve forgetting == again.encode && Build.serve goingOn == again.encode
             && encoded.extract 0 6 == "JBLF2".toUTF8 ++ ⟨#[0]⟩ && forgetting.extract 0 6 == "JBLF2".toUTF8 ++ ⟨#[1]⟩
-            && Build.serve ("JBLF2".toUTF8 ++ ⟨#[2]⟩ ++ encoded.extract 6 encoded.size) == ({ status := 5 } : Build.Response).encode)
-      | _, _ => tally ← tally.expect s!"{name}: the request has no encoding" false
+            && goingOn.extract 0 6 == "JBLF2".toUTF8 ++ ⟨#[2]⟩ && goingOn.extract 6 goingOn.size == encoded.extract 6 encoded.size
+            && (read goingOn).map (fun r => (r.goesOn, r.seen)) == some (true, some false)
+            && (read encoded).map (·.goesOn) == some false && (read forgetting).map (·.goesOn) == some false
+            && Build.serve ("JBLF2".toUTF8 ++ ⟨#[3]⟩ ++ encoded.extract 6 encoded.size) == ({ status := 5 } : Build.Response).encode)
+      | _, _, _ => tally ← tally.expect s!"{name}: the request has no encoding" false
   | none => tally ← tally.expect s!"{name}: nothing built from the block's own transactions, status {again.status}" false
   -- What the parent fixes is worked out here, whatever the sender put.
   let h := template.header

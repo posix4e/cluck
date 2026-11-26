@@ -149,6 +149,25 @@ def bidChecks : IO (Nat × Nat) := do
   (failures, checks) ← expect "a bid cut short before its first transaction is not a signed, empty block"
     (Evm.Bid.allowed hurried == 1500 && Evm.Bid.allowed asked == 0 && empty.size > 109 + 144 && empty[0]! == 0 &&
       empty.extract 97 109 == Evm.Service.be 12 0 && Evm.Bid.serve builder hurried == reply) failures checks
+  -- A bid for a request whose block may go on from the one before: the first is built from nothing
+  -- and kept; the second goes on from it and, with nothing new proposed, is the same block and the same
+  -- bid; and one the machine adds a transaction of its own to is built from nothing, and what is kept
+  -- to go on from is as it was.
+  match ((Evm.Build.request request).run 0).bind fun (parsed, _) =>
+      Evm.Build.Request.encode { parsed with engine := true, seen := some false, goesOn := true } with
+  | some goingOn =>
+    let bidFor := Evm.Bid.magic ++ Evm.Service.be 8 15700576 ++ proposer ++ Evm.Bid.zeros 4 ++ Evm.Service.be 4 0 ++ goingOn
+    let first := Id.run (Evm.Bid.buildWith (pure false) builder bidFor (other := Evm.Build.noOther))
+    let second := Id.run (Evm.Bid.buildWith (pure false) builder bidFor (other := Evm.Build.noOther) (kept := first.kept))
+    let added := Id.run (Evm.Bid.buildWith (pure false) builder bidFor (fun _ => { wires := #[ByteArray.mk #[2, 0]] })
+      Evm.Build.noOther second.kept)
+    let taken (outcome : Evm.Bid.Outcome) : Option (Array Fast.Word) := outcome.kept.before.map (·.taken)
+    (failures, checks) ← expect "a bid that may go on from the block before did not, or is another bid, or one with a \
+      transaction added went on or changed what is kept"
+      (first.reply.size > 109 + 144 && first.reply[0]! == 0 && first.wentOn.isNone && (taken first).isSome
+        && second.wentOn == (taken first).map (·.size) && second.reply == first.reply && taken second == taken first
+        && added.tried && added.wentOn.isNone && added.reply[0]! == 0 && taken added == taken first) failures checks
+  | none => (failures, checks) ← expect "the fixture is not a request to build, or has no encoding" false failures checks
   -- A key is usable exactly when it is in range.
   let unusable := [Evm.Bid.zeros 32, Evm.Bid.little 32 blsCurveOrder, Evm.Bid.little 32 (blsCurveOrder + 1)]
   (failures, checks) ← expect "a key that is zero or not below the order was taken"

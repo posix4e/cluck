@@ -165,6 +165,9 @@ structure Outcome where
   /-- What is kept of requests read with what was sent before (`Build.Kept`), after this one: what was
   handed in, unless this was such a request. -/
   kept : Build.Kept := {}
+  /-- When the block went on from the one built for the request before (`Build.runGoingOn`): how many
+  transactions it had to begin with. -/
+  wentOn : Option Nat := none
 
 /-- Transactions the machine adds to those a request proposes, which the request's sender has not seen. -/
 structure Extra where
@@ -225,17 +228,28 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
           witness := { request.witness with
             block, nodes := request.witness.nodes ++ extra.nodes, codes := request.witness.codes ++ extra.codes.toList } }
       | none => request
-    let ((response, _, _), signers) ← Build.runKeeping over request other
+    -- The block may go on from the one built for the request before, when the request says so and the
+    -- machine adds nothing to it. A request it adds transactions to is built from nothing, and what is
+    -- kept to go on from stays as it was: nothing that comes of a transaction the sender has not seen is
+    -- kept from one request to the next.
+    let before := kept.before
+    let kept := { kept with before := none }
+    let ((response, _, _), signers, before, wentOn) ← (do
+      if extra.wires.isEmpty then Build.runGoingOn over request before other
+      else
+        let (answer, signers) ← Build.runKeeping over request other
+        pure (answer, signers, before, none) :
+      m ((Build.Response × Array Build.Note × String) × Build.Signers × Option Build.Before × Option Nat))
     -- Who signed the transactions this request proposed is kept for the next one, when requests are
     -- being read with what was sent before. The added transactions' signers are not among them
     -- (`fromSender` above).
-    let kept := if request.seen.isSome then { kept with signers } else kept
+    let kept := if request.seen.isSome then { kept with signers, before } else { kept with before }
     let (response, request) ← if response.built.isNone && !extra.wires.isEmpty then do
         let (again, _, _) ← Build.runWith over plain other
         pure (again, plain)
       else pure (response, request)
     match response.built with
-    | none => return { reply := response.encode, wanted := response.wanted, tried := !extra.wires.isEmpty, kept }
+    | none => return { reply := response.encode, wanted := response.wanted, tried := !extra.wires.isEmpty, kept, wentOn }
     | some built =>
       let bid : Bid :=
         { slot, parentHash := Trie.wordBytes built.header.parentHash, blockHash := Trie.wordBytes built.hash,
@@ -250,7 +264,7 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
             places := built.included, requests := built.requests.map (·.toByteArray), signature := signature.toByteArray }
         return { reply := response.encode ++ key.publicKey ++ signature.toByteArray, submission,
                  added := (built.included.filter (· ≥ own)).toArray.map (· - own), wanted := response.wanted,
-                 tried := !extra.wires.isEmpty, slot, parent := bid.parentHash, value := built.value, kept }
+                 tried := !extra.wires.isEmpty, slot, parent := bid.parentHash, value := built.value, kept, wentOn }
       | .error _ => return { reply := ({ status := 4 } : Build.Response).encode, kept }
 
 /-- The response alone. -/

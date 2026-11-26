@@ -7,6 +7,10 @@ took, and how long it takes handed who signed each transaction (`Build.Signers`)
 
     .lake/build/bin/build-why build.req
     .lake/build/bin/build-why --each DIR
+    .lake/build/bin/build-why --on DIR
+
+The third builds the same requests with each one's block going on from the one before where it may
+(`Build.runGoingOn`), and says for each whether it did, and what it took.
 
 The second is for where a round's time goes. DIR holds requests for a bid as the feeder sent them, one
 after another (`builder/shadow` writes them when told to), and they are built in the order of their
@@ -99,9 +103,47 @@ def each (dir : String) : IO UInt32 := do
     IO.println s!"{count} built; on average ms: read {mean[0]!}, before the first {mean[1]!}, transactions {mean[2]!}, ending {mean[3]!}; again: headers {mean[4]!}; closing {mean[5]!}, state root {mean[6]!}, receipts {mean[7]!}, transactions' root {mean[8]!}"
   return 0
 
+/-- The requests of `dir` built one after another as `each` builds them, but each that does not say to
+forget saying that its block may go on from the one before (`Build.runGoingOn`): whether it did and
+from how many transactions, and the milliseconds of the whole of it. -/
+def goingOn (dir : String) : IO UInt32 := do
+  let paths : Array String := ((← System.FilePath.readDir dir).map fun entry => entry.path.toString).qsort fun a b => a < b
+  let mut kept : Evm.Build.Kept := {}
+  let mut on : Nat × Nat := (0, 0)
+  let mut fresh : Nat × Nat := (0, 0)
+  IO.println "bytes in status | went on from | ms: read, the rest"
+  for path in paths do
+    let bytes ← IO.FS.readBinFile path
+    let some (request, _) := (Evm.Build.request (bytes.extract 69 bytes.size)).run 0
+      | do IO.println s!"{path}: not a request to build"; continue
+    let holding := kept
+    kept := {}
+    let t0 ← IO.monoMsNow
+    let (request, held) ← IO.lazyPure fun _ =>
+      holding.take { request with work := Evm.Build.txWork, goesOn := request.seen == some false }
+    let t1 ← IO.monoMsNow
+    let before := held.before
+    let held := { held with before := none }
+    let ((response, _, why), signers, before, went) ← IO.lazyPure fun _ =>
+      Id.run (Evm.Build.runGoingOn (pure false) request before Evm.Build.noOther)
+    let t2 ← IO.monoMsNow
+    kept := if request.seen.isSome then { held with signers, before } else { held with before }
+    let inBlock := match response.built with
+      | some built => built.included.length
+      | none => 0
+    let had := match went with
+      | some had => s!"{had}"
+      | none => "nothing"
+    IO.println s!"{bytes.size} {inBlock} {response.status}{if why == "" then "" else " (" ++ why ++ ")"} | {had} | {t1 - t0} {t2 - t1}"
+    if response.status == 0 then
+      if went.isSome then on := (on.1 + 1, on.2 + (t2 - t0)) else fresh := (fresh.1 + 1, fresh.2 + (t2 - t0))
+  IO.println s!"{on.1} went on, {if on.1 == 0 then 0 else on.2 / on.1} ms each on average; {fresh.1} were built from nothing, {if fresh.1 == 0 then 0 else fresh.2 / fresh.1} ms each"
+  return 0
+
 def main (args : List String) : IO UInt32 := do
   if let ["--each", dir] := args then return ← each dir
-  let [path] := args | do IO.eprintln "usage: build-why REQUEST | build-why --each DIR"; return 2
+  if let ["--on", dir] := args then return ← goingOn dir
+  let [path] := args | do IO.eprintln "usage: build-why REQUEST | build-why --each DIR | build-why --on DIR"; return 2
   let bytes ← IO.FS.readBinFile path
   let some (request, pos) := (Evm.Build.request bytes).run 0 | do IO.println "not a request to build"; return 1
   if pos != bytes.size then IO.println "bytes after the request"; return 1

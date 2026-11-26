@@ -548,8 +548,6 @@ def buildWith (request : ByteArray) (added : ByteArray → Evm.Bid.Extra := fun 
   modify fun s => { s with kept := outcome.kept }
   return { outcome with kept := {} }
 
-def serveWith (request : ByteArray) (since : Nat := 0) : M ByteArray := do return (← buildWith request (since := since)).reply
-
 /-- A block built, bid for, and sent to relays: a call out to each relay asked for, or the answer at once
 when there is nothing to send. The transactions sealed to this machine that are good for the slot are
 tried with those the request proposes; if any goes in, the request's sender is not shown the block. -/
@@ -575,7 +573,10 @@ def send (key : Tcp.Key) (asked : Option ByteArray) (request : ByteArray) (since
   -- The console is the host's to read: it is told that sealed transactions were tried, as it knows
   -- already, and not whether any went in.
   let sealed := if built.tried then ", with sealed transactions to try" else ""
-  Platform.write s!"evm: status {built.reply[0]!}, {now - started} ms{sealed}\n".toUTF8
+  let more := match built.wentOn with
+    | some had => s!", going on from {had}"
+    | none => ""
+  Platform.write s!"evm: status {built.reply[0]!}, {now - started} ms{sealed}{more}\n".toUTF8
   let bid := if built.tried then Send.hidden else built.reply
   let some submission := built.submission | finish bid built.wanted "no block was built"
   -- A block for the same slot on the same parent as one a relay has already taken, paying no more, stays
@@ -706,10 +707,14 @@ partial def work : M Unit := do
       Platform.write s!"evm: status {answer[0]!}, 0 ms\n".toUTF8
       transmit (← modifyGet (·.reply (← Efi.millis).toNat key (frame reply)))
     else
-      let reply ← attested asked (← serveWith inner since)
+      let built ← buildWith inner (since := since)
+      let reply ← attested asked built.reply
       let ended ← Efi.millis
       let report := if asked.isSome && reply.size > 1024 then ", with a report" else ""
-      Platform.write s!"evm: status {reply[0]!}, {(ended - started).toNat} ms{report}\n".toUTF8
+      let more := match built.wentOn with
+        | some had => s!", going on from {had}"
+        | none => ""
+      Platform.write s!"evm: status {reply[0]!}, {(ended - started).toNat} ms{report}{more}\n".toUTF8
       transmit (← modifyGet (·.reply ended.toNat key (frame reply)))
     work
 

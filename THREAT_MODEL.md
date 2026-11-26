@@ -488,11 +488,47 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   for a transaction of which all of those are its own, which is everything the working out reads.
   A kept signer is then what working it out again would give, as far as two different signed
   contents do not share a keccak hash, which the signature itself rests on. Bounded by the last
-  request: only its transactions' signers are kept. The transactions the machine adds itself, the
+  request built from nothing: only its transactions' signers are kept, with those of the
+  transactions that requests going on from its block (below) have proposed since. The transactions the machine adds itself, the
   sealed ones, are neither looked up nor kept (`Request.fromSender`), so how long a request takes
   says nothing of them that it did not before. Checked in `build-test` on the blocks of mainnet
   there: the same block with the signers kept; a signer under another signature, chain or `r` not
   taken; one under the transaction's own taken.
+- *A block can go on from the block built for the request before* (2026-11-26, not in the deployed
+  image; `Build.Before`, `Build.runGoingOn` in `Evm/Build.lean`). A request that begins `JBLF2` with
+  the byte 2 says so, and the machine then keeps, with what the next item describes, the block it
+  built as that stood after its last transaction and before anything that ends a block: the
+  engine's state, the receipts, and each proposed transaction decoded with its signer. The next
+  such request, if it is for the same block, has only the transactions that are new in it run,
+  after those already in. This is the first thing kept between requests that is a result of running
+  transactions and not bytes found by their hash, so what stands in the way of a wrong block is said
+  in full. (1) The same block: the fork, chain, rule, gas and work allowed are compared; the header
+  and the withdrawals are the same bytes, by the keccak hash of the proposed block outside its list
+  of transactions; the request's headers are a checked chain ending in the header the kept block was
+  built on. Everything the running reads of a block's surroundings is one of those. (2) The same
+  transactions: each one in the kept block must be proposed again, known by the keccak hash of its
+  bytes as they stand in the list, or the request is built from nothing. (3) The state: the engine
+  remembers of the parent's state only what a witness proved, found or absent, and never that a
+  question went unanswered (`Fast.World`; this was not so of a storage slot until the same day, see
+  the next item but one), so the kept state with the new request's wider witness behind it answers
+  as a state begun on that witness would. (4) Nothing comes in a request that says what is in the
+  kept block or what a transaction's signer is. A block that goes on is then a block this machine
+  could have been asked for outright, with its transactions in that order under rule 0. What does
+  change: under rule 1 the order is no longer what the rule alone would give, since what was in
+  before stays before what comes later whatever each pays, and which transactions are in depends on
+  the requests before. All of that was the host's already: it chooses what is proposed and when.
+  A request the machine adds a sealed transaction to is built from nothing, and what is kept to go
+  on from is left as it was (`Bid.buildWith`), so no state that a sealed transaction touched, and no
+  timing that depends on one beyond what a request to build already showed, is carried to a later
+  request. One block is kept, replaced by each request that may go on and forgotten with everything
+  else kept; its size is that of the state the block touched and its transactions decoded, not
+  measured yet in a trust domain. On the console the machine says that a block went on and from how
+  many transactions, which the host knows. Checked in `build-test` on the blocks of mainnet there:
+  a block's transactions proposed in two parts give the very block built at once; the clock running
+  out part way gives a block the checker accepts, and the next request finishes it; another gas
+  limit, rule, fee recipient, a transaction withdrawn, or transactions added by the machine each
+  make it start from nothing; a node the first request lacked, given with the second, lets what was
+  left out go in. Not yet run in a trust domain or through the feeder.
 - *What a request to build gave is kept for the next* (2026-11-26; `Build.Kept` in `Evm/Build.lean`,
   `Machine.State.kept`). A request to build that begins `JBLF2` is read with the trie nodes, contract
   codes and headers that earlier such requests gave, and what it gives is kept in its turn, so whoever

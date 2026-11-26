@@ -165,6 +165,12 @@ def one (engine : Bool) (name : String) (bytes : ByteArray) (shorten : Bool) (ta
       let (secondWhole, _) := keptFirst.take goingBare
       let ((second, _, _), _, beforeAll, wentSecond) := run secondWhole before
       let ((third, _, _), _, _, wentThird) := run secondWhole beforeAll
+      -- The receipts of the whole block, their root and bloom by this project's trie and by Jaune's.
+      if let some whole := beforeAll then
+        tally ← tally.expect s!"{name}: the receipts' root or bloom is not what Jaune's functions give"
+          (whole.job.out.receipts.size == count
+            && Bridge.receiptsRootAndBloom whole.job.out.receipts == Bridge.receiptsRootAndBloomByJaune whole.job.out.receipts
+            && Bridge.receiptsRootAndBloom #[] == Bridge.receiptsRootAndBloomByJaune #[])
       tally ← tally.expect s!"{name}: proposed in two parts, the block that went on is not the block built at once"
         (wentFirst.isNone && before.isSome && beforeAll.isSome && second.encode == again.encode && third.encode == again.encode
           && wentFrom wentSecond half before && wentFrom wentThird count beforeAll)

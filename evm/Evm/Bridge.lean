@@ -257,14 +257,66 @@ def body (fork : Fork) (chainId : UInt64) (block : Block) (decoded : List Transa
 
 def log (l : Fast.Log) : Log := ⟨address l.address, l.topics.toList.map u256, l.data.toList⟩
 
-/-- The root of the receipts and the bloom of all their logs, as a header has them, by Jaune's functions. -/
-def receiptsRootAndBloom (receipts : Array Fast.Receipt) : U256 × Bytes :=
+/-- The root of the receipts and the bloom of all their logs, as a header has them, by Jaune's functions.
+What `receiptsRootAndBloom` below has to give; `build-test` compares the two on blocks of mainnet. -/
+def receiptsRootAndBloomByJaune (receipts : Array Fast.Receipt) : U256 × Bytes :=
   let entries := receipts.toList.zipIdx.map fun (r, index) =>
     let logs := r.logs.toList.map log
     let receipt : Receipt := ⟨r.success, r.cumulativeGas.toNat, logsBloom logs, logs⟩
     let key : Bytes := Rlp.Item.toBytes (.bytes index.toBytes)
     (key.toNibbles, r.kind.toNat.toBytes ++ receipt.toRlpItem.toBytes)
   (trie (Std.TreeMap.ofList entries _), logsBloom (receipts.toList.flatMap fun r => r.logs.toList.map log))
+
+/-- A bloom with nothing in it: 2048 bits. -/
+def noBloom : ByteArray := ByteArray.mk (Array.replicate 256 0)
+
+/-- A bloom with one more thing in it, an address or a topic: three bits, each named by eleven bits of
+the thing's keccak hash (the low eleven of its first, second and third pairs of bytes), counted from
+the bloom's last byte. -/
+def bloomWith (bloom : ByteArray) (item : ByteArray) : ByteArray :=
+  let digest := (Fast.Keccak.hash item 0 item.size).bytes
+  (#[0, 2, 4] : Array Nat).foldl (fun bloom i =>
+    let bit := ((digest[i]!.toNat <<< 8) ||| digest[i + 1]!.toNat) % 2048
+    let place := 255 - bit / 8
+    bloom.set! place (bloom[place]! ||| (1 <<< (bit % 8)).toUInt8)) bloom
+
+/-- The bloom of some logs: each one's address and each of its topics. -/
+def bloomOf (logs : Array Fast.Log) : ByteArray :=
+  logs.foldl (fun bloom log =>
+    log.topics.foldl (fun bloom topic => bloomWith bloom topic.bytes) (bloomWith bloom log.address.addressBytes)) noBloom
+
+/-- A number below 2^64 as RLP writes one: its bytes, highest first, with none that are nothing in front. -/
+def numberBytes (n : Nat) : ByteArray :=
+  ⟨(((List.range 8).reverse.map fun k => (n >>> (8 * k)).toUInt8).dropWhile (· == 0)).toArray⟩
+
+/-- A receipt as the receipts' trie holds it: for any kind but the first, the kind's byte; then the list
+of whether it succeeded, the gas the block had used after it, its bloom, and its logs, each an address,
+topics and data. -/
+def receiptBytes (r : Fast.Receipt) (bloom : ByteArray) : ByteArray :=
+  let logs := r.logs.foldl (fun out log =>
+    out ++ Trie.rlpList (Trie.rlpString log.address.addressBytes
+      ++ Trie.rlpList (log.topics.foldl (fun out topic => out ++ Trie.rlpString topic.bytes) ByteArray.empty)
+      ++ Trie.rlpString log.data)) ByteArray.empty
+  let body := Trie.rlpList (Trie.rlpString (if r.success then ⟨#[1]⟩ else ByteArray.empty)
+    ++ Trie.rlpString (numberBytes r.cumulativeGas.toNat) ++ Trie.rlpString bloom ++ Trie.rlpList logs)
+  if r.kind == 0 then body else ByteArray.mk #[r.kind] ++ body
+
+/-- The root of the receipts and the bloom of all their logs, as a header has them: each receipt under
+its number as RLP writes it, in a trie of this project's (`Evm/Trie.lean`), hashed by its keccak. Until
+2026-11-26 this was Jaune's functions on lists of bytes (above), a tenth of what a block cost to build
+on a workstation and more in a machine. -/
+def receiptsRootAndBloom (receipts : Array Fast.Receipt) : U256 × Bytes :=
+  let (trie, bloom, _) := receipts.foldl
+    (init := ((.ok .empty : Except Trie.Fault Trie.Node), noBloom, 0))
+    fun (trie, bloom, index) r =>
+      let own := bloomOf r.logs
+      (trie.bind fun node =>
+          Trie.set {} node (Trie.nibbles (Trie.rlpString (numberBytes index))) (receiptBytes r own),
+        ByteArray.mk (Array.zipWith (· ||| ·) bloom.data own.data), index + 1)
+  match trie with
+  | .ok node => (Trie.rootHash node, bloom.toList)
+  -- No two numbers' writings begin alike, so the trie takes every one; this is not reached.
+  | .error _ => receiptsRootAndBloomByJaune receipts
 
 /-- The state root after the engine has run a block on a witness: the parent's trie with every account
 that changed written back. Everything the engine fetched was proven when it was fetched, so there is
@@ -281,6 +333,13 @@ def rootAndNodes (w : Witness) (world : Fast.World) (keep : Bool) : Stateless.M 
     world.slots.fold (fun changed name slot =>
       if slot.value == slot.before then changed
       else changed.insert name.address ((changed.getD name.address #[]).push (name.key, slot.value))) {}
+  -- A value that is something is written without first being looked for, when the nodes written are
+  -- not wanted: `Trie.put` looks first so as to leave a trie that already holds the value as it was,
+  -- sealed, and writing the same value again gives the same root by another walk down and up. With
+  -- `keep` the looking stays, so that what is given as written is only what changed. (Looking first
+  -- was a third of what a state root cost.)
+  let write (trie : Trie.Node) (path : Trie.Path) (value : ByteArray) : Except Trie.Fault Trie.Node :=
+    if keep || value.isEmpty then Trie.put w.store trie path value else Trie.set w.store trie path value
   let mut trie : Trie.Node := .sealed w.root
   let mut written : Array ByteArray := #[]
   for (a, account) in world.accounts.toList do
@@ -297,10 +356,10 @@ def rootAndNodes (w : Witness) (world : Fast.World) (keep : Bool) : Stateless.M 
       let path := pathOf slot.bytes
       storage ← Stateless.ofTrie <|
         if value.isZero then Trie.remove w.store storage path
-        else Trie.put w.store storage path (Stateless.slotValue (u256 value))
+        else write storage path (Stateless.slotValue (u256 value))
     if keep then written := Trie.encodings storage written
     let leaf : Stateless.Leaf := ⟨account.nonce, u256 account.balance, Trie.rootHash storage, u256 account.codeHash⟩
-    trie ← Stateless.ofTrie (Trie.put w.store trie key leaf.write)
+    trie ← Stateless.ofTrie (write trie key leaf.write)
   pure (Trie.rootHash trie, if keep then Trie.encodings trie written else written)
 
 def rootAfter (w : Witness) (world : Fast.World) : Stateless.M U256 := do

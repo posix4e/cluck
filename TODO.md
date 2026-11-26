@@ -1616,7 +1616,8 @@ by the guest itself.
         running them. Compute Engine's processors take about 1.7 times as long. And the
         learned margin above settles, by its own rule, where one waited-for round in sixteen
         fails. Next: the signers kept from one request to the next, below.
-      - **The signers are kept too, in an image not yet run a thousand slots** (2026-11-26; `Build.Signers`: who signed each transaction of the last request
+      - **The signers are kept too: some 40 ms off a request here, half of what was first
+        measured** (2026-11-26; `Build.Signers`: who signed each transaction of the last request
         read with what was sent before, under the hash signed, taken only for the same
         signature on the same chain; the machine's own added transactions left out of it;
         THREAT_MODEL.md has what it adds). `build-test`: 934 checks with three blocks of
@@ -1628,12 +1629,38 @@ by the guest itself.
         requests of six slots here (kept as they were sent, the time allowed set to none, so
         every transaction proposed is tried) put in the same order to the image before
         (`950803d4…`) and to this one, each in a trust domain: every answer the same block
-        from both; the guest took 324 ms a request at the median before and 252 now, 75 ms
-        less at the median and 85 on average. A trial of 25 slots through the feeder (266
-        blocks, all valid) did not show it: 294 ms a round at the median where the thousand
-        slots of the morning had 290, in another hour with other transactions; so that is
-        not a measure, and the replay is. Not run: a thousand slots (under way as this is
-        written).
+        from both. Put once to each, minutes apart with other work on the machine, the guest
+        took 324 ms a request at the median before and 252 now, and that was written here and
+        told as the measure; it did not hold. Put three times to each, turn about, with only
+        the feed running beside (15:15 UTC): 256, 251 and 260 ms at the median before and
+        210, 236 and 202 now; request by request, by the median of the three, 251 before and
+        208 now, 36 ms less at the median and 39 on average
+        (`/data/eth/shadow/signers-try/again`). A trial of 25 slots through the feeder (266
+        blocks, all valid) showed nothing either way, in another hour with other
+        transactions.
+      - **1,000 slots on the twin of that image** (`/data/eth/shadow/gate1000r`, 11:50 to
+        15:10 UTC, blocks 26499186 on; the feeder of the same commit with `--keeps`): a bid
+        in every slot; 11,473 rounds, 11,466 blocks, all valid. Seven rounds were answered
+        that the witness fell short: six a head's first, and one a slot's thirteenth and last
+        (the same answer, after 162 ms of building; the slot had its twelve bids). Twelve
+        rounds a slot at the median, eleven in the run before. A round 0.64 s at the median
+        (one in ten over 0.91), 0.31 s of it asking the guest (0.46). By the guest's own
+        count a request took 287 ms (430) where the run before had 290 (455), with more in
+        the blocks: at blocks of like size, asking it took 0.30 s where 0.32 for 50 to 100
+        transactions, 0.37 where 0.40 for 100 to 150 and 0.46 where 0.50 for 150 to 250, and
+        within a slot a transaction more in the block cost 1.48 ms where it had cost 1.94.
+        The last bid 0.85 s before the slot at the median. One round ended after its slot
+        began, the run's first, begun in the middle of a slot. The last round came to nothing
+        in 19 slots and had fewer transactions than a round before it in 46 (25 and 38 in the
+        run before).
+      - **What a slot's last round is allowed decides how it comes out** (the two runs of
+        1,000 slots above, last rounds that were waited for, by the time left the guest for
+        transactions): under 100 ms, 20 came to nothing and 2 had fewer than a round before,
+        none held; 100 to 200 ms, 21 nothing, 56 fewer, 162 held; over 200 ms, 2 nothing, 25
+        fewer, 1,674 held. On Compute Engine (the two runs of 300) the line is at about 300
+        ms: under it 7 nothing, 9 fewer, 26 held; over it 4, 12 and 490. A round builds its
+        block from nothing, so one given less time than the round before used cannot do as
+        well; the next change is for a round to go on from the block before (not done).
       - **On Compute Engine with the signers kept, a tenth off the guest's time for a block of
         like size** (2026-11-26, 11:53 to 12:53 UTC; image `a07875d4…` in a test trust domain,
         300 slots with keeping, no relay, each block returned and judged here; the machine

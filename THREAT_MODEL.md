@@ -527,8 +527,8 @@ service reaches reads a constant one of them would have built, it reads memory n
 the rule "nothing that is not there may pass for something that is" broken on purpose, and the fixtures
 agreeing is all that stands behind it.
 
-**A stack with a hole under it** (2026-11-25; before that, and in the image running until the next is
-deployed, nothing: recursion past the end wrote into the image). `evm/boot/stack.c` moves `main` to
+**A stack with a hole under it** (2026-11-25, and in the image running on Compute Engine since
+2026-11-26 15:18 UTC; before that nothing: recursion past the end wrote into the image). `evm/boot/stack.c` moves `main` to
 64 MiB of the image's own memory, and the lowest 1 MiB of it is taken out of the mapping first
 (`boot/efi/guard.c`, above). Recursion that uses up the other 63 MiB reaches the hole, and the machine
 says its stack ran out and stops; it starts again only if whoever runs it starts it, with new keys.

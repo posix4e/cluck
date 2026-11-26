@@ -1557,7 +1557,7 @@ by the guest itself.
       guest keeping the nodes, codes and headers it has been sent. Of two requests saved for
       blocks one after the other (26497543, 26497544), the second's nodes were 22 in a
       hundred new by bytes, its codes 29, its headers one of 255.
-    - **The guest keeps what it was sent, in an image not yet on Compute Engine** (2026-11-26;
+    - **The guest keeps what it was sent; on Compute Engine since 15:18 UTC that day** (2026-11-26;
       `Build.Kept` in `Evm/Build.lean`, a request that begins `JBLF2`; `--keeps` to
       `builder/shadow`, which gives the guest only what no request since it last forgot gave
       it; THREAT_MODEL.md says what that exposes). Nodes and codes are kept by hash and the
@@ -3115,7 +3115,7 @@ What it stands on that is not sound yet:
       that runs. Nothing proves that no constant those routines would have built is read; the fixtures
       agreeing is the evidence. The repair is in Jaune: proofs out of the modules that run.
 - [ ] **`main` runs on a 64 MiB stack; there is a hole under it now, in images built from 2026-11-25
-      20:30 UTC on, and not yet in the one running on Compute Engine** (`evm/boot/stack.c`, the OS's
+      20:30 UTC on, and in the one running on Compute Engine since 2026-11-26 15:18 UTC** (`evm/boot/stack.c`, the OS's
       `boot/efi/guard.c`). The lowest 1 MiB of the stack is taken out of firmware's page tables before
       anything runs on it, and a page fault and a double fault are given a stack of their own, so that
       a stack which runs out stops the machine with a line saying so, where before it wrote on into the
@@ -3136,7 +3136,7 @@ What it stands on that is not sound yet:
       A slot's last block was ready 0.82 s before it at the median (least 0.49 s); eleven rounds a
       slot, 0.65 s a round. Nothing on the guest's console after its first line: the hole was not
       reached.
-      **Not run yet:** anything on Compute Engine but the stack's own test. CI runs `stack-check
+      **On Compute Engine** it is in the builder's image since 2026-11-26 15:18 UTC (`a07875d4…`); before that only the stack's own test had run there. CI runs `stack-check
       dev` since 2026-11-26 (Ubuntu's OVMF on an emulated processor, on GitHub's machine: passed);
       `stack-check tdx` is run by hand.
       **Not done:** how deep a hostile block can make it recurse has still not been measured (what

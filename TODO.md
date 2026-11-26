@@ -1563,7 +1563,12 @@ by the guest itself.
       rounds came out short (four with nothing, three with fewer) where it had been 46 in a
       hundred, none of them in the last fourteen slots; it had learned 0.25 s by then, and the
       last block was ready 1.0 s before the slot at the median where it was 0.83 in the first
-      fifteen. `scripts/round-check` has the rule. Not run: a thousand slots here with it.
+      fifteen. `scripts/round-check` has the rule. Then a thousand slots here with it
+      (`/data/eth/shadow/gate1000p`, 04:33 to 07:53 UTC on 2026-11-26, the same image as the
+      thousand before, the stand-in for a relay): a bid in 998, 9,905 blocks sent and every one
+      judged valid, none late; the last round held nothing in 36 slots and fewer than a round
+      before in 29, which is 65 where it was 464; the margin was 0.11 s at the median and never
+      over 0.36; and the last bid was 0.89 s before the slot at the median, where it was 0.82.
       On Compute Engine it changes nothing, as expected: one in sixteen is where the rule
       settles and the fault there is rarer. In the feed's first hour with it (05:11 UTC, 300
       slots, every block valid) the last round held nothing in 12 slots and fewer in 3, the

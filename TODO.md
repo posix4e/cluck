@@ -1782,6 +1782,32 @@ by the guest itself.
         18:55 UTC; the feed was not stopped for it (under one answer in a hundred).
         **Open: whether a second or so of age at one relay matters; what the others' limits
         are is not known, none has said.**
+      - **The image with the engine's fix and blocks that go on, in a trust domain: a round of
+        0.18 s where 0.51** (2026-11-26; `evm-os` `6604855c…` (4,167,168 bytes) and the
+        stand-in's twin `8a3f27fa…`, commit b4a1d2f, kept in `/data/eth/shadow/images/6604855c`;
+        `check-secret-code tdx`, `stack-check tdx`, `run-fixtures tdx --limits --key` as they
+        should be). *The same 74 requests, three times each way, turn about*
+        (`scripts/dump-to-replay`, `/data/eth/shadow/going-on-replay`): built from nothing, 84
+        ms a request at the median by the guest's count (108 on `b1f0683b…`, 240 on
+        `a07875d4…`) and the same block as `b1f0683b…` builds in all 74; with the byte for
+        going on, 34 ms, and 67 of the 74 went on. Of those 67 the console's division is 1 ms
+        to read, 12 to the last transaction, 13 to end the block, 9 to sign. In eight of the
+        74 the block that went on has one or two transactions fewer: they read what the
+        witness does not prove, the proofs of that dump having been gathered for the order a
+        block built from nothing runs them in (`build-why --on` says so of the same eight).
+        *25 slots through the feeder with `--continues`* (`/data/eth/shadow/going25`): 757
+        blocks, every one judged valid and everything proposed in each slot's last; 729 rounds
+        went on, the 25 first of a head and three others were built from nothing; 32 rounds a
+        slot where 14, a round 0.18 s (0.08 of tracing, 0.08 of proofs, 0.06 of the guest), the
+        guest 28 ms by its own count for a round that went on (0.4 to read, 3.6 to the last
+        transaction, 16.8 to end, 7.1 to sign) and 116 from nothing; 122 blocks kept back as
+        paying no more than one already sent. Two slots had one round each, the head having
+        come less than a second before the slot. **Running: 1,000 slots on the twin from 19:34
+        UTC (`/data/eth/shadow/gate1000t`, `--continues --finishing 0.15`), and 300 slots
+        against a test trust domain on Compute Engine (`silo-going-test`, 34.121.179.64, begun
+        19:36 UTC, to be deleted when they end; `/data/eth/shadow/gce-going`), neither with
+        any relay of the network.** Open after them: the heap with the block kept; whether a
+        relay other than Ultrasound's minds 30 posts a slot.
       - **The feeder asked for proofs five to a batch, and the node answers a batch one call
         after another** (2026-11-26; `builder/shadow`). Every round spent 0.22 s on proofs
         however few it needed: reth takes about 45 ms over an `eth_getProof` whatever is asked.

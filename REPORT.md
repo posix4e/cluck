@@ -1,7 +1,7 @@
 # A block builder in a trust domain, with far less inside it
 
 A report on [`evm/`](evm/README.md), for people who build Ethereum blocks in trusted execution
-environments. Written 2026-11-24 and revised on the 25th. The runs the numbers come from are recorded in
+environments. Written 2026-11-24 and revised on the 25th and 26th. The runs the numbers come from are recorded in
 [TODO.md](TODO.md), most with their commands; some figures were counted from the runs' own records for
 this report and stand nowhere else. Those records are files on the machine that made them and are not
 published; the programs that count them are (`evm/builder/tools/`). What is weak is said here in short. It is said at length in the part of
@@ -17,7 +17,7 @@ one, were described in [its release notes of April 2025][bn] as full Linux TDX i
 Reth, a proxy for order flow and one for attestation. The kernel, and anything that runs with its
 rights, can read the transactions.
 
-This is a builder whose guest is one EFI program of 4.0 MB. Above the firmware there is nothing else:
+This is a builder whose guest is one EFI program of 4.2 MB. Above the firmware there is nothing else:
 no kernel, no C library, no OpenSSL, no shell, no file system, and one listening TCP port. The network
 card's driver, Ethernet, IP, TCP, DNS, TLS 1.3, X.509, HTTP, the EVM, the Merkle-Patricia trie, BLS
 signing, SSZ and the builder itself are Lean in that one program. The 0.8% of it that is C parses no
@@ -25,7 +25,7 @@ frame, no request and no certificate. (Compiled Lean also carries small function
 header inside it, which count references and reach into objects. They are counted here as Lean, and by
 instructions they are most of the compiled code: the figure is under what is trusted, below.)
 
-It runs today in a TDX trust domain on Google Cloud, builds a block about every second from the public
+It runs today in a TDX trust domain on Google Cloud, builds a block about three times a second from the public
 pool, signs its bids with a key drawn inside the trust domain, and posts them itself to Flashbots,
 Ultrasound, Aestus and Titan. Anyone can follow one of those bids from a relay's public list back to
 the source it was built from; how is below. (It did not bid from 06:40 to 15:03 UTC on 2026-11-26:
@@ -39,7 +39,7 @@ signing bids, which guards no money, and though anybody can send it a sealed tra
 the trust domain and hands the guest transactions with proofs of the state they touch. That is what lets
 the inside be small. It also means the machine that feeds it sees the public flow and chooses what the
 builder sees of it. Private flow has to be sealed to the guest, which is shown here for single
-transactions that this project sent to itself, and has limits said below. So the 4.0 MB is the size of a
+transactions that this project sent to itself, and has limits said below. So the 4.2 MB is the size of a
 builder that does not yet do a winning builder's work.
 
 Words used below. The *guest* is the program in the trust domain. The *host* is the machine it runs on
@@ -57,15 +57,15 @@ The image as it runs on Google Cloud, counted from the linker's map and the file
 
 | Part | Bytes | Share | Whose |
 |---|---:|---:|---|
-| The builder: engine, trie, TLS, bids, relays | 1,440,903 | 36.2% | this project's Lean |
-| Lean's own library | 1,321,587 | 33.2% | Lean's |
-| What is left of Jaune, an executable specification of the EVM in Lean | 757,633 | 19.0% | a third party's ([skbaek/jaune][jaune]), in a fork with changes made here |
-| The OS: card drivers, Ethernet to TCP, DNS | 365,488 | 9.2% | this project's Lean |
-| Start-up and constants of compiled modules, relocations, and 1,093 bytes of two libraries (batteries, mathlib) | 62,349 | 1.6% | the compiler's, the linker's, those libraries' |
+| The builder: engine, trie, TLS, bids, relays | 1,541,929 | 37.8% | this project's Lean |
+| Lean's own library | 1,322,746 | 32.4% | Lean's |
+| What is left of Jaune, an executable specification of the EVM in Lean | 757,633 | 18.6% | a third party's ([skbaek/jaune][jaune]), in a fork with changes made here |
+| The OS: card drivers, Ethernet to TCP, DNS | 365,488 | 9.0% | this project's Lean |
+| Start-up and constants of compiled modules, relocations, and 1,093 bytes of two libraries (batteries, mathlib) | 62,329 | 1.5% | the compiler's, the linker's, those libraries' |
 | C | 31,616 | 0.8% | 2,875 lines printed at build time from programs kept as data in Lean (`Mini/`), 1,483 by hand |
-| Counted | 3,979,576 | | shares are of this; the file is 4,057,600 bytes, the rest its headers, the linker's own tables and padding |
+| Counted | 4,081,741 | | shares are of this; the file is 4,160,512 bytes, the rest its headers, the linker's own tables and padding |
 
-About 15,000 lines of Lean written here are in it (67 modules, 15,180 lines with their comments): the
+About 15,000 lines of Lean written here are in it (67 modules, 15,761 lines with their comments): the
 OS's network and drivers, the builder, the execution engine, TLS and its cryptography. The C is the
 allocator and reference counting that compiled Lean stands on, the entry from firmware, the primitives
 the drivers call to reach a device's registers and memory, the TDX calls for a report and a quote, and
@@ -80,8 +80,8 @@ What that count leaves out or flatters:
 - **No Linux image was measured for comparison**; one published size was looked up. The image of
   [BuilderNet v1.6][bn16] (December 2025, the last release with public notes) for TDX on Azure is a
   disk image of 326,107,648 bytes, which its notes say holds rbuilder, Reth, Lighthouse, FlowProxy,
-  HAProxy, a proxy for attestation, an operator API and acme.sh on a Yocto Linux. That is 81 times
-  the 4.0 MB here, and the two are not the same kind of thing: the file was not downloaded or looked
+  HAProxy, a proxy for attestation, an operator API and acme.sh on a Yocto Linux. That is 78 times
+  the 4.2 MB here, and the two are not the same kind of thing: the file was not downloaded or looked
   into, a disk image has room in it that is not code, and theirs holds two clients that follow the
   chain inside the trust domain, where this builder is shown proofs against a header it is given
   (see what the feeder can still do, below). And a Linux guest all but leaves the firmware behind once
@@ -93,19 +93,22 @@ What that count leaves out or flatters:
   interpreter went out of the image on 2026-11-25 (the image was 4.9 MB with it, and a request could
   ask for a block built by it), and a request for it is now refused. Decoding blocks, headers and
   transactions, recovering senders, checking the header, the precompiled contracts with their curves and
-  hashes, and the tries of transactions, withdrawals and receipts are still Jaune's. The fork used
+  hashes, and the trie of withdrawals are still Jaune's. (The receipts' trie was Jaune's until the
+  image of 23:53 UTC on 2026-11-26, and the transactions' is still, for a request that does not say
+  its block may go on from the one before; the feed's say so in every round but the first after
+  the guest has let go of what it kept.) The fork used
   differs from upstream: in three places by code that nothing proves equal to the specification, and in
   one where the compiled code differs from the definition on purpose. Nobody here has reviewed Jaune
   itself.
 - **The compilers are trusted**: Lean's, and the C compiler and linker behind it.
 - **What is C is told by the file it was compiled from.** Compiled Lean is C that Lean's compiler wrote,
   built against Lean's own header, and the small functions of that header that end up inside it
-  (counting references, reading a field) are counted as Lean. **They are most of it.** Of the 2,568,222
-  bytes of code compiled here from Lean (this project's and Jaune's, 95 modules), 1,827,238, or 71%, are
-  instructions whose source line is in that header; 297,335 (12%) have a line of the C the compiler
-  wrote for the module, and 443,649 (17%) have no line. Half of the header's share is counting
+  (counting references, reading a field) are counted as Lean. **They are most of it.** Of the 2,668,924
+  bytes of code compiled here from Lean (this project's and Jaune's, 95 modules), 1,899,398, or 71%, are
+  instructions whose source line is in that header; 307,153 (12%) have a line of the C the compiler
+  wrote for the module, and 462,373 (17%) have no line. Half of the header's share is counting
   references. (`evm/scripts/header-share`, which compiles the same C again with line numbers in it: 8 of
-  3,464 functions came out another size that way, 14 bytes between them. It counts code by the file it
+  3,537 functions came out another size that way, 14 bytes between them. It counts code by the file it
   was compiled from, where the table above counts code and data by name and sets the modules' start-up
   code apart, so its total is not the sum of three rows there. Lean's own library comes compiled and
   was not looked into.) So the rows above for this project's Lean and for Jaune say whose
@@ -214,9 +217,16 @@ is.
 
 Each slot the guest is handed pending transactions and proofs, builds a block, signs the bid with a BLS
 key drawn inside the guest, and posts block and bid to the relays over TLS connections of its own. It
-does that again about twice a second until 0.7 s before the slot, each time with what has arrived since
-(once a second until the image of 19:15 UTC on 2026-11-26, which builds a block in less than half the
-time).
+does that again about three times a second until 0.7 s before the slot, each time with what has arrived
+since (once a second until the image of 19:15 UTC on 2026-11-26, and twice a second on that one).
+
+Since the image of 23:53 UTC on 2026-11-26 a round goes on from the block the round before built. The
+guest keeps that block as it stood after its last transaction, with the engine's state and what the
+state root was worked out with, and when the next request is for the same block and proposes the same
+transactions and more, it runs only the new ones, after those already in. A round that goes on cannot
+come out with less than the one before it. A block that has passed half the gas a block may use is
+built from nothing again, in order of what each transaction pays, and so is a block the guest adds a
+sealed transaction to: nothing worked out from a sealed transaction is kept.
 
 Since the image of 2026-11-26 the guest keeps what a request to build gave it: the proofs' trie nodes,
 contract codes and headers, up to 16 MiB and then none of them, and who signed each transaction of the
@@ -242,16 +252,11 @@ Google Cloud, or by the code now running, has been proposed.
 away, bidding at four relays with nothing paid for a win:
 
 - It has bid since 2026-11-24 18:30 UTC, but for 06:40 to 15:03 on the 26th, and on the image
-  described above since 19:15 on the 26th. That is two days, not a long record, and **every number
-  below but the last item's is of the images before that one**. It differs from the one before it
-  in two things that make a request take the guest less than half the time: the headers it is given
-  are decoded and checked once and not on every request, and the first step of signing a bid, turning
-  the bid into a point of a curve, is done with this project's arithmetic and no longer the
-  third-party library's.
+  described above since 23:53 on the 26th. That is two days, not a long record, and **every number
+  below is of the images before that one, but for the items that name it**.
 - **All of it, to 15:04 UTC on the 25th**: 6,167 slots went by and a bid of ours was sent to a relay in
   5,973 of them, 96.9%. About half of those slots, the ones to 04:27 on the 25th, were on images of 4.9
-  MB that still held Jaune's interpreter; the rest were on images of 4.0 MB, as the one described above
-  is. Of the 194 without: in 89 no relay held a registration from the slot's proposer,
+  MB that still held Jaune's interpreter; the rest were on images of 4.0 MB. Of the 194 without: in 89 no relay held a registration from the slot's proposer,
   so there was nobody to send to; 71 were three changes of image, 23 or 24 slots each; seven were the
   three resets by Google's host (below), two or three slots each; 14 followed a slot with no block, for
   which nothing was built then (below); twelve were built and not sent, five of them in the full pool
@@ -315,23 +320,57 @@ away, bidding at four relays with nothing paid for a win:
   relay that has said so no more often than every 1.3 s, and its last block of a slot whenever it
   can tell which that is; the other three get every round. That relay therefore holds a bid of ours
   that is up to a second or so older than the others' for most of a slot.
-- **On the image described above**, bidding since 19:15 UTC on the 26th: in its first eight slots a
-  bid in each, 13 rounds a slot, 0.52 s a round, 101 blocks all judged valid, one answer of 429 and
-  then none with the relay paced. No more is known of it there yet. Before it went there it ran
-  1,000 slots where this is developed, in a trust domain against a stand-in for a relay: a block
-  sent in every slot but one, for which the feeder asked for nothing because the chain's block for
-  the slot before came late; 14,075 blocks, every one judged valid by the node there; six rounds
-  that ended with a witness that fell short and no block; 14 rounds a slot where the image before
-  it had 12 in the same test.
-- **A flaw in the engine, found on the 26th and in every image so far, this one included.** When a
+- **On the image of 19:15 to 23:48 UTC on the 26th** (it decodes and checks the headers it is given
+  once and not on every request, and turns a bid into a point of the curve with this project's
+  arithmetic and no longer the third-party library's; a request took the guest less than half the
+  time): 1,368 slots went by and a bid was sent in 1,311, 95.8%. Of the 57 without: in 24 no relay
+  held a registration from the proposer, and 33 were built and nothing sent (next item). 15,474
+  bids sent, every one judged valid afterwards; no round ended after its slot began. Twelve rounds a
+  slot, 0.52 s a round, and the last bid 0.85 s before the slot, at the median. Of 44,562 answers
+  38,514 were 200 and 6,034 were 202; five were 429, five were 400 (four for blocks on a parent or
+  slot the relay had moved on from, one "simulation failed: could not find parent block"), and four
+  posts had no answer.
+- **Built and nothing sent, in 33 of those 1,368 slots.** The slot's only block, or its last, had
+  no transaction in it, and the guest sends no such block. Two causes, not counted apart. A head's
+  first round sometimes has transactions that touch hundreds of accounts, or one that uses most of a
+  block's gas and reads megabytes of state: gathering the proofs then takes the feeder 4 to 7 s and
+  the request is 8 MB or more, and no time is left. And a slot's last round, begun late and built
+  from nothing, ran out of time before its first transaction went in (under what is not done); the
+  image that runs now does not build that round from nothing. The first is not mended: a rule for
+  the feeder that holds such transactions back from a head's first round is written and has not yet
+  been seen to act.
+- **On the image described above**, bidding since 23:53 UTC on the 26th: in its first eleven slots
+  a bid in each, 22 rounds a slot, 0.35 s a round, 190 blocks sent and all judged valid, 194 of 211
+  rounds gone on from the block before, one answer of 429 and then none with that relay paced. No
+  more is known of it there yet. Before it went there:
+  - **1,000 slots where this is developed**, in a trust domain against a stand-in for a relay
+    (20:19 to 23:39 UTC on the 26th): a block sent in 998 slots. The two without had one round
+    each, of 10.5 MB after 7 s of gathering proofs for more than 900 accounts: one block came out
+    with nothing in it, and the guest kept the other back because a transaction ran it 0.6 s past
+    the time the request allowed. 34,298 rounds, of which 34,294 gave a block, every one judged
+    valid by the node there, and four were a head's first round with a witness that fell short and
+    no block. 32,984 rounds went on from the block before. 36 rounds a slot and 0.18 s a round at
+    the median, 0.05 s of it the guest's, where the image before it had 14 rounds a slot in the
+    same test. One round ended after its slot began, by 1.15 s: its request was 8.7 MB and took
+    the feeder 3.2 s to gather; the slot's bid before it was 2.9 s before the slot. In two more
+    slots the last round came out with nothing in it, because the block had passed half a block's
+    gas and was built from nothing with too little time left; the slot's earlier bid stood.
+  - **300 slots on a test machine on Google Cloud**, fed over the internet with no relay: a block
+    in every slot, 3,363 of 3,364 rounds built and judged valid, 3,024 gone on. A round 0.30 s
+    where the image before took 0.89 s in the same kind of run, the guest 0.14 s of it where 0.50.
+  - **The same 74 requests put to three images in a trust domain**: 240 ms a request by the
+    guest's own count on the image of 15:19, 108 ms on the image of 19:15, 84 ms on this one built
+    from nothing and 34 ms going on. Of the 34: 1 to read the request, 12 to the last transaction,
+    13 to end the block (the state root, mostly) and 9 to sign.
+- **A flaw in the engine, found on the 26th and in every image before the one that runs now.** When a
   transaction is left out of a block because the proofs do not reach a storage slot it reads, the
   engine could keep that slot as an empty one, and a later transaction of the same block reading it
   would be run on a value the state does not have: an invalid block, bid for. No such block is
   known, and each one counted above as valid was judged by a node after it was built; a relay that
   checks blocks would refuse one. It is put right in the source and tested there
-  ([THREAT_MODEL.md](THREAT_MODEL.md) has the whole of it); no image with the correction has been
-  built yet.
-- **Two hours on one image looked at closely** (the third of the seven there have been; from 04:28 UTC on
+  ([THREAT_MODEL.md](THREAT_MODEL.md) has the whole of it), and the image that runs since 23:53 UTC
+  on the 26th has the correction.
+- **Two hours on one image looked at closely** (the third of the eight there have been; from 04:28 UTC on
   the 25th, 600 slots): 3,172 blocks built and 3,102 sent. Of the 70 not sent, 42 were for proposers no
   relay had a registration from, 26 paid no more than one already sent for the slot, and two were too
   late. Of 9,934 answers 7,024 were 200, 2,907 were 202 and three were none; none was a refusal.
@@ -495,24 +534,27 @@ Where this is thinner than it looks:
 - **It does not win.** No private order flow, no bundles, no blobs, nothing paid to the proposer beyond
   what the block earns. None of that is shown, and bundles and a payment signed inside would be new code
   inside; how much has not been measured.
-- **It is not fast.** One core, one block at a time, about a second a round, and it stops 0.7 s short
-  of the slot. Builders that win bid until the slot begins.
-- **One slot in twenty, its last bid is three seconds old; fewer on the image now running, by how
-  many is not known.** A slot's last round is begun as late as
-  will fit, after a wait. On the image before this one, in 143 of 3,096 slots from Google Cloud (17:13 UTC on 2026-11-25 to 03:31 on
+- **It is not fast.** One core, one block at a time, a third of a second a round (a second until
+  2026-11-26), and it stops 0.7 s short of the slot. Builders that win bid until the slot begins.
+- **One slot in twenty, its last bid was three seconds old, until the image of 23:53 UTC on
+  2026-11-26; how many on that one is not yet known at the relays.** A slot's last round is begun as late as
+  will fit, after a wait. On the image of 17:12 on the 25th, in 143 of 3,096 slots from Google Cloud (17:13 UTC on 2026-11-25 to 03:31 on
   the 26th; 182 of 4,037 by 06:40) that round's request, two megabytes sent from the machine with the node, was so long in
   arriving (0.38 s at the median, where the round before took 0.12 s) that the time it allowed for
   transactions was gone: the block had none in it, the guest kept it back, and the slot's last bid was
   an earlier round's, 3.1 s before the slot at the median. By the sending machine's own account
   of its TCP, packets lost between it and the guest hold its sending window near 150 packets and now
   and then far lower, and such a request is 1,200 or more. Those requests were larger than they
-  need be: each carried again nearly everything the one before it did. The image now running is
-  sent only what it has not been. In a trial on Google Cloud with no relay (300 slots each way, one
+  need be: each carried again nearly everything the one before it did. The images since 15:19 on
+  the 26th are sent only what they have not been. In a trial on Google Cloud with no relay (300 slots each way, one
   hour after the other) the last round's request was 0.25 MB at the median where it had been 2.2, a round took
-  0.89 s where 1.07, and the last round still came to nothing in 6 slots of 300 where 10. What is
-  left has another cause: a round builds its block from nothing, so one left less time than the
-  round before used cannot do as well. That is not mended, and what the count is at the relays on
-  this image is not yet known.
+  0.89 s where 1.07, and the last round still came to nothing in 6 slots of 300 where 10. What was
+  left had another cause: a round built its block from nothing, so one left less time than the
+  round before used could not do as well. On the image of 19:15 on the 26th, 38 of 1,368 slots at
+  the relays had a last round with nothing in it. The image that runs now goes on from the block
+  before (under what it does), and in 1,000 slots where this is developed three had such a last
+  round, one of them its only round, the cases said under the numbers. What is left of it: a block past half a block's gas, and
+  a block with a sealed transaction in it, are still built from nothing every round.
 - **A full pool, or one transaction, has kept it from bidding, and may again.** For three minutes on
   2026-11-25 the feeder had 400 transactions to propose, which is the most it takes from its node's
   pool; rounds took 6 to 12 s where they take one, and on Google Cloud five slots in a row went by with
@@ -526,7 +568,7 @@ Where this is thinner than it looks:
   bid, on Google Cloud (29 slots with 300 or more pending) and here (40), though in a third of the
   fullest only one bid, ready five seconds before the slot. (The feeder judged a second round by what
   the first had cost. It no longer does; in 40 slots here since, three of them full, every slot's last
-  block was ready within 1.5 s of the slot.) The image now running has a limit of its own, so that this
+  block was ready within 1.5 s of the slot.) The images since 17:12 on the 25th have a limit of their own, so that this
   no longer rests on the feeder: a table says what each precompiled contract costs in time for its
   input, from measurements on the guest's runtime, and a transaction in a block being built gets a
   quarter of a second of it; a call there is none left for fails without being run and the transaction

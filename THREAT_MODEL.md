@@ -494,8 +494,9 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   says nothing of them that it did not before. Checked in `build-test` on the blocks of mainnet
   there: the same block with the signers kept; a signer under another signature, chain or `r` not
   taken; one under the transaction's own taken.
-- *A block can go on from the block built for the request before* (2026-11-26, not in the deployed
-  image; `Build.Before`, `Build.runGoingOn` in `Evm/Build.lean`). A request that begins `JBLF2` with
+- *A block can go on from the block built for the request before* (2026-11-26; in `03394a79…`, the image
+  that runs on Compute Engine since 23:53 UTC that day, whose feed asks for it in every round;
+  `Build.Before`, `Build.runGoingOn` in `Evm/Build.lean`). A request that begins `JBLF2` with
   the byte 2 says so, and the machine then keeps, with what the next item describes, the block it
   built as that stood after its last transaction and before anything that ends a block: the
   engine's state, the receipts, and each proposed transaction decoded with its signer. The next
@@ -527,8 +528,10 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   on from is left as it was (`Bid.buildWith`), so no state that a sealed transaction touched, and no
   timing that depends on one beyond what a request to build already showed, is carried to a later
   request. One block is kept, replaced by each request that may go on and forgotten with everything
-  else kept; its size is that of the state the block touched and its transactions decoded, not
-  measured yet in a trust domain. On the console the machine says that a block went on and from how
+  else kept; its size is that of the state the block touched and its transactions decoded, and
+  has not been measured: all that is known is that 1,000 slots in a row in a trust domain, 34,298
+  requests of up to 13.7 MB with the most kept that the limit lets be kept, did not run the 512 MiB
+  heap out. On the console the machine says that a block went on and from how
   many transactions, which the host knows. It also says there, since the same day, how a request's
   time was divided (reading it, the transactions, ending the block, signing), but only of a request
   no sealed transaction was tried in: of one that was, the console says how long all of it took and
@@ -568,8 +571,9 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   and a request of the longest allowed at once. A request that begins `JBLF1` reads nothing kept and
   keeps nothing.
 - *The engine remembered a storage slot it could not read as an empty one* (found and put right
-  2026-11-26, `Fast/State.lean`; in every image up to and including `b1f0683b…`, which runs on
-  Compute Engine since 19:15 UTC that day). A transaction that reads what the witness does not prove is undone and left out of the
+  2026-11-26, `Fast/State.lean`; in every image up to and including `b1f0683b…`, which ran on
+  Compute Engine from 19:15 to 23:48 UTC that day; `03394a79…`, which runs there since, has the
+  correction). A transaction that reads what the witness does not prove is undone and left out of the
   block. The undoing put back everything the transaction wrote, but a slot whose proof was missing
   had been put among the slots the engine knows, holding nothing, and stayed there; and an account
   whose proof was missing, if the transaction paid it or wrote to it, was put back as an account
@@ -906,7 +910,7 @@ address and no division. Jaune's own BLS code is on `Nat` and is not used on the
 field elements as fifteen 26-bit limbs in machine words; where a value decides something, both answers are
 computed and `Secret.select` (checked in `Mini/Constant.lean`) picks one; points are added by one formula
 that is right in every case, so nothing asks which case it is in; and the multiplication does a doubling
-and an addition for each of 255 bits whatever they are. (From the image after `b1f0683b…`, not yet built: four doublings, by a formula of their own that is as complete, and one addition for each
+and an addition for each of 255 bits whatever they are. (From `03394a79…`, the image after `b1f0683b…`: four doublings, by a formula of their own that is as complete, and one addition for each
 four bits of the key, of one of sixteen multiples of the point worked out beforehand. Every one of the
 sixteen is gone through each time and kept or passed over by `Secret.select`, on a truth value made
 from the four bits by exclusive-or, negation and a shift, so the bits index nothing and decide no

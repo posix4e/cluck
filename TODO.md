@@ -1750,7 +1750,55 @@ by the guest itself.
         a tenth of a second the other way. `round-check` as it should be, with its cases
         changed to say this. The feed takes it up at its next hourly start; the 1,000 slots
         under way run on the rule before.
-      - **On Compute Engine since 2026-11-26 19:15 UTC** (`evm-os` `b1f0683b…868877bc`,
+      - **On Compute Engine since 2026-11-26 23:53 UTC** (`evm-os` `03394a79…851ad7`,
+        4,160,512 bytes, commit d80ba28: the engine's fix, blocks and state roots that go on,
+        the receipts' root by this project's trie, the faster signing; in place of
+        `b1f0683b…`). **Its 1,000 slots here first** (`/data/eth/shadow/gate1000t`, on the twin
+        `c51beffc…`, 20:19 to 23:39 UTC, `--continues --finishing 0.15`): a block sent in 998
+        slots; 34,298 rounds, 34,294 blocks built and every one judged valid, four first rounds
+        of a head fallen short of witness; 32,984 rounds went on, and all 121 that were built
+        from nothing after a round that could have been gone on from were of blocks past half
+        the gas cap; 36 rounds a slot at the median, a round 0.18 s, the guest 0.05 s of it;
+        the last block 0.83 s before the slot. The console: no line of a stack run out or of
+        memory. **The two slots with nothing sent** (15742348, 15742463) had one round each,
+        10.5 MB after 7 s of gathering 1,150 and 923 proofs: one block empty with 377 ms
+        allowed, the other of 50 transactions and 49.5M gas ended 1.55 s into the 0.91 s
+        allowed and kept back by the guest ("ended too long after the time allowed"; twice
+        more in slots that had other bids). **Two more slots' last round was empty**
+        (15742184, 15742560): their block was past half the gas cap, so it was built from
+        nothing, with 1 ms and 70 ms allowed; the bids before stood. **One round ended 1.15 s
+        after its slot began** (15742424: 8.7 MB, 3.2 s of gathering; the bid before it 2.9 s
+        before the slot). The feed was stopped at 23:48:49 and started at 23:53:28 with
+        `builder/feed … --continues` (the unit's line changed with it); `run-fixtures tdx
+        --at`: every answer the expected one and a bid signed by its key (`0x96b099d9…`);
+        `scripts/gce-live` wrote `docs/live/` (challenge the hash of block 26502784) and said
+        all five hold. First twenty slots: a bid in each, 22 rounds a slot, a round 0.32 s and
+        the guest's part with its posts 0.19 s (0.52 and 0.35 on the image before), 357 blocks
+        sent and all judged valid, 395 of 423 rounds gone on, one 429 and then that relay
+        paced. **Open: a block past half the gas cap is built from nothing every round, and
+        with little time left that round is empty; a day of numbers; what the kept block takes
+        of the heap (the 1,000 slots did not run it out, and no more is known); whether a
+        relay other than Ultrasound's minds 20 to 40 posts a slot, none has said.**
+      - **What `b1f0683b…` did there, 19:15 to 23:48 UTC** (`builder/tools/day.py` on its five
+        records): 1,368 slots, a bid sent in 1,311 (95.8%); 24 with no registration at any
+        relay and **33 built and nothing sent**, where `a07875d4…` had none in 1,155: the
+        slot's only or last block had nothing in it. 16,177 blocks built and 15,474 sent, all
+        judged valid; none after its slot began; twelve rounds a slot, 0.52 s a round, the last
+        bid 0.85 s before the slot at the median; 38 slots whose last round was empty; 44,562
+        answers, 38,514 of 200, 6,034 of 202, five of 429, five of 400 (two "unknown parent
+        hash", one "submission for wrong slot", one "bid_slot … delivering", one "simulation
+        failed: could not find parent block"), four of none.
+      - **A rule for the feeder that holds wide transactions back is written and has not yet
+        acted** (2026-11-26; `builder/shadow-try`, `scripts/round-check-new`, neither
+        committed). It leaves out of a head's first round a transaction whose trace touches
+        more than 150 accounts, and later more than the time left allows. 40 slots here with
+        it (`/data/eth/shadow/wide25`, 23:41 to 23:48 UTC): 1,921 rounds all valid, and no
+        transaction held back, though six first rounds took 4.4 to 5.4 s over requests of 8
+        MB. Those were not wide by that count: a transaction of some 40M gas was in the pool
+        (the live feed's blocks of those slots used 44M to 57M gas), touching few accounts
+        and megabytes of their storage. **Open: count the storage a trace reads and not the
+        accounts alone; then see the rule act before it goes to the feed.**
+      - **On Compute Engine from 2026-11-26 19:15 to 23:48 UTC** (`evm-os` `b1f0683b…868877bc`,
         4,057,600 bytes, commit 224624c: headers checked once, a bid's message made a point by
         this project's arithmetic; in place of `a07875d4…`). **Its 1,000 slots here first**
         (`/data/eth/shadow/gate1000s`, on the twin `e9bf5a55…`, 15:48 to 19:08 UTC): a block sent
@@ -1830,11 +1878,9 @@ by the guest itself.
         slots: the feeder checks each block's signature behind the rounds, a quarter second
         each, waits for that before the next head, and with 60 to 70 rounds a slot was late.
         It checks a signature now only when no other block is waiting, a slot's last always;
-        every block is still judged by the node. **Running: 1,000 slots begun again with that
-        at 20:19 UTC (`/data/eth/shadow/gate1000t`, `--continues --finishing 0.15`; the 99
-        slots before are in `gate1000t-first99`).** In its first 45: a block in each, 2,009
-        all valid, 46 rounds a slot. Open after it: the heap with the block kept; whether a
-        relay other than Ultrasound's minds 30 to 45 posts a slot.
+        every block is still judged by the node. The 1,000 slots were begun again with that
+        at 20:19 UTC (`/data/eth/shadow/gate1000t`; the 99 slots before are in
+        `gate1000t-first99`), and the item of 23:53 above has what they gave.
       - **The feeder asked for proofs five to a batch, and the node answers a batch one call
         after another** (2026-11-26; `builder/shadow`). Every round spent 0.22 s on proofs
         however few it needed: reth takes about 45 ms over an `eth_getProof` whatever is asked.
@@ -1849,8 +1895,8 @@ by the guest itself.
         far, the one on Compute Engine (`b1f0683b…`) included, and wants a transaction
         whose proof is missing and another after it reading the same place: no block built
         wrong is known (every one was judged by a node), but nothing stood in the way of one.
-        Found by the test of the next item, on block 26456390. **Open: an image with this in
-        it, tested and deployed.**
+        Found by the test of the next item, on block 26456390. The image on Compute Engine since
+        23:53 UTC that day (`03394a79…`) has it.
       - **A block can go on from the block before** (2026-11-26; `Build.runGoingOn`, byte 2 of
         `JBLF2`; the guest's side only). The guest keeps the block it built as that stood after
         its last transaction, and a request for the same header that proposes the same
@@ -1860,9 +1906,8 @@ by the guest itself.
         say what was checked. `builder/shadow-try` has the feeder's side (`--continues`: the
         byte, the block before proposed again first, no learned margin) and `--dump`;
         `scripts/dump-to-replay` makes a dump into requests to put to an image with byte 0 or
-        2. **Open, all waiting on the 1,000 slots under way: an image; the same dump put to
-        it both ways in a trust domain; 25 slots and then 1,000 through the feeder; what the
-        kept block takes of the heap; then Compute Engine.**
+        2. All of what was open here is in the items above (the image, the dump put to it both
+        ways, 25 slots, 1,000, Compute Engine), but for what the kept block takes of the heap.
       - **The ending of a block: the receipts' root by this project's trie, and a state root
         that writes without looking first** (2026-11-26; `Evm/Bridge.lean`). 9 ms to under
         one, and 18 ms to 15, a block, on a workstation. What is left of a round that goes on
@@ -1955,7 +2000,7 @@ by the guest itself.
     transactions go in, which this builder has not made so far), or fees to an account of the
     guest's own and a last transaction signed in the guest that pays the proposer (new code
     inside, and that transaction's gas comes out of every bid).
-  - Spent so far on Compute Engine for this: about twenty-two dollars by 2026-11-26 21:00 UTC (of
+  - Spent so far on Compute Engine for this: about twenty-three dollars by 2026-11-27 00:00 UTC (of
     the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine
     is 23 cents an hour, about 170 dollars a month, and the door's about ten a month. A subnet (`silo-10-0-2`), a
     firewall rule for this machine's address alone (`silo-test-from-home`), a second network

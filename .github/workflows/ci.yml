@@ -139,8 +139,9 @@ jobs:
 
   # The builder's Lean (evm/) as ordinary processes: what checks and builds blocks, the cryptography and
   # the TLS, each against what it must agree with, and then the service itself on the fixtures, on Lean's
-  # runtime and on the minimal one. No machine is started and nothing of a real chain is asked for. What
-  # this leaves to be run by hand: Ethereum's own suites, the image in a trust domain, the runs of slots.
+  # runtime and on the minimal one. One machine is started, emulated, for the hole under the stack.
+  # Nothing of a real chain is asked for. What this leaves to be run by hand: Ethereum's own suites, the
+  # builder's image in a machine, anything in a trust domain, the runs of slots.
   builder:
     runs-on: ubuntu-24.04
     defaults:
@@ -187,6 +188,20 @@ jobs:
             .lake/build/bin/evm-serve     < "$request" | cmp - "${request%.req}.expected"
             .lake/build/bin/evm-serve-min < "$request" | cmp - "${request%.req}.expected"
           done
+      # The stack `main` runs on has its lowest megabyte taken out of firmware's page tables (the OS's
+      # boot/efi/guard.c, C written by hand). An image that only uses up that stack is started under OVMF
+      # on an emulated processor: a million deep and back, then without end, which must stop the machine
+      # at the hole with a line saying so. Firmware in a trust domain lays its tables out otherwise; that
+      # is run by hand.
+      - name: Install QEMU
+        run: |
+          sudo apt-get -o DPkg::Lock::Timeout=300 update -qq
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq qemu-system-x86 ovmf
+      - name: A stack that runs out stops the machine and says so
+        run: |
+          lake build evm-stack-test
+          scripts/build-efi dev evm-stack-test
+          scripts/stack-check dev
   # The same compiled Lean with no operating system under it: boot stub, minimal runtime, and an emulated
   # x86-64 machine. What the image prints on its serial port must be what the program prints as a process.
   bare:

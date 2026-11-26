@@ -1788,9 +1788,17 @@ by the guest itself.
         only what is not as it was last written is written, and storage nothing was written to
         is not hashed again; the state's own trie is still hashed whole as far as it is open.
         The 67 requests that go on take about 20 ms each on a workstation with it (17 to 24 in
-        three runs beside other work) where they took 31. Not done: hashes kept in the open
-        trie, so that only what changed is hashed; the transactions' root, still Jaune's (1 to
-        2 ms).
+        three runs beside other work) where they took 31. And **the transactions' root** is
+        worked out from the transactions' bytes as proposed, by the same trie
+        (`Bridge.transactionsRoot`), for a request that may go on; Jaune's wrote each
+        transaction out again from what it had decoded. Not done: hashes kept in the open
+        trie, so that only what changed is hashed.
+      - **Signing: the key times a point, four bits at a time** (2026-11-26;
+        `Evm/Sign/Curve.lean`, `THREAT_MODEL.md` under *Time*). 4 ms where 8, on a
+        workstation, with hashing the message at 4.4: a doubling by its own complete formula,
+        and one addition for each four bits of one of sixteen multiples, every one of which is
+        gone through and chosen by `Secret.select`. The C the compiler wrote was read for
+        branches on the key; `check-secret-code` has not been run on an image with it.
       - **The console says how a request's time was divided** (2026-11-26; `Machine.buildWith`):
         reading, the transactions, ending, signing, for a request no sealed transaction was
         tried in. Not seen yet: no image has been built with it.

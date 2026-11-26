@@ -318,6 +318,16 @@ def receiptsRootAndBloom (receipts : Array Fast.Receipt) : U256 × Bytes :=
   -- No two numbers' writings begin alike, so the trie takes every one; this is not reached.
   | .error _ => receiptsRootAndBloomByJaune receipts
 
+/-- The root of a block's transactions, each as it goes on the wire, under its number as RLP writes it,
+in this project's trie: what Jaune's `getTransactionsRoot` gives of the same transactions decoded, which
+writes each one out again to put it in its own trie. -/
+def transactionsRoot (wires : Array ByteArray) : Option U256 :=
+  let trie := wires.zipIdx.foldl (init := (.ok .empty : Except Trie.Fault Trie.Node)) fun trie (wire, index) =>
+    trie.bind fun node => Trie.set {} node (Trie.nibbles (Trie.rlpString (numberBytes index))) wire
+  match trie with
+  | .ok node => if wires.any (·.isEmpty) then none else some (Trie.rootHash node)
+  | .error _ => none
+
 /-- The state root after the engine has run a block on a witness: the parent's trie with every account
 that changed written back. Everything the engine fetched was proven when it was fetched, so there is
 nothing left to check about what it read; a world marked as having asked for what the witness lacks must

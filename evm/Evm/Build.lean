@@ -476,6 +476,10 @@ structure FastJob where
   one (`Bridge.rootGoingOn`), and what was kept when the block this one goes on from was ended. -/
   rooting : Bool := false
   rooted : Option Bridge.Rooted := none
+  /-- The transactions proposed as each stands in the block's list (`Proposal.items`), when whoever
+  began the job took the block apart that way: the root of the transactions is then worked out from
+  those bytes (`Bridge.transactionsRoot`), and otherwise from the transactions decoded, by Jaune. -/
+  listed : Option (Array ByteArray) := none
 
 /-- A block as a request proposes it, taken apart where its bytes say and not decoded: each transaction
 as it stands in the block's list, the hash of each, and the hash of everything that is not a
@@ -749,14 +753,14 @@ def startFastKeeping (r : Request) (fork : Fork) (parent : Header) (ancestors : 
 /-- The next proposed transaction, put in or left out, by the fast engine. One the engine refuses, or that
 asked the witness for what it cannot prove, leaves the world and the block as they were before it. -/
 def FastJob.step : FastJob → FastJob
-  | ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included, notes, wanted, loud, rooting, rooted⟩ =>
+  | ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included, notes, wanted, loud, rooting, rooted, listed⟩ =>
     match rest with
-    | [] => ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, [], out, taken, included, notes, wanted, loud, rooting, rooted⟩
+    | [] => ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, [], out, taken, included, notes, wanted, loud, rooting, rooted, listed⟩
     | c :: rest =>
       let leftOut (why : String) (out : Fast.BlockOutput) (lacks : Array Fast.Lack := #[]) : FastJob :=
         ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest, out, taken, included,
          notes.push ⟨c.place, false, why⟩,
-         if c.place < loud && wanted.size < 4 * Fast.maxLacks then wanted ++ lacks else wanted, loud, rooting, rooted⟩
+         if c.place < loud && wanted.size < 4 * Fast.maxLacks then wanted ++ lacks else wanted, loud, rooting, rooted, listed⟩
       if out.gasUsed.toNat + c.tx.gasLimit > gasCap then leftOut "would pass the gas asked for" out
       else if (Bridge.chainOf c.tx).any (· != chainId) then leftOut "rejected: made for another chain" out
       else
@@ -779,7 +783,14 @@ def FastJob.step : FastJob → FastJob
             ⟨fork, chainId, witness, blank, template, gasCap, blk, host, body, paidBefore, rest,
              ⟨world, stack, receipts.push { receipt with cumulativeGas := gasUsed }, gasUsed,
               blobs + tx.blobHashes.size.toUInt64, requests⟩,
-             taken.push c.tx, included.push c.place, notes.push ⟨c.place, true, s!"{gasUsed.toNat}"⟩, wanted, loud, rooting, rooted⟩
+             taken.push c.tx, included.push c.place, notes.push ⟨c.place, true, s!"{gasUsed.toNat}"⟩, wanted, loud, rooting, rooted, listed⟩
+
+/-- A transaction as it goes on the wire, from how it stands in a block's list: one of the first kind
+is a list and stands as itself; any other is the bytes a string there holds. -/
+def wireOf (listed : ByteArray) : Option ByteArray := do
+  let item ← Submit.item? listed 0 listed.size
+  if item.stop != listed.size then none
+  if item.list then some listed else some (Submit.bytes listed item)
 
 /-- Everything after the last transaction, by the fast engine: withdrawals, the block's requests, the state
 root and the header. Beside the answer, when the job says to keep it (`rooting`), what the state root
@@ -810,17 +821,25 @@ def FastJob.finishRooted (job : FastJob) : Stage × Option Bridge.Rooted :=
     | .ok (stateRoot, kept) => (·, kept) <|
       let (receiptsRoot, bloom) := Bridge.receiptsRootAndBloom out.receipts
       -- The roots that depend on the block's body alone, by Jaune's functions on what it would have kept.
+      let withTransactions (kept : BlockOutput) : BlockOutput :=
+        { kept with
+          transactionsTrie := job.taken.toList.zipIdx.foldl (fun trie (tx, index) =>
+            trie.insert (Rlp.Item.bytes index.toBytes).toBytes tx) BlockOutput.init.transactionsTrie }
       let kept : BlockOutput :=
         { BlockOutput.init with
           blockGasUsed := out.gasUsed.toNat
           blobGasUsed := (out.blobs * Fast.gasPerBlob).toNat
-          transactionsTrie := job.taken.toList.zipIdx.foldl (fun trie (tx, index) =>
-            trie.insert (Rlp.Item.bytes index.toBytes).toBytes tx) BlockOutput.init.transactionsTrie
           withdrawalsTrie := processWithdrawalsTrie BlockOutput.init.withdrawalsTrie job.template.withdrawals }
       let asked := out.requests.toList.map (·.toList)
+      -- The transactions' root from their bytes as proposed, when the job has them; Jaune's otherwise.
+      let wires : Option (Array ByteArray) := job.listed.bind fun listed =>
+        job.included.mapM fun place => (listed[place]?).bind wireOf
+      let transactionsRoot := match wires.bind Bridge.transactionsRoot with
+        | some root => root
+        | none => getTransactionsRoot (withTransactions kept)
       let header : Header :=
         { job.blank with
-          stateRoot, transactionsRoot := getTransactionsRoot kept, receiptsRoot, logsBloom := bloom,
+          stateRoot, transactionsRoot, receiptsRoot, logsBloom := bloom,
           gasUsed := out.gasUsed.toNat,
           withdrawalsRoot := if rules.header.withdrawalsRoot then some (getWithdrawalsRoot kept) else none,
           blobGasUsed := if rules.header.blobGas then some kept.blobGasUsed else none,
@@ -1008,7 +1027,7 @@ def Before.of (r : Request) (proposal : Proposal) (seen : Std.HashMap Fast.Word 
     (ancestors : Nat) (job : FastJob) : Before :=
   { fork := r.witness.fork.map Stateless.forkCode, chainId := r.witness.chainId, rule := r.rule, gasCap := r.gasCap,
     work := r.work, bare := proposal.bare, parent := job.blank.parentHash, ancestors,
-    job := { job with template := { job.template with transactions := [] }, rest := [], notes := #[], wanted := #[], rooting := true },
+    job := { job with template := { job.template with transactions := [] }, rest := [], notes := #[], wanted := #[], rooting := true, listed := none },
     taken := job.included.map fun place => proposal.hashes.getD place Fast.Word.zero,
     seen }
 
@@ -1067,7 +1086,7 @@ def Before.next (b : Before) (r : Request) (proposal : Proposal) :
   let out := b.job.out
   let job : FastJob :=
     { b.job with
-      witness, loud := r.loud, included
+      witness, loud := r.loud, included, listed := some proposal.items
       rest := if r.rule == 0 then candidates.toList else (byTip candidates.toList).toList
       notes := (included.zip out.receipts).map fun (place, receipt) => ⟨place, true, s!"{receipt.cumulativeGas.toNat}"⟩
       wanted := #[]
@@ -1106,7 +1125,7 @@ def runGoingOn {m : Type → Type} [Monad m] (over : m Bool) (r : Request) (befo
       | .goingFast job => job.rest
       | _ => []
     let stage : Stage := match stage with
-      | .goingFast job => Stage.goingFast { job with rooting := true }
+      | .goingFast job => Stage.goingFast { job with rooting := true, listed := proposal.map (·.items) }
       | stage => stage
     let (stage, last) ← stage.finishKeeping over mark stage.left none
     let kept : Option Before := match last, proposal with

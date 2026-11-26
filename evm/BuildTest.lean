@@ -165,6 +165,13 @@ def one (engine : Bool) (name : String) (bytes : ByteArray) (shorten : Bool) (ta
       let (secondWhole, _) := keptFirst.take goingBare
       let ((second, _, _), _, beforeAll, wentSecond) := run secondWhole before
       let ((third, _, _), _, _, wentThird) := run secondWhole beforeAll
+      -- The block taken apart where its bytes say (`Build.Proposal`): as many transactions as it has,
+      -- and their root, from those bytes by this project's trie, is the one in the chain's header.
+      tally ← tally.expect s!"{name}: the transactions' root from the block's own bytes is not its header's"
+        ((Build.Proposal.of? witness.block).bind (fun proposal =>
+            if proposal.items.size != count || proposal.hashes.size != count then none
+            else (proposal.items.mapM Build.wireOf).bind Bridge.transactionsRoot)
+          == some template.header.transactionsRoot)
       -- The receipts of the whole block, their root and bloom by this project's trie and by Jaune's.
       if let some whole := beforeAll then
         tally ← tally.expect s!"{name}: the receipts' root or bloom is not what Jaune's functions give"

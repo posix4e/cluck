@@ -1538,7 +1538,22 @@ by the guest itself.
       taken for, and the ask is withdrawn. What would be: requests a tenth the size, by the
       guest keeping the nodes, codes and headers it has been sent. Of two requests saved for
       blocks one after the other (26497543, 26497544), the second's nodes were 22 in a
-      hundred new by bytes, its codes 29, its headers one of 255. Being written; not built.
+      hundred new by bytes, its codes 29, its headers one of 255.
+    - **The guest keeps what it was sent, in an image not yet on Compute Engine** (2026-11-26;
+      `Build.Kept` in `Evm/Build.lean`, a request that begins `JBLF2`; `--keeps` to
+      `builder/shadow`, which gives the guest only what no request since it last forgot gave
+      it; THREAT_MODEL.md says what that exposes). Nodes and codes are kept by hash and the
+      last 255 headers by theirs, up to 16 MiB given, then all forgotten; the feeder has the
+      guest forget on a head's first round when it is three quarters of the way there.
+      `build-test` has the guest's side (the same answer with everything given, with nothing
+      given, with the newest header alone; no block from what was forgotten), on the fixtures
+      and three blocks of mainnet; `scripts/round-check` the feeder's account of what the
+      guest holds. Tried here on 25 slots (blocks 26498036 on, a guest in a trust domain, the
+      stand-in for a relay): 235 blocks, every one built and judged valid; a request was
+      155 KB at the median (a head's first 344 KB, a slot's last 252 KB) where whole it would
+      have been 2.4 MB; ten rounds a slot. Not run yet: a thousand slots; the image on
+      Compute Engine, where the slow arrivals are; the heap with the most kept and the longest
+      request at once. `builder/feed` does not pass `--keeps` yet.
     - Not done, and why: beginning the last round earlier by what the slow arrival costs (it
       would take 0.4 s of what is pending from every slot to save the one in twenty, and by the
       fees that become public in a slot's last seconds that loses more than it saves); sending

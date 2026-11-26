@@ -137,9 +137,13 @@ structure Witness where
 /-- Where an address or a slot's number lies in a trie: the nibbles of its hash. -/
 def pathOf (bytes : ByteArray) : Trie.Path := Trie.nibbles (Fast.Keccak.hash bytes 0 bytes.size).bytes
 
-def Witness.of (r : Stateless.Request) (root : U256) : Witness :=
-  { store := Trie.Store.ofNodes r.nodes, root,
-    codes := r.codes.foldl (fun codes code => codes.insert (Fast.keccak code) code) {} }
+/-- The nodes and codes of a request, added to any already held by their hashes (`held`, `heldCodes`:
+none unless the caller has some). What is held is found by hash as what the request gives is, so it
+proves exactly as much. -/
+def Witness.of (r : Stateless.Request) (root : U256) (held : Trie.Store := .empty)
+    (heldCodes : Std.HashMap Fast.Word ByteArray := {}) : Witness :=
+  { store := r.nodes.foldl (fun store node => store.insert (Trie.hashOf node) node) held, root,
+    codes := r.codes.foldl (fun codes code => codes.insert (Fast.keccak code) code) heldCodes }
 
 /-- A witness as what stands behind the engine's world. Each question is answered from the trie when it is
 asked: an account or a slot is found, or proven not to be there, or the witness does not reach it (or what

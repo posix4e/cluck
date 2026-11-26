@@ -162,6 +162,9 @@ structure Outcome where
   slot : Nat := 0
   parent : ByteArray := .empty
   value : Nat := 0
+  /-- What is kept of requests read with what was sent before (`Build.Kept`), after this one: what was
+  handed in, unless this was such a request. -/
+  kept : Build.Kept := {}
 
 /-- Transactions the machine adds to those a request proposes, which the request's sender has not seen. -/
 structure Extra where
@@ -184,11 +187,16 @@ beforehand everything a transaction will read, and nobody can say that of a tran
 seen). The response tells the sender nothing of them but, in the places of those that went in, numbers
 past the end of what it proposed. If the block cannot be built with them in it, whatever the reason, it
 is built again without them, and the reason is not said: a block must not fail, or name a node of the
-state, because of a transaction the sender is not to know about. -/
+state, because of a transaction the sender is not to know about.
+
+`kept` is what whoever calls this has of earlier requests read with what was sent before
+(`Build.Kept.take`); the outcome has what there is to keep after this one. With none handed in, such a
+request is read with nothing. -/
 def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input : ByteArray)
-    (added : ByteArray → Extra := fun _ => {}) (other : Build.Other := Build.byJaune) : m Outcome := do
-  if input == keyMagic then return { reply := key.publicKey }
-  let refuse : Outcome := { reply := ({ status := 5 } : Build.Response).encode }
+    (added : ByteArray → Extra := fun _ => {}) (other : Build.Other := Build.byJaune)
+    (kept : Build.Kept := {}) : m Outcome := do
+  if input == keyMagic then return { reply := key.publicKey, kept }
+  let refuse : Outcome := { reply := ({ status := 5 } : Build.Response).encode, kept }
   if input.size < magic.size + 64 || input.extract 0 magic.size != magic then return refuse
   let start := magic.size
   let slot := (input.extract start (start + 8)).foldl (fun n b => n * 256 + b.toNat) 0
@@ -197,6 +205,7 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
   match (Build.request (input.extract (start + 64) input.size)).run 0 with
   | none => return refuse
   | some (request, _) =>
+    let (request, kept) := kept.take request
     -- A request that allows a time is built against a clock, and no transaction in it may ask more of
     -- precompiled contracts than `Build.txWork`; with no time allowed the answer depends on the request alone.
     let request := if allowed input == 0 then request else { request with work := Build.txWork }
@@ -221,7 +230,7 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
         pure (again, plain)
       else pure (response, request)
     match response.built with
-    | none => return { reply := response.encode, wanted := response.wanted, tried := !extra.wires.isEmpty }
+    | none => return { reply := response.encode, wanted := response.wanted, tried := !extra.wires.isEmpty, kept }
     | some built =>
       let bid : Bid :=
         { slot, parentHash := Trie.wordBytes built.header.parentHash, blockHash := Trie.wordBytes built.hash,
@@ -236,8 +245,8 @@ def buildWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input :
             places := built.included, requests := built.requests.map (·.toByteArray), signature := signature.toByteArray }
         return { reply := response.encode ++ key.publicKey ++ signature.toByteArray, submission,
                  added := (built.included.filter (· ≥ own)).toArray.map (· - own), wanted := response.wanted,
-                 tried := !extra.wires.isEmpty, slot, parent := bid.parentHash, value := built.value }
-      | .error _ => return { reply := ({ status := 4 } : Build.Response).encode }
+                 tried := !extra.wires.isEmpty, slot, parent := bid.parentHash, value := built.value, kept }
+      | .error _ => return { reply := ({ status := 4 } : Build.Response).encode, kept }
 
 /-- The response alone. -/
 def serveWith {m : Type → Type} [Monad m] (over : m Bool) (key : Key) (input : ByteArray) : m ByteArray := do

@@ -156,6 +156,38 @@ shadow.heard(2, 400, 1000.0)
 shadow.heard(3, "no answer", 1000.0)
 check("a refusal or no answer is not that: the relay is posted to as before", shadow.rested(four, 1001.0) == four)
 
+# What a guest that keeps what it is given is given (`new_to`, `taken`; the guest's side is `Build.Kept`
+# in Evm/Build.lean, and build-test has it).
+if hasattr(shadow, "new_to"):
+    fresh = lambda: {"nodes": set(), "codes": set(), "chain": [], "given": 0}
+    chain = [f"h{n}" for n in range(255)]
+    nodes, codes = {"0x" + "ab" * 100, "0x" + "cd" * 50}, [b"x" * 30, b"y" * 20]
+    first = shadow.new_to(fresh(), nodes, codes, chain)
+    check("a guest that holds nothing is given everything", first == (sorted(nodes), codes, chain), first)
+    told = shadow.taken(fresh(), *first[:2], chain)
+    check("and what it was given is counted in bytes, as the guest counts it", told["given"] == 200, told["given"])
+    check("the same again gives it nothing, and no header", shadow.new_to(told, nodes, codes, chain) == ([], [], []))
+    more = shadow.new_to(told, nodes | {"0x" + "ef" * 10}, codes + [b"z"], chain[1:] + ["h255"])
+    check("on the next block it is given what is new and the one new header",
+          more == (["0x" + "ef" * 10], [b"z"], ["h255"]), more)
+    rival = shadow.new_to(told, nodes, codes, chain[:-1] + ["other"])
+    check("on another block at the same height, that block's header alone", rival[2] == ["other"], rival[2])
+    back = shadow.new_to(told, nodes, codes, ["g"] + chain[:-1])
+    check("on the block before, which wants a header older than any it has: every header", len(back[2]) == 255, back[2][:2])
+    young = shadow.taken(fresh(), [], [], chain[:40])
+    check("on the block before in a chain not yet 255 long: that block's parent's header, since given none it would take all it has",
+          shadow.new_to(young, nodes, codes, chain[:39])[2] == chain[38:39], shadow.new_to(young, nodes, codes, chain[:39])[2])
+    apart = shadow.new_to(told, nodes, codes, [f"k{n}" for n in range(255)])
+    check("on a chain it has nothing of, every header", len(apart[2]) == 255)
+    gap = shadow.new_to(told, nodes, codes, chain[3:] + ["a", "b", "c"])
+    check("three blocks on, the three new headers", gap[2] == ["a", "b", "c"], gap[2])
+    short = shadow.new_to({**fresh(), "chain": chain[100:]}, nodes, codes, chain[1:] + ["h255"])
+    check("when it has too few headers before the new one to make 255, every header", len(short[2]) == 255)
+    big = shadow.taken(fresh(), ["0x" + "00" * (shadow.KEPT_LIMIT + 1)], [], chain)
+    check("past its limit it holds nothing: not known, so it is told to forget first", big is None)
+    edge = shadow.taken(fresh(), ["0x" + "00" * shadow.KEPT_LIMIT], [], chain)
+    check("at its limit it still holds it", edge is not None and edge["given"] == shadow.KEPT_LIMIT)
+
 if failed:
     sys.exit(f"round-check: {len(failed)} cases failed")
 print("round-check: all as it should be")

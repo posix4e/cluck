@@ -78,6 +78,36 @@ def one (engine : Bool) (name : String) (bytes : ByteArray) (shorten : Bool) (ta
       tally ← tally.expect s!"{name}: the request as bytes is answered differently"
         (reply == again.encode && reply.size > 100 && reply.extract 1 33 == Trie.wordBytes hash)
     | none => tally ← tally.expect s!"{name}: the request has no encoding" false
+    -- Read with what was sent before (`Build.Kept`). The same answer when everything is given and
+    -- nothing was kept; when nothing is given and everything was kept; and with only the newest header
+    -- given. No block once what was kept is forgotten, or has passed its limit.
+    if engine then
+      let asked : Build.Request := { witness, rule := 0, gasCap := limit, engine, seen := some false }
+      let (whole, kept) := ({} : Build.Kept).take asked
+      let bare : Build.Request := { asked with witness := { witness with headers := [], nodes := #[], codes := [] } }
+      let (second, keptStill) := kept.take bare
+      let newest : Build.Request :=
+        { bare with witness := { bare.witness with headers := witness.headers.drop (witness.headers.length - 1) } }
+      let (third, _) := kept.take newest
+      tally ← tally.expect s!"{name}: read with what was sent before, the answer is another"
+        ((Build.run whole).encode == again.encode && (Build.run second).encode == again.encode
+          && (Build.run third).encode == again.encode)
+      let size := witness.codes.foldl (fun n code => n + code.size) (witness.nodes.foldl (fun n node => n + node.size) 0)
+      tally ← tally.expect s!"{name}: what was given is not counted as {size} bytes, or the kept headers are not the request's"
+        (kept.given == size && keptStill.given == size && (kept.take asked).2.given == 2 * size
+          && kept.chain.map (·.2) == witness.headers.toArray && keptStill.chain.map (·.2) == witness.headers.toArray)
+      let (forgotten, nothing) := kept.take { bare with seen := some true }
+      let (_, past) := ({} : Build.Kept).take asked (limit := size - 1)
+      tally ← tally.expect s!"{name}: a block was built on what had been forgotten"
+        ((Build.run forgotten).built.isNone && nothing.given == 0 && nothing.chain.isEmpty
+          && (size == 0 || (past.given == 0 && (Build.run (past.take bare).1).built.isNone)))
+      match Build.Request.encode asked, Build.Request.encode { asked with seen := some true } with
+      | some encoded, some forgetting =>
+        tally ← tally.expect s!"{name}: read with what was sent before, the request as bytes is answered differently"
+          (Build.serve encoded == again.encode && Build.serve forgetting == again.encode
+            && encoded.extract 0 6 == "JBLF2".toUTF8 ++ ⟨#[0]⟩ && forgetting.extract 0 6 == "JBLF2".toUTF8 ++ ⟨#[1]⟩
+            && Build.serve ("JBLF2".toUTF8 ++ ⟨#[2]⟩ ++ encoded.extract 6 encoded.size) == ({ status := 5 } : Build.Response).encode)
+      | _, _ => tally ← tally.expect s!"{name}: the request has no encoding" false
   | none => tally ← tally.expect s!"{name}: nothing built from the block's own transactions, status {again.status}" false
   -- What the parent fixes is worked out here, whatever the sender put.
   let h := template.header

@@ -477,6 +477,29 @@ its image names (`Evm/Relays.lean`), and until now it only ever answered. What t
   connection, so a relay, or the host for it, can have one block posted to it twice. At most one
   is kept a relay, closed after a minute with nothing sent. The questions asked with `JASK1` are
   still a connection each.
+- *What a request to build gave is kept for the next* (2026-11-26; `Build.Kept` in `Evm/Build.lean`,
+  `Machine.State.kept`). A request to build that begins `JBLF2` is read with the trie nodes, contract
+  codes and headers that earlier such requests gave, and what it gives is kept in its turn, so whoever
+  feeds the machine sends each of them once and not with every round. Until this the machine carried
+  nothing from one request to build to the next but its keys, its connections and the sealed
+  transactions; now a block can be built with bytes that came in an earlier request. What stands in
+  the way of that going wrong: a kept node or code is found by its hash exactly as one in the request
+  is, so it proves what the same bytes in the request would prove and nothing else, and the headers,
+  kept or given, are checked to be a chain to the block's parent on every request
+  (`Build.begin`). So nothing kept can make a wrong block, and that rests on the same hashing the
+  witness always rested on. What does change: which transactions go into a block, and whether one is
+  built, now depends on what was sent before as well as on the request, and all of that is the
+  host's, as the request is. Nothing of a sealed transaction is kept this way: the proofs one brings
+  are added to the one request they are tried in (`Bid.buildWith`) and not to what is kept, and an
+  answer still names what the witness lacked only for the transactions the sender proposed. What is
+  kept is bounded by what was given, 16 MiB of nodes and codes counted as they are given
+  (`Kept.limit`), after which all of it is forgotten; held in a tree it takes about a third more
+  than that of the heap. Anyone who can put a request to the machine can fill it with nodes that are
+  nothing, or have it forgotten (a request can ask that), and the feeder's next request is then
+  answered as one with a short witness and has to be sent again whole: a round lost, which that
+  sender could already cost it by keeping the machine busy. Not measured: the heap with the most kept
+  and a request of the longest allowed at once. A request that begins `JBLF1` reads nothing kept and
+  keeps nothing.
 - *The loop was rewritten for it* (`Evm/Machine.lean`). Requests are run in the order they came on each
   connection, one at a time over all; a client waiting on a relay holds up only itself. While a block is
   built for a bid the network is looked at before each transaction, so frames are now read in the

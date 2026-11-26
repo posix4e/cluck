@@ -74,7 +74,30 @@ engine knows it at the moment of asking, not from a list checked afterwards. And
 calls, before the first transaction or after the last, ask for what the witness lacks, the answer is 6,
 where Jaune's is 4. `build-test` puts every case to both.
 
-Statuses 0 and 3 are about the request alone. A block built here was not then put to `Evm.Stateless` as a
+## On what was sent before
+
+A request that begins `JBLF2` is one for the fast engine with one more byte after those five, and is read
+with what whoever answers has kept of earlier such requests (`Kept`):
+
+    "JBLF2"
+    1   0 to build on what is kept; 1 to have everything kept forgotten first
+    then everything a request has after its own five bytes
+
+It need give only the trie nodes and the codes that no request since the last forgetting gave, and of the
+headers only those after the newest it gave before: fewer than 255 headers are joined to the kept ones
+where the oldest given names a kept one as its parent, and none at all stands for the kept ones as they
+are. What it gives is kept in its turn, whatever becomes of the block. Nodes and codes are found by
+their hashes and headers by the hash the next one names, kept or given alike, so a kept one proves
+exactly what the same bytes would prove in the request, and nothing kept can make a block wrong. What
+is kept does change which requests can be answered: one that leaves out what was never given, or was
+forgotten, is answered as any request with a short witness is (6, or transactions left out), and whoever
+sends it has to know what it has sent. When the nodes and codes given since the last forgetting come to
+more than `Kept.limit` bytes, everything is forgotten once the request that passed it is answered. A
+request that begins `JBLF1` neither reads what is kept nor adds to it, and is still a function of its
+bytes. So is one that begins `JBLF2` where nothing is kept: `serve` here keeps nothing, and only a
+machine that builds for relays does (`Evm/Machine.lean`).
+
+Statuses 0 and 3 are about the request alone, or for `JBLF2` about it and what is kept. A block built here was not then put to `Evm.Stateless` as a
 check: `build-test` does that, on test chains and on blocks of mainnet built again from their own
 transactions, where the hash has to come out as the chain's. -/
 
@@ -86,6 +109,8 @@ open Evm.Trie (Node Store)
 def magic : ByteArray := "JBLD1".toUTF8
 /-- The same request, built by the fast engine of `Fast/` (see "By the fast engine" above). -/
 def magicFast : ByteArray := "JBLF1".toUTF8
+/-- The fast engine's request read with what was sent before (see "On what was sent before" above). -/
+def magicSeen : ByteArray := "JBLF2".toUTF8
 
 structure Request where
   witness : Stateless.Request
@@ -102,6 +127,13 @@ structure Request where
   part of a request as it is written, and no limit unless whoever runs it sets one: a block built with
   no clock running is a function of its request. -/
   work : UInt64 := 0xffffffffffffffff
+  /-- For a request read with what was sent before: whether that is to be forgotten first. `none` for
+  any other request. -/
+  seen : Option Bool := none
+  /-- Nodes and codes held already, by their hashes, beside those the witness lists. Not part of a
+  request as it is written: `Kept.take` puts them here. -/
+  held : Store := .empty
+  heldCodes : Std.HashMap Fast.Word ByteArray := {}
 
 /-- What one transaction may ask of precompiled contracts in a block built against a clock: a quarter of a
 second, by `Bridge.work`. The clock is looked at between transactions and cannot be looked at inside one,
@@ -112,7 +144,11 @@ def txWork : UInt64 := 250000
 
 def request (input : ByteArray) : P Request := do
   let begins ← take input magic.size
-  let engine ← if begins == magic then pure false else if begins == magicFast then pure true else stop
+  let engine ← if begins == magic then pure false else if begins == magicFast || begins == magicSeen then pure true else stop
+  let seen : Option Bool ← if begins != magicSeen then pure none else do
+    let forget ← nat input 1
+    if forget > 1 then stop
+    pure (some (forget == 1))
   let code ← nat input 1
   let fork ← if code == 255 then pure none else match Stateless.forkOf code with
     | some fork => pure (some fork)
@@ -127,7 +163,7 @@ def request (input : ByteArray) : P Request := do
   let codes ← many (← nat input 4) (sized input)
   let keys ← many (← nat input 4) (sized input)
   pure { witness := { fork, chainId := chainId.toUInt64, block, headers, nodes := nodes.toArray, codes, keys },
-         rule, gasCap, engine }
+         rule, gasCap, engine, seen }
 
 def Request.encode (r : Request) : Option ByteArray := do
   let fork ← match r.witness.fork with
@@ -135,9 +171,65 @@ def Request.encode (r : Request) : Option ByteArray := do
     | none => some 255
   let list (items : List ByteArray) : ByteArray :=
     items.foldl (fun out item => out ++ Evm.Service.sized item) (be 4 items.length)
-  pure <| (if r.engine then magicFast else magic) ++ be 1 fork ++ be 8 r.witness.chainId.toNat ++ be 1 r.rule ++ be 8 r.gasCap ++
+  let begins := match r.seen with
+    | some forget => magicSeen ++ be 1 (if forget then 1 else 0)
+    | none => if r.engine then magicFast else magic
+  pure <| begins ++ be 1 fork ++ be 8 r.witness.chainId.toNat ++ be 1 r.rule ++ be 8 r.gasCap ++
     Evm.Service.sized r.witness.block ++ list r.witness.headers ++ list r.witness.nodes.toList ++
     list r.witness.codes ++ list r.witness.keys
+
+/-- What is kept of the requests read with what was sent before: their nodes and codes by hash, the
+headers last built on, and how much has been given since nothing was kept. -/
+structure Kept where
+  nodes : Store := .empty
+  codes : Std.HashMap Fast.Word ByteArray := {}
+  /-- Oldest first, each with its hash; never more than 255. -/
+  chain : Array (U256 × ByteArray) := #[]
+  /-- The bytes of the nodes and codes given since nothing was kept, counted each time one is given. -/
+  given : Nat := 0
+
+/-- The most the nodes and codes given may come to before everything is forgotten. A request gives a
+megabyte or two when nothing is kept and a tenth of that when the last one's are, so this is some
+minutes of requests; held by hash in a tree it takes about a third more than its bytes, out of a heap
+of 256 MiB that also holds a request of up to 32 MiB while it is read. -/
+def Kept.limit : Nat := 16 * 1024 * 1024
+
+/-- A request read with what was sent before, made whole from what is kept, and what is kept after it.
+Any other request comes back as it is, and so does what is kept.
+
+The nodes and codes it gives join those kept, by their hashes. Its headers, when there are fewer than
+255, follow the kept ones up to the one the oldest given names as its parent; when there are none, the
+kept ones stand as they are. Whether the result is a chain to the block's parent is not looked at here:
+`begin` checks that of every request, joined or not. What was given is counted, and past `limit`
+nothing is kept after this request. -/
+def Kept.take (kept : Kept) (r : Request) (limit : Nat := Kept.limit) : Request × Kept :=
+  match r.seen with
+  | none => (r, kept)
+  | some forget =>
+    let kept : Kept := if forget then {} else kept
+    let given := r.witness.headers.toArray.map fun header => (Trie.hashOf header, header)
+    let before : Array (U256 × ByteArray) :=
+      if given.size ≥ 255 then #[] else
+      match r.witness.headers.head? with
+      | none => kept.chain
+      | some oldest =>
+        match Stateless.header oldest with
+        | none => #[]
+        | some header =>
+          match kept.chain.findIdx? (·.1 == header.parentHash) with
+          | some i => kept.chain.extract 0 (i + 1)
+          | none => #[]
+    let chain := before ++ given
+    let chain := chain.extract (chain.size - 255) chain.size
+    let nodes := r.witness.nodes.foldl (fun store node => store.insert (Trie.hashOf node) node) kept.nodes
+    let codes := r.witness.codes.foldl (fun codes code => codes.insert (Fast.keccak code) code) kept.codes
+    let size := r.witness.codes.foldl (fun n code => n + code.size)
+      (r.witness.nodes.foldl (fun n node => n + node.size) kept.given)
+    let whole : Request :=
+      { r with
+        held := nodes, heldCodes := codes
+        witness := { r.witness with headers := chain.toList.map (·.2), nodes := #[], codes := [] } }
+    (whole, if size > limit then {} else { nodes, codes, chain, given := size })
 
 /-- A block that was built. -/
 structure Built where
@@ -427,7 +519,7 @@ def startFast (r : Request) (fork : Fork) (parent : Header) (ancestors : List He
     | none => .done { status := 5 } #[] ""
     | some body =>
       let body := { body with work := r.work }
-      let witness := Bridge.Witness.of r.witness parent.stateRoot
+      let witness := Bridge.Witness.of r.witness parent.stateRoot r.held r.heldCodes
       let blk := Bridge.environment fork r.witness.chainId blank ancestors
       let host := Bridge.host fork
       let (world, stack) := Fast.openBlock blk host body ByteArray.empty (Fast.World.new witness.backing)
@@ -647,7 +739,9 @@ def run (r : Request) (other : Other := byJaune) : Response := (runWithNotes r o
 
 def serve (input : ByteArray) (other : Other := byJaune) : ByteArray :=
   match (request input).run 0 with
-  | some (r, pos) => if pos = input.size then (run r other).encode else ({ status := 5 } : Response).encode
+  | some (r, pos) =>
+    -- Nothing is kept here: a request read with what was sent before is read with nothing.
+    if pos = input.size then (run (({} : Kept).take r).1 other).encode else ({ status := 5 } : Response).encode
   | none => ({ status := 5 } : Response).encode
 
 end Evm.Build
@@ -657,7 +751,8 @@ block with a witness to be checked (`Evm.Stateless`, or by the fast engine `Evm.
 a block to be built. -/
 def Evm.serve (input : ByteArray) : ByteArray :=
   if input.extract 0 Evm.Build.magic.size == Evm.Build.magic
-      || input.extract 0 Evm.Build.magicFast.size == Evm.Build.magicFast then Evm.Build.serve input
+      || input.extract 0 Evm.Build.magicFast.size == Evm.Build.magicFast
+      || input.extract 0 Evm.Build.magicSeen.size == Evm.Build.magicSeen then Evm.Build.serve input
   else if input.extract 0 Evm.Engine.magic.size == Evm.Engine.magic then Evm.Engine.serve input
   else if input.extract 0 Evm.Stateless.magic.size == Evm.Stateless.magic then Evm.Stateless.serve input
   else Evm.Service.serve input
@@ -670,7 +765,8 @@ is. What is still Jaune's on this path is what both engines share: its types for
 transactions, their decoding, the check of a header against its parent, and the recovery of a signer. -/
 def Evm.serveBuilder (input : ByteArray) : ByteArray :=
   if input.extract 0 Evm.Build.magic.size == Evm.Build.magic
-      || input.extract 0 Evm.Build.magicFast.size == Evm.Build.magicFast then Evm.Build.serve input Evm.Build.noOther
+      || input.extract 0 Evm.Build.magicFast.size == Evm.Build.magicFast
+      || input.extract 0 Evm.Build.magicSeen.size == Evm.Build.magicSeen then Evm.Build.serve input Evm.Build.noOther
   else if input.extract 0 Evm.Engine.magic.size == Evm.Engine.magic then Evm.Engine.serve input
   else ({ status := 5 } : Evm.Build.Response).encode
 

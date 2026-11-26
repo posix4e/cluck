@@ -189,6 +189,11 @@ structure State where
   block built on, and what the block pays. A block for the same slot on the same parent that pays no
   more is not sent (`send`): a relay keeps a builder's newest, and the newest must not be the worse. -/
   best : Option (Nat × ByteArray × Nat) := none
+  /-- What is kept of the requests to build that are read with what was sent before
+  (`Evm.Build.Kept`): trie nodes, codes and headers whoever feeds this machine has given it, so that it
+  need not give them again. Taken out of here while a request is built and put back as the request
+  leaves it. -/
+  kept : Evm.Build.Kept := {}
 
 namespace State
 
@@ -537,7 +542,11 @@ def buildWith (request : ByteArray) (added : ByteArray → Evm.Bid.Extra := fun 
   let over : M Bool := do
     let _ ← pump
     if allowed == 0 then pure false else return (← Efi.millis).toNat ≥ stopAt
-  Evm.Bid.buildWith over key request added serving.other
+  let kept ← modifyGet fun s => (s.kept, { s with kept := {} })
+  let outcome ← Evm.Bid.buildWith over key request added serving.other kept
+  -- Put back before anything else is done with the outcome; it is not part of what is answered.
+  modify fun s => { s with kept := outcome.kept }
+  return { outcome with kept := {} }
 
 def serveWith (request : ByteArray) (since : Nat := 0) : M ByteArray := do return (← buildWith request (since := since)).reply
 

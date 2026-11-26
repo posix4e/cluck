@@ -1802,12 +1802,39 @@ by the guest itself.
         guest 28 ms by its own count for a round that went on (0.4 to read, 3.6 to the last
         transaction, 16.8 to end, 7.1 to sign) and 116 from nothing; 122 blocks kept back as
         paying no more than one already sent. Two slots had one round each, the head having
-        come less than a second before the slot. **Running: 1,000 slots on the twin from 19:34
-        UTC (`/data/eth/shadow/gate1000t`, `--continues --finishing 0.15`), and 300 slots
-        against a test trust domain on Compute Engine (`silo-going-test`, 34.121.179.64, begun
-        19:36 UTC, to be deleted when they end; `/data/eth/shadow/gce-going`), neither with
-        any relay of the network.** Open after them: the heap with the block kept; whether a
-        relay other than Ultrasound's minds 30 posts a slot.
+        come less than a second before the slot.
+      - **That image was not the one to keep: it held 6 KB of code compiled in mathlib**
+        (2026-11-26; commit d80ba28). Two tables keyed by numbers in `Build.runGoingOn` made
+        Lean's compiler take hash-table code that modules of mathlib and proofwidgets hold
+        ready. They are arrays now, `scripts/build-efi` refuses an image for relays with any
+        such function beyond the three known, and the image is `evm-os` `03394a79…`
+        (4,160,512 bytes; the stand-in's twin `c51beffc…`; `/data/eth/shadow/images/03394a79`),
+        with every check and test of the item above run again on it.
+      - **300 slots against that image on Compute Engine** (2026-11-26 19:59 to 20:59 UTC; a
+        test trust domain `silo-going-test`, since deleted, fed from here with `--guest
+        --continues --finishing 0.15` and neither `--live` nor `--guest-sends`;
+        `/data/eth/shadow/gce-going`): a block in every slot, 3,363 of 3,364 rounds built and
+        judged valid (one first round fallen short of witness), 3,024 rounds went on. A round
+        0.30 s at the median (0.64 one in ten) where the image before it took 0.89 s in the
+        same kind of run, the guest 0.14 s of it where 0.50; 12 rounds a slot, each block
+        judged before the next round; the last block 0.82 s before the slot. Within a slot a
+        transaction more in the block costs the guest 0.02 ms where it cost 1.5. **Three slots
+        had one round and nothing in it**: their first round had 780 to 1,120 accounts to
+        prove (transactions that touch hundreds each), 5 to 6 s of proofs with three feeders
+        asking the one node at once, an 11 MB request, and no time left. The live feed sent
+        nothing in one of the three for the same reason. That is the weakness the report has
+        under "a full pool, or one transaction": **open, a feeder that holds such a
+        transaction back from a head's first round.**
+      - **The feeder could not keep up with its own checking** (2026-11-26; commit efcce1c).
+        The first 1,000-slot run on `03394a79…`'s twin had no block in 5 of its first 93
+        slots: the feeder checks each block's signature behind the rounds, a quarter second
+        each, waits for that before the next head, and with 60 to 70 rounds a slot was late.
+        It checks a signature now only when no other block is waiting, a slot's last always;
+        every block is still judged by the node. **Running: 1,000 slots begun again with that
+        at 20:19 UTC (`/data/eth/shadow/gate1000t`, `--continues --finishing 0.15`; the 99
+        slots before are in `gate1000t-first99`).** In its first 45: a block in each, 2,009
+        all valid, 46 rounds a slot. Open after it: the heap with the block kept; whether a
+        relay other than Ultrasound's minds 30 to 45 posts a slot.
       - **The feeder asked for proofs five to a batch, and the node answers a batch one call
         after another** (2026-11-26; `builder/shadow`). Every round spent 0.22 s on proofs
         however few it needed: reth takes about 45 ms over an `eth_getProof` whatever is asked.
@@ -1928,7 +1955,7 @@ by the guest itself.
     transactions go in, which this builder has not made so far), or fees to an account of the
     guest's own and a last transaction signed in the guest that pays the proposer (new code
     inside, and that transaction's gas comes out of every bid).
-  - Spent so far on Compute Engine for this: about twenty-one dollars by 2026-11-26 19:20 UTC (of
+  - Spent so far on Compute Engine for this: about twenty-two dollars by 2026-11-26 21:00 UTC (of
     the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine
     is 23 cents an hour, about 170 dollars a month, and the door's about ten a month. A subnet (`silo-10-0-2`), a
     firewall rule for this machine's address alone (`silo-test-from-home`), a second network

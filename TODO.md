@@ -1383,9 +1383,20 @@ by the guest itself.
     round had already taken its transactions (it began 2.03 s before the slot at the median;
     nothing public in the last 1.5 s was in ours, and a quarter of what came 1.5 to 2 s
     before), and 0.096 was public earlier and left out: 27% of what came 2 to 3 s before, 7%
-    of 3 to 6 s, 3% of 6 to 12 s. Not done: why those earlier ones were left out (the
-    feeder's limit on a round, the guest's on a transaction's work, a sender's earlier
-    transaction missing, or the order they are taken in).
+    of 3 to 6 s, 3% of 6 to 12 s.
+    - **Why the earlier ones were left out** (2026-11-26; the same records, each such
+      transaction looked up in the block that took it): 4,808 transactions were public half a
+      second or more before the last round began and not in ours, 0.058 ETH of fees in the 600
+      slots. 0.0195 ETH of it carried blobs, which this builder does not build with. 0.0181 was
+      in slots whose last round came to nothing (the item below). 0.0109 was in rounds the
+      feeder held to fewer than were pending, for time; 0.0041 where four hundred were pending
+      and it was not among the best paying; 0.0036 where the guest took fewer than were
+      proposed. 64 set code (type 4) and paid nothing to speak of; whether any of that kind
+      gets in was not looked at. Two are left with no cause in the records, one of them a
+      plain transfer paying 0.0017 ETH. The pool is not it: the feeder's way of watching it
+      (the whole pool at each head, then a filter read once a round) held every one of 1,870
+      transactions a filter read four times a second saw three seconds before their block, in
+      25 blocks watched side by side.
   - **The first two hours on that image together** (04:28 to 06:28 UTC, 600 slots; the feed's
     records `20261125-042803.jsonl` and `20261125-052810.jsonl`, counted by a few lines of Python
     over their rounds; REPORT.md's figures are these): 3,172 blocks built, 3,102 sent, all judged
@@ -1467,6 +1478,33 @@ by the guest itself.
     that needs a build or a run, the Lean and C behind the security statements, the threat model
     outside the EVM section, most of this file.
   - Not done there: a look at how often the guest leaves the trust domain there.
+  - [ ] **One slot in twenty, the last round comes to nothing: its request is too long in coming**
+    (found 2026-11-26, looking for why public transactions seen in time were not in our blocks).
+    From Compute Engine since 17:13 UTC on 2026-11-25, 3,096 slots: in 143 the slot's last round
+    built a block with no transaction in it, which the guest keeps back as paying no more than
+    one already sent, so the slot's last bid was an earlier round's, 3.1 s before the slot at the
+    median where it is otherwise 0.78 (`builder/tools/day.py` counts them). The time a request
+    allows for transactions is counted from its first bytes at the guest
+    (`Evm.Machine.buildWith`), and in these rounds the request used it up arriving: by the
+    guest's console (`builder/tools/coming.py` on the last 4,146 rounds, 42 of them such) a
+    request of 2.2 MB was 380 ms in coming at the median and 812 for one in ten, where the round
+    before each, 1.7 MB, was 122 ms. The guest then took 0.39 s over the block with nothing in
+    it, which is also more than the 0.2 s the feeder counts a round to cost empty.
+    - The last round of a slot is the one the feeder waits before, to begin it as late as it
+      can, and the connection is quiet meanwhile. This machine's Linux lets a quiet connection's
+      sending window fall back (`net.ipv4.tcp_slow_start_after_idle` is 1, and the congestion
+      control is cubic with its early exit from slow start): taken to be the cause, by the
+      pattern; not looked at on the wire. Every round follows some quiet, so every request
+      comes slower than it could (80 ms a megabyte at the median, over a path of 12 ms).
+    - The remedy is `sudo sysctl -w net.ipv4.tcp_slow_start_after_idle=0` on this machine,
+      which needs root: asked of the user, not done. `coming.py` before and after would show
+      what it gives.
+    - Not done, and why: beginning the last round earlier by what the slow arrival costs (it
+      would take 0.4 s of what is pending from every slot to save the one in twenty, and by the
+      fees that become public in a slot's last seconds that loses more than it saves); sending
+      throwaway bytes ahead of the request to open the window (it puts made-up requests to the
+      live guest). Each round's entry in the feed's records carries the request's size and the
+      guest's seconds from the run of 04:11 UTC on 2026-11-26.
   - [ ] **A proposer whose fee recipient spends in the block gets no bid, or too low a one**
     (found 2026-11-25, looking at why slot 15734425 had nine valid blocks of 15 to 72
     transactions, each counted as paying nothing and kept by the guest). `Evm.Build` counts a

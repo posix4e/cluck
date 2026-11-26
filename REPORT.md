@@ -354,7 +354,10 @@ the pool of the one node that feeds it. So most of
 what it lacks was not public as that node saw it, and some of it was public and not taken. In those
 600 slots the fees public by the slot's start that ours lacked came to 0.31 ETH: seven parts in ten of
 it became public in the last two seconds, after the slot's last round had begun (a median 2.0 s
-before the slot), and the rest was public earlier and left out. Against that, the taken blocks of
+before the slot), and the rest was public earlier and left out. Of what was public half a second or
+more before the last round began (0.06 ETH), a third carried blobs, a third was in slots whose last
+round came to nothing (below, under what is not done), and a third was left out by the limits on a
+round's time and size. Against that, the taken blocks of
 those hours paid their proposers 13 ETH. A faster builder of this kind would gain little; what is
 missing never reached the public pool.
 
@@ -424,6 +427,13 @@ Where this is thinner than it looks:
   inside; how much has not been measured.
 - **It is not fast.** One core, one block at a time, about a second a round, and it stops 0.7 s short
   of the slot. Builders that win bid until the slot begins.
+- **One slot in twenty, its last bid is three seconds old.** A slot's last round is begun as late as
+  will fit, after a wait. In 143 of 3,096 slots from Google Cloud (17:13 UTC on 2026-11-25 to 03:31 on
+  the 26th) that round's request, two megabytes sent from the machine with the node, was so long in
+  arriving (0.38 s at the median, where the round before took 0.12 s) that the time it allowed for
+  transactions was gone: the block had none in it, the guest kept it back, and the slot's last bid was
+  an earlier round's, 3.1 s before the slot at the median. The sending machine's TCP starting slowly
+  again after the wait is taken to be the cause. Turning that off needs root there and is not done.
 - **A full pool, or one transaction, has kept it from bidding, and may again.** For three minutes on
   2026-11-25 the feeder had 400 transactions to propose, which is the most it takes from its node's
   pool; rounds took 6 to 12 s where they take one, and on Google Cloud five slots in a row went by with

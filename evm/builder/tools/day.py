@@ -56,6 +56,13 @@ print(f"rounds that ended after their slot began: {len(late)} {sorted(late)[:8]}
       + (f" | a slot's last bid before it: median {st.median(lead)} s, a tenth under {lead[len(lead) // 10]} s" if lead else "")
       + f" | rounds a slot: median {st.median(sum(len(r.get('rounds') or []) for r in rows[s]) for s in bid)}"
       + f" | slots asked for twice: {len(twice)}")
+# A round whose block has no transaction in it was cut short by the clock before the first went in (the
+# guest keeps such a block back). When it is a slot's last, the slot's last bid is an earlier round's.
+bare = lambda x: x.get("status") == 0 and x.get("went_in") == 0
+ended_bare = [s for s in bid if bare((rows[s][-1].get("rounds") or [{}])[-1])]
+before_it = sorted(x["ready_before_slot"] for s in ended_bare for x in [y for y in rows[s][-1]["rounds"] if y.get("relay")][-1:])
+print(f"rounds whose block had no transaction in it: {sum(1 for x in rounds if bare(x))} | slots whose last round was one: {len(ended_bare)}"
+      + (f", their last bid {st.median(before_it)} s before the slot at the median" if before_it else ""))
 answers, said = collections.Counter(), collections.Counter()
 for x in sent:
     for status, text in x["relay"]:

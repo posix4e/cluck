@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Feeds a builder's guest that runs somewhere else, for as long as this is left running:
 #
-#   builder/feed ADDRESS DIR [--hold | --button KEY.pem]          (from evm/)
+#   builder/feed ADDRESS DIR [--keeps] [--hold | --button KEY.pem]          (from evm/)
 #
 # It runs builder/shadow against the guest at ADDRESS an hour of slots at a time (300), live, the guest
 # posting its blocks itself to the four relays its image has, unpaid; with --hold, posting to none. Each
@@ -31,15 +31,21 @@
 # Requests that were slow are kept whole by builder/shadow (DIR/slow), megabytes each: those older than a
 # day are removed here.
 #
+# With --keeps the guest is one that keeps the trie nodes, codes and headers it is given, and is given
+# only what it has not been (builder/shadow's --keeps says more). An image that does not read such
+# requests answers none of them, so this is for a guest whose image is known to.
+#
 # This is the untrusted host's side. It never goes in an image.
 set -uo pipefail
-usage() { echo "usage: builder/feed ADDRESS DIR [--hold | --button KEY.pem]" >&2; exit 2; }
+usage() { echo "usage: builder/feed ADDRESS DIR [--keeps] [--hold | --button KEY.pem]" >&2; exit 2; }
 [[ $# -ge 2 ]] || usage
-address="$1"; dir="$2"; hold=""; button=()
-case "${3:-}" in
-  "") [[ $# -eq 2 ]] || usage ;;
-  --hold) [[ $# -eq 3 ]] || usage; hold=--hold ;;
-  --button) [[ $# -eq 4 && -r "$4" ]] || usage; button=(--button "$dir/button.jsonl" --wallet "$4") ;;
+address="$1"; dir="$2"; hold=""; keeps=""; button=()
+shift 2
+if [[ "${1:-}" == --keeps ]]; then keeps=--keeps; shift; fi
+case "${1:-}" in
+  "") [[ $# -eq 0 ]] || usage ;;
+  --hold) [[ $# -eq 1 ]] || usage; hold=--hold ;;
+  --button) [[ $# -eq 2 && -r "$2" ]] || usage; button=(--button "$dir/button.jsonl" --wallet "$2") ;;
   *) usage ;;
 esac
 here="$(cd "$(dirname "$0")/.." && pwd)"
@@ -98,7 +104,7 @@ while true; do
   fi
   log="$dir/$(date -u +%Y%m%d-%H%M%S).jsonl"
   # shellcheck disable=SC2086
-  python3 -I builder/shadow --guest "$address" --live --guest-sends $hold --rebid --ready 0.7 --finishing 0.25 \
+  python3 -I builder/shadow --guest "$address" --live --guest-sends $hold $keeps --rebid --ready 0.7 --finishing 0.25 \
     --relay-wait 1500 --relays "$relays" --slots 300 --log "$log" "${button[@]}" > /dev/null 2> "$log.err" &
   child=$!
   trap 'kill "$child" 2>/dev/null' EXIT

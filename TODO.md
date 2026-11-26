@@ -1553,7 +1553,8 @@ by the guest itself.
       155 KB at the median (a head's first 344 KB, a slot's last 252 KB) where whole it would
       have been 2.4 MB; ten rounds a slot. Not run yet: a thousand slots; the image on
       Compute Engine, where the slow arrivals are; the heap with the most kept and the longest
-      request at once. `builder/feed` does not pass `--keeps` yet.
+      request at once. (The second trial, five slots after the feeder's account was put
+      into functions of its own, was 56 blocks, all valid; the commit that says 59 miscounts.)
     - Not done, and why: beginning the last round earlier by what the slow arrival costs (it
       would take 0.4 s of what is pending from every slot to save the one in twenty, and by the
       fees that become public in a slot's last seconds that loses more than it saves); sending

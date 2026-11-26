@@ -28,7 +28,9 @@ instructions they are most of the compiled code: the figure is under what is tru
 It runs today in a TDX trust domain on Google Cloud, builds a block about every second from the public
 pool, signs its bids with a key drawn inside the trust domain, and posts them itself to Flashbots,
 Ultrasound, Aestus and Titan. Anyone can follow one of those bids from a relay's public list back to
-the source it was built from; how is below.
+the source it was built from; how is below. (As this is written it is up and not bidding: the feeder
+stopped itself at 06:40 UTC on 2026-11-26, for refusals that are said under the numbers, and has not
+been started again.)
 
 Three things it is not. It is not a competitive builder: it sees only the public pool, and its blocks
 were worth about a fifth to a third of the winning ones at the median, and as little as a twentieth
@@ -222,8 +224,9 @@ Google Cloud, or by the code now running, has been proposed.
 **On Google Cloud** (`c3-standard-4` with TDX, us-central1), fed over the internet from a node 12 ms
 away, bidding at four relays with nothing paid for a win:
 
-- It has bid since 2026-11-24 18:30 UTC, and on the image described above since 2026-11-25 17:09. These
-  are the first hours, not a long record, and the numbers below are of the images before that one. It
+- It bid from 2026-11-24 18:30 UTC to 2026-11-26 06:40, and on the image described above from
+  2026-11-25 17:09. That is a day and a half, not a long record. The numbers below are of the images
+  before that one, but for the item that names it. It
   differs from the last of them in one thing, a limit on the work one transaction may cost (under what
   is not done).
 - **All of it, to 15:04 UTC on the 25th**: 6,167 slots went by and a bid of ours was sent to a relay in
@@ -262,6 +265,22 @@ away, bidding at four relays with nothing paid for a win:
   twenty answers (an answer of 500 or more is not counted one) or more than one block in twenty that
   its node does not judge valid. (Two more answers of 500 and 520 came from other
   relays, once each.)
+- **On the image described above, 17:12 UTC on the 25th to 06:40 on the 26th**: 4,037 slots went by
+  and a bid was sent in 3,964 of them, 98.2%. Of the 73 without: in 65 no relay held a registration
+  from the proposer, seven were built and not sent, and one was asked for and not built. 24,938 bids
+  were sent. 24,905 were judged valid afterwards; the other 33 were not judged, because the guest
+  shows the feeder no block while it holds a sealed message, and for six slots it held made-up ones
+  handed in through the public door to try it. Five rounds ended after their slot began. Seven rounds
+  a slot and the last bid 0.78 s before the slot, at the median. Of 79,396 answers 55,287 were 200
+  and 23,958 were 202; 20 posts had no answer, and three answers were 500 or 503.
+- **Two relays refuse blocks that touch addresses on their lists, and that stopped it.** 126 answers
+  of 400 in that time said "block accesses blacklisted address", for four addresses, from Flashbots'
+  relay and Titan's; Ultrasound's and Aestus' took the same blocks. (Two more 400s were for other
+  things.) They stayed under one answer in twenty until 06:38 on the 26th: in the two minutes from
+  then 64 came, for blocks of six slots, and the feeder stopped itself by its own rule. The feeder
+  has since been changed so that a relay that refuses a block for this is sent no more for that
+  slot; that has not been run against a relay. Whether to leave such transactions out, or to go on
+  as before, is not decided.
 - **Two hours on one image looked at closely** (the third of the five there have been; from 04:28 UTC on
   the 25th, 600 slots): 3,172 blocks built and 3,102 sent. Of the 70 not sent, 42 were for proposers no
   relay had a registration from, 26 paid no more than one already sent for the slot, and two were too
@@ -429,7 +448,7 @@ Where this is thinner than it looks:
   of the slot. Builders that win bid until the slot begins.
 - **One slot in twenty, its last bid is three seconds old.** A slot's last round is begun as late as
   will fit, after a wait. In 143 of 3,096 slots from Google Cloud (17:13 UTC on 2026-11-25 to 03:31 on
-  the 26th) that round's request, two megabytes sent from the machine with the node, was so long in
+  the 26th; 182 of 4,037 by 06:40) that round's request, two megabytes sent from the machine with the node, was so long in
   arriving (0.38 s at the median, where the round before took 0.12 s) that the time it allowed for
   transactions was gone: the block had none in it, the guest kept it back, and the slot's last bid was
   an earlier round's, 3.1 s before the slot at the median. By the sending machine's own account

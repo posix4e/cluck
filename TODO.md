@@ -1493,6 +1493,20 @@ by the guest itself.
       for that reason is sent no more on that head, so a slot costs it one refused block and not
       one a round. With that the five slots would have been about a dozen refusals, under the
       feed's limit. The blocks still go to the relays that take them.
+    - What the image had done on Compute Engine by then, 17:12:59 UTC on 11-25 to 06:40:11 on
+      11-26 (`day.py` on the fourteen records from `20261125-171250.jsonl`): 4,037 slots, a bid
+      sent in 3,964 (98.2%); 65 with no registration at any relay, 7 built and nothing sent, 1
+      asked and nothing built (the last, as the feed stopped). 25,670 blocks built, 24,938 sent:
+      24,905 judged valid by the node here and 33 with no verdict, all in the hour from 18:12 on
+      the 25th, when the door was tried with made-up messages (the guest shows no block while it
+      holds one). None found badly signed. Five rounds ended after their slot began (0.26 to
+      0.85 s). Seven rounds a slot and the last bid 0.78 s before the slot at the median, 0.64
+      for one slot in ten; 182 slots whose last round had nothing in it. 79,396 answers: 55,287
+      of 200, 23,958 of 202, 128 of 400 (126 for a blacklisted address, four addresses:
+      0x6Fac4D18…, 0x1b8579cF…, 0xeb507eFa…, 0x252A8Bd2…; one "payload attributes not (yet)
+      known"; one "could not find parent block"), one 500, two 503, 20 with no answer in the
+      time allowed. No block taken by a proposer. The day of numbers meant for this image ends
+      here, at thirteen and a half hours. `REPORT.md` has these and says the feed is stopped.
   - [ ] **One slot in twenty, the last round comes to nothing: its request is too long in coming**
     (found 2026-11-26, looking for why public transactions seen in time were not in our blocks).
     From Compute Engine since 17:13 UTC on 2026-11-25, 3,096 slots: in 143 the slot's last round

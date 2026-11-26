@@ -11,9 +11,15 @@ keys and over its quadratic extension for signatures.
   `y^2 = x^3 + b`). It is one sequence of field operations that is right for every pair of points: equal,
   opposite, either one the point at infinity. So nothing has to ask which case it is in, and which case it
   is in is exactly what would tell an observer about the key.
-- **The multiplication does the same work for every key.** For each of the key's 255 bits, from the top:
-  double, add the point, and keep the sum or the double as the bit says, chosen by `Secret.select` on every
-  limb. Which bit is being looked at is public; what the bit is decides no branch and no address.
+- **The multiplication does the same work for every key.** The key is taken four bits at a time, from
+  the top: double four times, then add the point times those four bits, which is one of sixteen multiples
+  worked out beforehand. Which of the sixteen is never looked up: every one is gone through, and each is
+  kept or passed over by `Secret.select` on every limb, on a truth value made from the four bits by
+  arithmetic alone (`Scalar.is`). Which four bits are being looked at is public; what they are decides no
+  branch and no address. Adding the multiple that is nothing, when the four bits are, is the same
+  addition as any other (the formula is complete). Until 2026-11-26 it was a doubling and an addition for
+  each bit, with the addition's formula used for the doubling too: 510 additions where there are now 256
+  doublings, each two thirds of an addition, and 79 additions.
 - **Leaving projective form is a secret operation too.** The three coordinates the multiplication ends
   with depend on the key in ways the affine point does not, so the division by the third is by a fixed
   sequence of products (`Fp.inv`), and only its result is made public.
@@ -100,6 +106,30 @@ def add (b3 : F) (p q : Point F) : Point F :=
   let z3 := z3 * t4 + t0 * t3
   ⟨x3, y3, z3⟩
 
+/-- Twice any point of `y^2 = x^3 + b`, given `3b`: the same paper's algorithm 9. One sequence of field
+operations that is right for every point, the point at infinity too, as `add` is; `add p p` gives the
+same point for half as much again. -/
+def double (b3 : F) (p : Point F) : Point F :=
+  let t0 := p.y * p.y
+  let z3 := t0 + t0
+  let z3 := z3 + z3
+  let z3 := z3 + z3
+  let t1 := p.y * p.z
+  let t2 := p.z * p.z
+  let t2 := b3 * t2
+  let x3 := t2 * z3
+  let y3 := t0 + t2
+  let z3 := t1 * z3
+  let t1 := t2 + t2
+  let t2 := t1 + t2
+  let t0 := t0 - t2
+  let y3 := t0 * y3
+  let y3 := x3 + y3
+  let t1 := p.x * p.y
+  let x3 := t0 * t1
+  let x3 := x3 + x3
+  ⟨x3, y3, z3⟩
+
 end Point
 
 /-- A key: a number below `2^255` as four 64-bit words, low first. -/
@@ -114,10 +144,32 @@ def Scalar.bit (k : Scalar) (i : Nat) : Bool :=
   let word := if i < 64 then k.w0 else if i < 128 then k.w1 else if i < 192 then k.w2 else k.w3
   (word >>> (i % 64).toUInt64) &&& 1 == 1
 
-/-- `k` times `p`: for each of 255 bits a doubling and an addition, whatever the bits are. -/
+/-- Four bits of a key, bits `4w` to `4w + 3` for a public `w`: a number from 0 to 15, as secret as
+the key. -/
+def Scalar.four (k : Scalar) (w : Nat) : UInt64 :=
+  let i := 4 * w
+  let word := if i < 64 then k.w0 else if i < 128 then k.w1 else if i < 192 then k.w2 else k.w3
+  (word >>> (i % 64).toUInt64) &&& 15
+
+/-- Whether a secret number is the public `j`, by arithmetic and not by comparing the two: their
+difference bit by bit, the top bit of that or of its negation (set unless it is nothing), and that bit
+against a constant, as `Scalar.bit` ends. The truth value is for `Secret.select` and nothing else. -/
+def Scalar.is (secret j : UInt64) : Bool :=
+  let x := secret ^^^ j
+  ((x ||| (0 - x)) >>> 63) &&& 1 == 0
+
+/-- `k` times `p`: for each four bits of the key four doublings and an addition, whatever the bits are. -/
 def Point.mul {F : Type} [Field F] (b3 : F) (k : Scalar) (p : Point F) : Point F :=
-  (List.range 255).foldl (fun acc i =>
-    let doubled := Point.add b3 acc acc
-    Point.select (k.bit (254 - i)) (Point.add b3 doubled p) doubled) Point.infinity
+  -- Nothing, `p`, twice `p`, and so on to fifteen times `p`. `p` is not secret, and neither are these.
+  let multiples : Array (Point F) :=
+    (List.range 15).foldl (fun found _ => found.push (Point.add b3 (found.getD (found.size - 1) Point.infinity) p))
+      #[Point.infinity]
+  (List.range 64).foldl (fun acc i =>
+    let acc := Point.double b3 (Point.double b3 (Point.double b3 (Point.double b3 acc)))
+    let four := k.four (63 - i)
+    -- Every multiple is gone through; the one the four bits name is kept.
+    let chosen := (List.range 16).foldl (fun chosen j =>
+      Point.select (Scalar.is four j.toUInt64) (multiples.getD j Point.infinity) chosen) Point.infinity
+    Point.add b3 acc chosen) Point.infinity
 
 end Evm.Sign

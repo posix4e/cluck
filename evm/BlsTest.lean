@@ -229,7 +229,28 @@ def main : IO UInt32 := do
       checks := checks + 1
       if toPublicG2 (Point.add b3G2 (ofPublicG2 p2) (ofPublicG2 q2)) != p2 + q2 then
         failures := failures + 1; IO.println s!"FAILED: in G2, {i}G + {j}G"
-  IO.println s!"points: {checks - before} sums"
+  -- The doubling by its own formula, against the addition of a point to itself and against Jaune's.
+  for i in multiples do
+    let p1 := blsG1Generator.mulBy i
+    let lift1 (p : Bls12G1) : Point Fp :=
+      if p = ⟨0, 0⟩ then Point.infinity else Point.ofAffine (Fp.ofPublic p.x.val) (Fp.ofPublic p.y.val)
+    let p2 := blsG2Generator.mulBy i
+    checks := checks + 1
+    if toPublicG1 (Point.double b3G1 (lift1 p1)) != p1 + p1
+        || toPublicG1 (Point.double b3G1 (Point.double b3G1 (lift1 p1))) != (p1 + p1) + (p1 + p1)
+        || toPublicG2 (Point.double b3G2 (ofPublicG2 p2)) != p2 + p2
+        || toPublicG2 (Point.double b3G2 (Point.double b3G2 (ofPublicG2 p2))) != (p2 + p2) + (p2 + p2) then
+      failures := failures + 1; IO.println s!"FAILED: twice {i}G, or twice that"
+  -- Four bits of a key, and whether they are a given number, for every number they can be.
+  for word in [0, 1, 0xfedcba9876543210, 0x0123456789abcdef, 0xffffffffffffffff] do
+    for w in [0, 1, 7, 15, 16, 31, 32, 47, 48, 62, 63] do
+      let k : Scalar := ⟨word.toUInt64, (word + 1).toUInt64, (word * 3).toUInt64, (word * 5).toUInt64⟩
+      let whole := k.w0.toNat + k.w1.toNat * 2 ^ 64 + k.w2.toNat * 2 ^ 128 + k.w3.toNat * 2 ^ 192
+      let four := (whole >>> (4 * w)) % 16
+      checks := checks + 1
+      if (k.four w).toNat != four || !(List.range 16).all (fun j => Scalar.is (k.four w) j.toUInt64 == (j == four)) then
+        failures := failures + 1; IO.println s!"FAILED: four bits {w} of a key"
+  IO.println s!"points: {checks - before} sums, doublings and fours of a key"
   -- Public keys and signatures.
   let before := checks
   let keys : List Nat := [1, 2, 3, blsCurveOrder - 1, blsCurveOrder - 2, 2 ^ 254, 2 ^ 254 + 1, 2 ^ 64 - 1,

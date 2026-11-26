@@ -906,7 +906,16 @@ address and no division. Jaune's own BLS code is on `Nat` and is not used on the
 field elements as fifteen 26-bit limbs in machine words; where a value decides something, both answers are
 computed and `Secret.select` (checked in `Mini/Constant.lean`) picks one; points are added by one formula
 that is right in every case, so nothing asks which case it is in; and the multiplication does a doubling
-and an addition for each of 255 bits whatever they are. Hashing the message to a point and writing the
+and an addition for each of 255 bits whatever they are. (From the image after the one tested on
+2026-11-26: four doublings, by a formula of their own that is as complete, and one addition for each
+four bits of the key, of one of sixteen multiples of the point worked out beforehand. Every one of the
+sixteen is gone through each time and kept or passed over by `Secret.select`, on a truth value made
+from the four bits by exclusive-or, negation and a shift, so the bits index nothing and decide no
+branch (`Scalar.is`, `Point.mul` in `evm/Evm/Sign/Curve.lean`). That was read in the C Lean's compiler
+wrote for it, where the only branches are on the position in the key and on which multiple is being
+passed, both public; `scripts/check-secret-code` looks at the field arithmetic under it and not at
+this. The four bits pass through a boxed 64-bit number on the way into the loop, as limbs of field
+elements do, never a `Nat`. Half the work: 4 ms a signature where 8.) Hashing the message to a point and writing the
 signature out are public. The hashing is on the same field arithmetic from the image after `a07875d4…`
 on (2026-11-26; `evm/Evm/Sign/Hash.lean`: the map to the curve, the isogeny and the clearing of the
 cofactor, following Jaune's step for step, with the first step, SHA-256, and the constants still

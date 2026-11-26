@@ -142,7 +142,7 @@ def psi (p : Point Fp2) : Point Fp2 := ⟨p.x.conj * psiX, p.y.conj * psiY, p.z.
 /-- The curve's parameter times a point that is not a secret. -/
 def timesParameter (p : Point Fp2) : Point Fp2 :=
   parameter.foldl (fun sum bit =>
-    let doubled := Point.add b3G2 sum sum
+    let doubled := Point.double b3G2 sum
     if bit then Point.add b3G2 doubled p else doubled) Point.infinity
 
 /-- A point of the curve taken into G2: `h_eff` times it, by RFC 9380's appendix G.3. -/

@@ -253,13 +253,13 @@ check("  those of sixty or less are proposed however many", shadow.narrow(txs[4:
 shadow.width.clear()
 
 # Rounds may go on into the slot, until a relay says the slot is over.
-took, blacklisted = [[200, ""], [202, ""]], [[200, ""], [400, "block accesses blacklisted address"]]
 check("a relay's refusal that comes after the slot began says the slot is over there",
-      shadow.slot_over([[200, ""], [400, "payload for this slot was already delivered"]], 1000.4, 1000))
-check("  one that comes before it began does not, whatever it says", not shadow.slot_over(blacklisted, 999.9, 1000))
+      shadow.slot_over({1}, set(), 1000.4, 1000) and shadow.refusal(400) and shadow.refusal(404))
+check("  one that comes before it began does not, whatever it says", not shadow.slot_over({1}, set(), 999.9, 1000))
+check("  nor one from a relay that refused on this head before the slot began, though another relay's still does",
+      not shadow.slot_over({1}, {1}, 1000.4, 1000) and shadow.slot_over({1, 2}, {1}, 1000.4, 1000))
 check("  nor do blocks taken after it began, nor a relay that says it is posted to too often, cannot serve, or nothing",
-      not shadow.slot_over(took, 1000.4, 1000) and not shadow.slot_over([[429, ""], [503, ""], ["no answer", "why"]], 1000.4, 1000))
-check("  nor a block that was sent nowhere", not shadow.slot_over([], 1000.4, 1000) and not shadow.slot_over(None, 1000.4, 1000))
+      not shadow.slot_over(set(), set(), 1000.4, 1000) and not any(shadow.refusal(s) for s in (200, 202, 429, 503, "no answer")))
 check("with the block wanted 0.6 s after the slot begins, a round that fits is begun as late as it can be and none after",
       shadow.begin_at(999.9, 1000 + 0.6, 0.4) == 1000.2 and shadow.begin_at(1000.3, 1000 + 0.6, 0.4) is None)
 

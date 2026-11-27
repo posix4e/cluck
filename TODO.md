@@ -1821,8 +1821,13 @@ by the guest itself.
         - A relay refuses what comes after it has handed the slot's block over. The feeder
           takes a refusal that comes after the slot began to mean that (`slot_over`), sends no
           more for the slot, and the feed does not count it against the blocks. None has come
-          yet, so what such a refusal says is not known, and a refusal for another reason that
-          came that late would be taken for one of these: the texts are in each hour's line.
+          yet, so what such a refusal says is not known. A refusal for another reason that
+          came that late was taken for one of these once, in slot 15743779 (03:15 UTC):
+          Ultrasound's "builder not in proposer's trusted list", which it had said to the 21
+          blocks before it in that slot. Since the feeder's start of 04:14 a relay that refused
+          a block on the head before the slot began is not read that way, and a relay that
+          says "trusted list" is sent no more on that head, as one that says "blacklisted
+          address" is not.
         - Not done: later than 0.6 s (three taken bids of 88 were in by 0.73 s). Not looked at:
           whether a bid that reaches a relay that late is judged by it in time to be offered.
         - Found on the way: of the 0.21 s the guest takes over a round on Compute Engine, about

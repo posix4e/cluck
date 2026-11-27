@@ -594,11 +594,6 @@ beacon node. The feed looks for them at `SHADOW_RPC` and `SHADOW_BEACON`, by def
 The scripts named in this report are at the newest commit; an older one, such as the commit a record
 names, may not have them all.
 
-[bn]: https://buildernet.org/blog/2025/04/28/buildernet-v1.3
-[bn16]: https://buildernet.org/blog/2025/12/02/buildernet-v1.6
-[jaune]: https://github.com/skbaek/jaune
-[image-runs]: https://github.com/posix4e/cluck/actions/workflows/image.yml
-
 ## The record, image by image
 
 What the images before the one that runs did, kept as the record of how it came to this. Nothing here
@@ -782,3 +777,8 @@ relays and their certificates' roots.
 - Before those, on the two images before them: 999 slots each (each run joined its first slot too
   late), 7,017 and 6,415 blocks, all valid, none late.
 - Three runs of 1,000 slots on earlier images: two with a block for every slot, one with 998.
+
+[bn]: https://buildernet.org/blog/2025/04/28/buildernet-v1.3
+[bn16]: https://buildernet.org/blog/2025/12/02/buildernet-v1.6
+[jaune]: https://github.com/skbaek/jaune
+[image-runs]: https://github.com/posix4e/cluck/actions/workflows/image.yml

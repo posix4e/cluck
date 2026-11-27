@@ -1848,10 +1848,11 @@ by the guest itself.
         right, what was buried has items of its own (no page rights beyond the hole under
         the stack; the relays read every block; the feeder sets the date certificates are
         judged at; what "Lean" means; how young the code is), and the numbers begin with what
-        runs now and the record whole. **Open from it: the Numbers section is still a list of
-        eight images' hours and wants cutting to what runs now with the history elsewhere;
-        the three passages it found most tangled ("one slot in twenty", "a full pool, or one
-        transaction", "built and nothing sent") are corrected and not yet made simple.**
+        runs now and the record whole. The Numbers section is now of what runs, with the
+        images' hours moved whole to a last section, "The record, image by image" (03:40
+        UTC the same day). **Open from it: the three passages it found most tangled ("one
+        slot in twenty", "a full pool, or one transaction", "built and nothing sent") are
+        corrected and not yet made simple; and no second reader has read it since.**
       - **Ethereum's suites on the source of the image that runs** (2026-11-27 00:19 to
         00:24 UTC; `scripts/run-eest`, all eight, 24 at a time, at commit d80ba28's Lean):
         4,723 files of 4,723 pass (prague 2,341, osaka 2,333, bpo1 11, bpo2 11, the four

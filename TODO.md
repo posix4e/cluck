@@ -1807,6 +1807,17 @@ by the guest itself.
           before its answer was here; the bids taken in those slots reached their relays at
           0.97 s. 1,264 answers in the first 23 slots, all 200 or 202 but one 429; all blocks
           valid.
+        - The first hour whole (02:14:35 to 03:14:23, `day.py`, `gap.py`): 300 slots, a bid in
+          294 (five with no registration, and the slot the feed began in); 6,569 blocks built,
+          6,082 sent, all valid; 284 rounds ended after their slot began, in 283 slots; the
+          last bid's answer 0.55 s after the slot began at the median; 22 rounds a slot; 16,932
+          answers, 15,356 of 200, 1,574 of 202, one of 429, one post unanswered; no refusal.
+          Within the slots, the last block against the last one whose answer was here 0.7 s or
+          more before the slot (283 slots, 1.51 s apart at the median): 11.2% more summed, 8.8%
+          at the median, a quarter under 3.9% and a quarter over 17.3%. Against the taken
+          blocks (250 slots): 31.5% at the median, 10.3% summed, 80.2% at best; the taken
+          blocks paid 7.0 ETH in all, where those of 23:53 to 00:53 paid 1.5, and ours 0.72
+          against 0.45.
         - A relay refuses what comes after it has handed the slot's block over. The feeder
           takes a refusal that comes after the slot began to mean that (`slot_over`), sends no
           more for the slot, and the feed does not count it against the blocks. None has come

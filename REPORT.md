@@ -237,8 +237,10 @@ is.
 
 Each slot the guest is handed pending transactions and proofs, builds a block, signs the bid with a BLS
 key drawn inside the guest, and posts block and bid to the relays over TLS connections of its own. It
-does that again about three times a second until 0.7 s before the slot, each time with what has arrived
-since. (A round took about a second until 2026-11-26, three quarters of one on the image of 15:19 UTC
+does that again about three times a second until about half a second after the slot has begun, each
+time with what has arrived since. (Until 02:14 UTC on 2026-11-27 it ended 0.7 s before the slot.
+Proposers ask relays for their best bid about a second into the slot, as the numbers say below, and a
+relay takes bids until it has handed a block over.) (A round took about a second until 2026-11-26, three quarters of one on the image of 15:19 UTC
 that day and half of one on the image of 19:15.)
 
 Since the image of 23:53 UTC on 2026-11-26 a round goes on from the block the round before built. The
@@ -274,7 +276,12 @@ Google Cloud, or by the code now running, has been proposed.
 2026-11-26. In its first hour (300 slots) a bid was sent in 295, and in the other five no relay held
 a registration from the proposer; 5,166 blocks were sent, every one judged valid afterwards by the
 feeder's node; 19 rounds a slot and 0.34 s a round at the median, the slot's last bid 0.80 s before
-it; no round ended after its slot began and none came out with nothing in it. That is one hour. All
+it; no round ended after its slot began and none came out with nothing in it. Since 02:14 UTC on the
+27th the rounds go on into the slot, and in the first hour of that (300 slots) a bid was sent in 294
+(five with no registration, and the slot the feed began in), 6,082 blocks were sent and every one
+judged valid, 22 rounds a slot, the last bid's answer 0.55 s after the slot began at the median; the
+relays refused none (16,930 answers of 200 or 202, one of 429, one post unanswered). Those are two
+hours. All
 the images together, from 18:30 UTC on 2026-11-24 to 23:48 on the 26th: 15,991 slots went by and a bid
 was sent in 13,028. Of the 2,963 without, 2,706 have no record (the feed was stopped, 2,515 of them
 from 06:40 to 15:03 on the 26th, or an image was being changed), in 201 no relay held a
@@ -494,7 +501,7 @@ relays and their certificates' roots.
   late), 7,017 and 6,415 blocks, all valid, none late.
 - Three runs of 1,000 slots on earlier images: two with a block for every slot, one with 998.
 
-**Against the blocks proposers took**, as relays' public lists give what each paid. Measured ten
+**Against the blocks proposers took**, as relays' public lists give what each paid. Measured eleven
 times, over up to 875 slots each: ours was 18% to 41% of theirs at the median, and 4.5% to 31%
 summed. The largest and latest of them:
 
@@ -502,6 +509,9 @@ summed. The largest and latest of them:
   slots a relay listed): ours 41% of theirs at the median and 30% summed; 90% at best, never more.
   The taken blocks of that hour paid 0.004 ETH at the median, which is little; one hour does not
   say that three rounds a second earn more than one did.
+- The same image with the rounds going on into the slot (02:14 to 03:14 UTC on the 27th, 250 slots a relay
+  listed): 32% at the median and 10% summed; 80% at best. The taken blocks were worth twice what
+  they had been two hours before, and ours 1.4 times.
 - From Google Cloud at the real relays (the hour from 04:28 UTC on 2026-11-25, 267 slots for which a
   relay listed what the proposer was paid): ours 34% of theirs at the median and 31% summed; 80% at
   best, never more.
@@ -511,6 +521,18 @@ summed. The largest and latest of them:
   at the median; 19% and 17% summed in the first two, and the third was not summed.
 - On one machine at the real relays (2026-11-24, 253 slots): 18% at the median and 4.5% summed, in an
   hour when the taken blocks were worth twice what they had been the night before.
+
+**When the bids are made.** A relay's public list says when it received each bid. For 150 slots in a
+row (01:00 to 01:30 UTC on 2026-11-27) 130 had a block taken through a relay, and 88 of those a
+time for the bid that was taken: none had reached its relay before the slot began, three had by
+0.85 s after it, and the median was 1.07 s after. Until 02:14 that day ours ended 0.85 s before the
+slot, so every comparison above but the one from 02:14 is of a block made nearly two seconds sooner
+than the one it is measured against. Since then the last of ours that Flashbots' relay lists reached it 0.37 s
+after the slot began, at the median of 57 slots looked up. What that is worth is measured inside
+each slot, where the hour's prices cancel: over 283 slots of the first hour, the slot's last block
+paid 11% more, summed, than the last one that would have been sent under the old rule (8.8% at the
+median; the two blocks were 1.5 s apart). So going later is worth about a tenth, and most of the
+rest of the distance is not a matter of time, as follows.
 
 The summed figure is the truer one: the slots that pay are far above the median, and in those ours is
 furthest behind. Of what the taken blocks held that was public a second before the slot, ours held 84%

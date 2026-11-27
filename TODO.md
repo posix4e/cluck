@@ -1858,6 +1858,29 @@ by the guest itself.
         UTC the same day). **Open from it: the three passages it found most tangled ("one
         slot in twenty", "a full pool, or one transaction", "built and nothing sent") are
         corrected and not yet made simple; and no second reader has read it since.**
+      - **A second cold reader, of the reordered report** (2026-11-27 03:30 UTC; again given
+        the report and nothing else): 25 points. Put right the same hour: two stale
+        sentences on when it stops bidding; three figures for the old cut-off made one
+        account; the opening now says the feeder can probe a sealed transaction and that
+        relays see every block; what the guest answers the feeder for a block with a sealed
+        transaction in it, and that one sealed without proofs runs on whatever state the
+        feeder proves; the feeder's rules of today gathered under "What it does" (among them
+        that no transaction is left out for whose it is); two items of "What is not done"
+        cut to what holds now with their histories moved to the end; references and counts.
+        **Open from it:**
+        - Its verdict: it believes "far less inside the trust domain" and not "far less to
+          trust" for a sender, because what the unmeasured feeder can learn of a sealed
+          transaction by choosing the rest of the block has never been tried. It asks for
+          that trial, by a party other than the feeder, with what the feeder recovered.
+        - Nothing says who wrote the code or how, which a reader weighing eleven days of
+          TLS and TCP wants to know. That is the owner's to say.
+        - The relays' lists could bear out the 83,410 blocks if the ten keys the guest has
+          had were listed with their hours; they are in the feed's records, which are not
+          published.
+        - The last section is in the order it was written, not of time. The report says
+          THREAT_MODEL.md is right where the two differ, and does not say where they do.
+          Not answered in it: what the console line tells the host, which parts of the
+          runtime have proofs and of what, how much of Lean's own runtime is in the image.
       - **Ethereum's suites on the source of the image that runs** (2026-11-27 00:19 to
         00:24 UTC; `scripts/run-eest`, all eight, 24 at a time, at commit d80ba28's Lean):
         4,723 files of 4,723 pass (prague 2,341, osaka 2,333, bpo1 11, bpo2 11, the four

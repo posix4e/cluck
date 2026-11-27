@@ -85,7 +85,11 @@ OS's network and drivers, the builder, the execution engine, TLS and its cryptog
 allocator and reference counting that compiled Lean stands on, the entry from firmware, the primitives
 the drivers call to reach a device's registers and memory, the TDX calls for a report and a quote, and
 the hole under the stack (below). It moves bytes and addresses that come from firmware and from devices;
-it interprets none that come over the network.
+it interprets none that come over the network. Lean's own runtime, which is C++ with a library for
+big numbers, is not in the image: what compiled Lean stands on here was written for it, big-number
+arithmetic and the rules of UTF-8 in Lean (`Runtime/`), the allocator, reference counting, arrays
+and strings as programs in a small language that are printed as C (`Mini/`), and the rest by hand.
+"Lean's own library" in the table is Lean's standard library, which comes compiled.
 
 What that count leaves out or flatters:
 
@@ -146,7 +150,8 @@ What that count leaves out or flatters:
   apart from data. So a fault in the runtime's C, in the compiler, or in the firmware's own code is not
   contained by the processor's page rights as it would be under an ordinary kernel. Lean's own
   checks are what stand in the way, for the Lean.
-- **Nothing proved covers the builder.** Parts of the runtime have proofs. The network stack and the
+- **Nothing proved covers the builder.** Parts of the runtime have proofs: about its big-number
+  arithmetic, its reading of UTF-8 and its allocator (`Proofs.lean` gathers them). The network stack and the
   builder are tested: the cryptography against OpenSSL's, the engine against Ethereum's own suites
   (4,723 files) and against Jaune, the blocks against reth's validator. That is evidence, not proof.
   The repository's CI builds the image, tests the tools around it and, since 2026-11-26, builds the
@@ -169,7 +174,9 @@ On Google Cloud:
    does is Google's word; nobody else builds it. On a machine of one's own the firmware can be built
    from source, as it is where this was developed, and making it small would be the next reduction.
    What the program still asks of it once the card is up is three things: to print a line on the
-   console, one for each request served; a counted delay of a millisecond when nothing has come from
+   console, one for each request served (its status, how long it took and in what parts, how much
+   went to how many relays and what each answered; for a block that sealed transactions were tried
+   in, not its size, the parts of its time, or whether they went in); a counted delay of a millisecond when nothing has come from
    the network for a while; and, once a second, to read two registers of the card, which say whether
    the card has started over. Packets, the time and the request for a quote do not go through it,
    and its timer is stopped when the program starts, so that its code runs when called or when the

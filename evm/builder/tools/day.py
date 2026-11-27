@@ -52,8 +52,10 @@ print(f"{len(rounds)} blocks built, {len(sent)} sent | our node on those sent: {
       f" | found not signed as they should be: {sum(1 for x in sent if x.get('signed') is False)}")
 late = [x["ready_before_slot"] for x in sent if x.get("ready_before_slot", 0) < 0]
 lead = sorted(rows[s][-1]["ready_before_slot"] for s in bid if rows[s][-1].get("relay") and "ready_before_slot" in rows[s][-1])
-print(f"rounds that ended after their slot began: {len(late)} {sorted(late)[:8]}"
-      + (f" | a slot's last bid before it: median {st.median(lead)} s, a tenth under {lead[len(lead) // 10]} s" if lead else "")
+over = [s for s in bid if any(x.get("over") for r in rows[s] for x in r.get("rounds") or [])]
+print(f"rounds that ended after their slot began: {len(late)}, in {len(set(s for s in bid for r in rows[s] for x in r.get('rounds') or [] if x.get('relay') and x.get('ready_before_slot', 0) < 0))} slots"
+      + f" | slots a relay said were over: {len(over)}"
+      + (f" | a slot's last bid before it began (below nothing: after): median {st.median(lead)} s, a tenth under {lead[len(lead) // 10]} s" if lead else "")
       + f" | rounds a slot: median {st.median(sum(len(r.get('rounds') or []) for r in rows[s]) for s in bid)}"
       + f" | slots asked for twice: {len(twice)}")
 # A round whose block has no transaction in it was cut short by the clock before the first went in (the
@@ -66,8 +68,9 @@ print(f"rounds whose block had no transaction in it: {sum(1 for x in rounds if b
 answers, said = collections.Counter(), collections.Counter()
 for x in sent:
     for status, text in x["relay"]:
-        answers[status] += 1
-        if status not in (200, 202): said[(status, str(text).strip()[:90])] += 1
+        after = " after the slot began" if x.get("over") and isinstance(status, int) and 400 <= status < 500 and status != 429 else ""
+        answers[f"{status}{after}"] += 1
+        if status not in (200, 202): said[(f"{status}{after}", str(text).strip()[:90])] += 1
 print(f"{sum(answers.values())} answers from relays: " + ", ".join(f"{n} of {status}" for status, n in sorted(answers.items(), key=lambda a: str(a[0]))))
 for (status, text), n in said.most_common(20): print(f"   {n} x {status} {text!r}")
 keys = collections.Counter(rows[s][-1].get("builder") for s in bid if rows[s][-1].get("builder"))

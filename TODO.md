@@ -1788,6 +1788,37 @@ by the guest itself.
         answers, 38,514 of 200, 6,034 of 202, five of 429, five of 400 (two "unknown parent
         hash", one "submission for wrong slot", one "bid_slot … delivering", one "simulation
         failed: could not find parent block"), four of none.
+      - **Bids go on into the slot** (since 02:14:34 UTC on 2026-11-27; `builder/feed --into 0.6`,
+        which is `builder/shadow --ready -0.6`). What it rests on: the relays' public lists say
+        when a bid was received, and for 150 slots in a row (15743100 on, 01:00 to 01:30 UTC,
+        `builder/tools/taken.py`) 130 had a block taken through a relay and 88 of those a time
+        for the bid that was taken. None of the 88 had reached its relay before the slot began:
+        three had by 0.85 s after (0.11, 0.63, 0.73 s), 45 between 0.85 and 1.1 s, 21 between
+        1.1 and 2 s, 19 later, the median 1.07 s. Ours ended 0.85 s before the slot. And over
+        the last two seconds before its last bid our block gained 8% of its worth a second
+        (568 slots of the two hours before; the median slot 7.5%). So until now the comparison
+        with the taken block was of a block made nearly two seconds sooner.
+        - Tried here first: 40 slots against the stand-in (`/data/eth/shadow/late40`, the twin
+          `c51beffc…`): a bid in all 40, 1,331 blocks, all valid, 43 of them ended after the
+          slot began; the slot's last block worth 4.1% more at the median (10.1% at the mean,
+          30 slots) than the last one that was ready 0.7 s before the slot.
+        - Live, the first 27 slots (`builder/tools/reached.py`): the last bid of ours that
+          Flashbots' relay lists reached it 0.40 s after the slot began at the median, 0.21 s
+          before its answer was here; the bids taken in those slots reached their relays at
+          0.97 s. 1,264 answers in the first 23 slots, all 200 or 202 but one 429; all blocks
+          valid.
+        - A relay refuses what comes after it has handed the slot's block over. The feeder
+          takes a refusal that comes after the slot began to mean that (`slot_over`), sends no
+          more for the slot, and the feed does not count it against the blocks. None has come
+          yet, so what such a refusal says is not known, and a refusal for another reason that
+          came that late would be taken for one of these: the texts are in each hour's line.
+        - Not done: later than 0.6 s (three taken bids of 88 were in by 0.73 s). Not looked at:
+          whether a bid that reaches a relay that late is judged by it in time to be offered.
+        - Found on the way: of the 0.21 s the guest takes over a round on Compute Engine, about
+          0.16 s is its waiting for the relays' answers before it answers the feeder (0.05 s
+          here, where the stand-in answers at once). Answering first and telling the relays'
+          answers with the next round would make a round 0.2 s and not 0.35; it needs a new
+          image and is not begun.
       - **The first hour of `03394a79…` at the relays** (23:53 UTC on 2026-11-26 to 00:53;
         `builder/tools/day.py`, `gap.py`): 300 slots, a bid in 295, five with no registration,
         none built and nothing sent; 5,795 blocks built, 5,166 sent, all judged valid; 5,388

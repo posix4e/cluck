@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Feeds a builder's guest that runs somewhere else, for as long as this is left running:
 #
-#   builder/feed ADDRESS DIR [--keeps | --continues] [--hold | --button KEY.pem]   (from evm/)
+#   builder/feed ADDRESS DIR [--keeps | --continues] [--into S] [--hold | --button KEY.pem]   (from evm/)
 #
 # It runs builder/shadow against the guest at ADDRESS an hour of slots at a time (300), live, the guest
 # posting its blocks itself to the four relays its image has, unpaid; with --hold, posting to none. Each
@@ -40,14 +40,25 @@
 # out with less than the one before it, so 0.15 s is kept for finishing a slot's last round and not 0.25.
 # An image from before 2026-11-26 answers no such request.
 #
+# With --into S a slot's rounds go on until S seconds after the slot has begun (builder/shadow's --ready
+# below nothing): a proposer asks a relay for its best bid some time into its slot, and until then a
+# later bid is a better one. Without it they end 0.7 s before the slot. A relay that has handed the
+# slot's block over refuses what comes after; builder/shadow then sends no more for that slot and marks
+# the round (`over`), and the refusals of such a round are not counted against the blocks here: they
+# are in each hour's line as "after the slot began".
+#
 # This is the untrusted host's side. It never goes in an image.
 set -uo pipefail
-usage() { echo "usage: builder/feed ADDRESS DIR [--keeps | --continues] [--hold | --button KEY.pem]" >&2; exit 2; }
+usage() { echo "usage: builder/feed ADDRESS DIR [--keeps | --continues] [--into S] [--hold | --button KEY.pem]" >&2; exit 2; }
 [[ $# -ge 2 ]] || usage
-address="$1"; dir="$2"; hold=""; keeps=""; finishing=0.25; button=()
+address="$1"; dir="$2"; hold=""; keeps=""; finishing=0.25; ready=0.7; button=()
 shift 2
 if [[ "${1:-}" == --keeps ]]; then keeps=--keeps; shift
 elif [[ "${1:-}" == --continues ]]; then keeps=--continues; finishing=0.15; shift; fi
+if [[ "${1:-}" == --into ]]; then
+  [[ "${2:-}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || usage
+  ready="-$2"; shift 2
+fi
 case "${1:-}" in
   "") [[ $# -eq 0 ]] || usage ;;
   --hold) [[ $# -eq 1 ]] || usage; hold=--hold ;;
@@ -81,6 +92,7 @@ def account(rows):
         for status, text in x.get("relay") or []:
             answers["took it" if status in (200, 202) else "no answer" if status == "no answer" else
                     f"could not serve ({status})" if isinstance(status, int) and status >= 500 else
+                    f"after the slot began ({status}): {text.strip()[:60]}" if x.get("over") and status != 429 else
                     f"refused ({status}): {text.strip()[:60]}"] += 1
     return rounds, judged, answers
 rounds, judged, answers = account(rows)
@@ -110,7 +122,7 @@ while true; do
   fi
   log="$dir/$(date -u +%Y%m%d-%H%M%S).jsonl"
   # shellcheck disable=SC2086
-  python3 -I builder/shadow --guest "$address" --live --guest-sends $hold $keeps --rebid --ready 0.7 --finishing "$finishing" \
+  python3 -I builder/shadow --guest "$address" --live --guest-sends $hold $keeps --rebid --ready "$ready" --finishing "$finishing" \
     --relay-wait 1500 --relays "$relays" --slots 300 --log "$log" "${button[@]}" > /dev/null 2> "$log.err" &
   child=$!
   trap 'kill "$child" 2>/dev/null' EXIT

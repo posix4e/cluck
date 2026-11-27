@@ -1849,7 +1849,7 @@ by the guest itself.
         the stack; the relays read every block; the feeder sets the date certificates are
         judged at; what "Lean" means; how young the code is), and the numbers begin with what
         runs now and the record whole. The Numbers section is now of what runs, with the
-        images' hours moved whole to a last section, "The record, image by image" (03:40
+        images' hours moved whole to a last section, "The record, image by image" (03:25
         UTC the same day). **Open from it: the three passages it found most tangled ("one
         slot in twenty", "a full pool, or one transaction", "built and nothing sent") are
         corrected and not yet made simple; and no second reader has read it since.**

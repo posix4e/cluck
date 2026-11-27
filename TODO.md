@@ -1820,16 +1820,40 @@ by the guest itself.
           against 0.45.
         - A relay refuses what comes after it has handed the slot's block over. The feeder
           takes a refusal that comes after the slot began to mean that (`slot_over`), sends no
-          more for the slot, and the feed does not count it against the blocks. None has come
-          yet, so what such a refusal says is not known. A refusal for another reason that
+          more for the slot, and the feed does not count it against the blocks. None came in
+          the first two hours (the first, at 04:29, is below). A refusal for another reason that
           came that late was taken for one of these once, in slot 15743779 (03:15 UTC):
           Ultrasound's "builder not in proposer's trusted list", which it had said to the 21
           blocks before it in that slot. Since the feeder's start of 04:14 a relay that refused
           a block on the head before the slot began is not read that way, and a relay that
           says "trusted list" is sent no more on that head, as one that says "blacklisted
           address" is not.
-        - Not done: later than 0.6 s (three taken bids of 88 were in by 0.73 s). Not looked at:
-          whether a bid that reaches a relay that late is judged by it in time to be offered.
+          The same happened once more, in slot 15743969 (04:17): a relay's first "blacklisted
+          address" on that head came 0.24 s after the slot began. Since the start of 05:14
+          neither of those two refusals is ever read as the slot being over.
+        - **The first refusal for coming late**, slot 15744140 (04:29 UTC): the last round's
+          answers were back 0.68 s after the slot began (the round took 0.56 s, the link
+          having stood still most of a second); Ultrasound answered 400 "submitted block is
+          for past slot" and the other three 200. The feeder took it as meant.
+        - What relays said to everything that came after a slot began, 02:14 to 05:19 UTC
+          (931 slots, 889 rounds whose answers were back after the slot began, 2,828 answers):
+          under 0.5 s after, 260 rounds, 792 answers of 200 or 202 and one 400 (the
+          blacklisted address above); 0.5 to 0.7 s, 503 rounds, 1,617 and two 400 (the trusted
+          list above and the one for coming late); 0.7 to 1 s, 114 rounds, 375 and none; later,
+          to 1.92 s, 12 rounds, 39 and two posts unanswered. So in three hours no relay
+          refused by the clock: the one refusal says the slot was past, which is the relay
+          knowing the slot's block already.
+        - How the bids lie about the slot's start (923 slots of those): the rounds follow each
+          other 0.33 s apart, then the feeder waits for the last one, which is begun so as to
+          end at the 0.6 s; between the answer to the bid before it and its own lies 0.99 s at
+          the median (a tenth under 0.67, a tenth over 1.43), half of it waiting and half the
+          round, which takes 0.51 s where the others take 0.33 s. So from about 0.45 s before
+          the slot to 0.55 s after it one bid is made, at the end.
+        - Not done: later than 0.6 s. Three taken bids of 88 were in by 0.73 s, and what
+          relays answered above says they would take ours later; a last bid back at 0.9 s
+          would be 0.3 s later, 2% to 3% of its worth at the 8% a second. Left as it is for
+          the day of numbers. Not looked at: whether a bid that reaches a relay that late is
+          judged by it in time to be offered.
         - Found on the way: of the 0.21 s the guest takes over a round on Compute Engine, about
           0.16 s is its waiting for the relays' answers before it answers the feeder (0.05 s
           here, where the stand-in answers at once). Answering first and telling the relays'

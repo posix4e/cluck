@@ -347,7 +347,15 @@ win:
   slot began, as they are now meant to, in 283 slots; 22 rounds a slot, and the answer to the last
   bid was back 0.55 s after the slot began, at the median. Of 16,932 answers 15,356 were 200 and
   1,574 were 202, one was 429 and one post had no answer; no relay refused a block for coming
-  late, so what a relay says to one that does is not yet known here.
+  late.
+- **What relays say to a bid that comes after the slot began**, 02:14 to 05:19 UTC on the 27th:
+  889 rounds had their answers back after their slot began, most by 0.5 to 0.7 s and twelve by
+  1 to 1.9 s, and of the 2,828 answers to them 2,823 were 200 or 202, two posts had no answer,
+  and three were 400. Two of the three were for something else (an address a relay keeps a list
+  of, and a proposer who takes blocks only from builders it names). One was for coming late: in
+  slot 15744140 a bid whose answers were back 0.68 s after the slot began was told "submitted
+  block is for past slot" by Ultrasound's relay and taken by the other three. The feeder sends
+  no more for a slot once a relay says so. So in three hours no relay refused by the clock.
 - **Before it went there, 1,000 slots where this is developed**, in a trust domain against the test relay,
   on the image's twin for that relay (the same code but for the list of relays and their
   certificates' roots, so another file with another measurement)

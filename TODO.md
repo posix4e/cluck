@@ -1843,6 +1843,22 @@ by the guest itself.
           to 1.92 s, 12 rounds, 39 and two posts unanswered. So in three hours no relay
           refused by the clock: the one refusal says the slot was past, which is the relay
           knowing the slot's block already.
+        - The second, slot 15745729 (09:46 UTC): a last round that took 1.3 s had its answers
+          back 1.35 s after the slot began; Titan answered 400 "late sim, already on next
+          slot", Ultrasound 202 and the other two 200. Taken as meant. So two relays' words
+          for it are known, and both are about the slot, not the clock.
+        - **A last round with nothing in it, once** (slot 15745769, 09:54 UTC; the only one on
+          this image outside the slots a feed's hour began in). A transaction of 35 million
+          gas went into the block in the ninth round, which put the block past half the gas
+          cap, so every round after it started over in the guest (0.7 s there and not 0.25).
+          The feeder timed the last round by the one before, and its request, having waited,
+          took 0.25 s longer to gather: the guest was left 0.52 s for transactions and put
+          none in. The slot's bid was the one from 1.75 s before the slot. How often the
+          cause is there: of 3,127 slots since 23:53 on the 26th, 62 had a block over half the
+          cap (2%), and those slots have two to seven rounds where the others have 25; in 61
+          the last round still gave a block. What would mend it is in the guest (going on
+          when the clock is too short to start over) or a margin in the feeder for a last
+          round after one that started over; neither is begun, for one slot in 3,000.
         - How the bids lie about the slot's start (923 slots of those): the rounds follow each
           other 0.33 s apart, then the feeder waits for the last one, which is begun so as to
           end at the 0.6 s; between the answer to the bid before it and its own lies 0.99 s at

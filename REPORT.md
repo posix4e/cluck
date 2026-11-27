@@ -356,6 +356,8 @@ win:
   slot 15744140 a bid whose answers were back 0.68 s after the slot began was told "submitted
   block is for past slot" by Ultrasound's relay and taken by the other three. The feeder sends
   no more for a slot once a relay says so. So in three hours no relay refused by the clock.
+  (The next came at 09:46: Titan's relay, "late sim, already on next slot", to a bid whose
+  answers were back 1.35 s after its slot began.)
 - **Before it went there, 1,000 slots where this is developed**, in a trust domain against the test relay,
   on the image's twin for that relay (the same code but for the list of relays and their
   certificates' roots, so another file with another measurement)

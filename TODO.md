@@ -1306,6 +1306,25 @@ by the guest itself.
       after carried one. Nothing took a block, so nothing was paid, and afterwards the
       button said nothing was armed and nothing spoken for. The stand-in's copies of those
       blocks, which hold the signed payments, were removed.
+      **Tried again as the feed now runs, and mended** (2026-11-27 15:39 to 15:52 UTC, in
+      TDX here on the twin `c51beffc…` against the stand-in, `--continues --ready -0.6
+      --button`, `/data/eth/shadow/press40`; nothing left this machine). The button had
+      never run with rounds that go on from the block before. First run, 18 slots, a press
+      of 0.01 ETH for three: in the pressed slots no round went on (0 of 79), each round
+      carried another payment (23, 29 and 28 of them), a round took 0.24 to 0.41 s where
+      the slots around took 0.2, and one slot's last round came out with nothing in it, so
+      that slot's last bid would have been unpaid. Why: the payment was signed anew for
+      every round, a signature is drawn at random, so each round's payment was another
+      transaction, and the guest, not finding its last block's payment proposed, started
+      over. Now a block's payment is signed once and proposed again as it is
+      (`payment_of`, `with_payment`; five cases in `scripts/press-check`). Second run, 40
+      slots, the same press: one payment a slot, every round of the three pressed slots
+      went on (176 of 176), 51 to 73 rounds a slot at 0.14 to 0.18 s, the last blocks worth
+      0.0143 to 0.0153 ETH where the slots around were worth 0.005 to 0.010; in the first
+      pressed slot the 16 rounds before the press carried none. In all 2,004 blocks built,
+      1,698 sent, every one valid; no round empty; no slot outside the press carried a
+      payment; afterwards the button said nothing armed and nothing spoken for. The
+      stand-in's copies were removed.
       Not run: the feed with `--button`; a press against the running builder, which spends;
       a press that is taken, and the feed going on after it. Not built: a page with the button on
       it (it is a command), and anything that tells a sender their transaction went in.

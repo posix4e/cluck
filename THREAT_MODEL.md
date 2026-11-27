@@ -890,7 +890,9 @@ were. A block being judged, as when the guest follows the chain, has no such lim
 are in it.
 
 *A payment a person asks for, on a feed that is always running* (`builder/shadow --button`,
-`builder/press`, 2026-11-25; written, its rule tested, no block built with it yet). Until now a wallet's
+`builder/press`, 2026-11-25; its rule tested, blocks built with it against the test relay only, none
+sent to a relay of the network yet; since 2026-11-27 a block's payment is signed once and the same bytes
+proposed in every round for that block, held in the feeding program's memory meanwhile). Until now a wallet's
 key was read by a run started for one payment, which ended when it was made. With the button the program
 that feeds the guest hour after hour reads the key when each run starts and holds it, so whoever can run
 code as that user on the feeding machine, or write the file of presses, can have payments signed for as

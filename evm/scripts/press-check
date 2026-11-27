@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests the button of builder/shadow (--button, --press): when a payment may be signed and when not.
 
-    scripts/press-check            (from evm/)
+    scripts/press-check [FEEDER]   (from evm/; FEEDER is builder/shadow unless another copy is named)
 
 builder/shadow is loaded as it would be started for a guest somewhere else, and given a button, a wallet
 made here that holds nothing, and a node that is a few lines of this file. Nothing is asked of a real node
@@ -19,9 +19,10 @@ here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.dont_write_bytecode = True
 work = tempfile.mkdtemp(prefix="press-check-")
 key_path, button = os.path.join(work, "wallet.pem"), os.path.join(work, "button.jsonl")
+feeder = sys.argv[1] if len(sys.argv) > 1 else "builder/shadow"
 sys.argv = ["shadow", "--guest", "127.0.0.1:1", "--live", "--guest-sends", "--rebid", "--relays", "https://aestus.live",
             "--log", os.path.join(work, "log.jsonl")]
-loader = importlib.machinery.SourceFileLoader("shadow", os.path.join(here, "builder/shadow"))
+loader = importlib.machinery.SourceFileLoader("shadow", os.path.join(here, feeder))
 shadow = importlib.util.module_from_spec(importlib.util.spec_from_loader("shadow", loader))
 loader.exec_module(shadow)
 shadow.button_path = button
@@ -152,8 +153,21 @@ if signs:
     tx = shadow.presser.pay(5, 10**9, ETH // 200, 26490000, "0x" + "22" * 20, 2 * 10**9)
     check("the payment a press leads to is a signed transaction of the wallet's carrying that much",
           tx["from"].lower() == me.lower() and int(tx["value"], 16) == ETH // 200 and tx["hash"].startswith("0x"), {k: tx.get(k) for k in ("from", "value", "hash")})
+    # One payment for a block, however many rounds ask for it: a guest that goes on from its last block
+    # must find that block's payment proposed again, and a signature made anew is another transaction.
+    held, block = {}, (5, 10**9, ETH // 200, 26490000, "0x" + "22" * 20, 2 * 10**9)
+    first, again = shadow.payment_of(held, shadow.presser, *block), shadow.payment_of(held, shadow.presser, *block)
+    check("a block's payment asked for twice is the same transaction", first is again and len(held) == 1)
+    check("  where signing twice gives two", shadow.presser.pay(*block)["hash"] != shadow.presser.pay(*block)["hash"])
+    check("  and the block after has its own",
+          shadow.payment_of(held, shadow.presser, 5, 10**9, ETH // 200, 26490001, "0x" + "22" * 20, 2 * 10**9)["hash"] != first["hash"])
+    other, stray = {"from": "0x" + "33" * 20, "hash": "0xaa"}, {"from": me, "hash": "0xbb"}
+    check("it is proposed first, and nothing else of the wallet's with it",
+          [tx["hash"] for tx in shadow.with_payment([other, stray], first)] == [first["hash"], "0xaa"])
+    check("  and stays where it stands when the block before had it",
+          [tx["hash"] for tx in shadow.with_payment([other, first, stray], first)] == ["0xaa", first["hash"]])
 else:
-    print("left out: the case that signs a payment (no Keccak in this Python)")
+    print("left out: the cases that sign a payment (no Keccak in this Python)")
 
 if failed:
     sys.exit(f"press-check: {len(failed)} cases failed")

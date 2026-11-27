@@ -336,9 +336,14 @@ away, bidding at four relays with nothing paid for a win:
   block's gas and reads megabytes of state: gathering the proofs then takes the feeder 4 to 7 s and
   the request is 8 MB or more, and no time is left. And a slot's last round, begun late and built
   from nothing, ran out of time before its first transaction went in (under what is not done); the
-  image that runs now does not build that round from nothing. The first is not mended: a rule for
-  the feeder that holds such transactions back from a head's first round is written and has not yet
-  been seen to act.
+  image that runs now does not build that round from nothing. For the first the feeder has a rule since 00:53 UTC on the
+  27th: a transaction's width is the accounts it touches and a quarter of the storage slots it
+  reads, 99 in 100 are narrower than 60 and always proposed, and the wider ones of a round are
+  proposed while they fit what the round has time for, which in a head's first round is little.
+  In 60 slots where this is developed, with the same transactions in the pool, it held some back
+  in twelve: every slot had a block sent, and no first round took more than 2.2 s where six of 40
+  had taken 4.4 to 5.4 s without it. What it does at the relays is not yet known. It is a choice
+  by what a transaction costs to prove, the first this builder makes besides what it pays.
 - **On the image described above**, bidding since 23:53 UTC on the 26th: in its first eleven slots
   a bid in each, 22 rounds a slot, 0.35 s a round, 190 blocks sent and all judged valid, 194 of 211
   rounds gone on from the block before, one answer of 429 and then none with that relay paced. No

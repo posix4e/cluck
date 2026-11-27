@@ -1788,16 +1788,27 @@ by the guest itself.
         answers, 38,514 of 200, 6,034 of 202, five of 429, five of 400 (two "unknown parent
         hash", one "submission for wrong slot", one "bid_slot … delivering", one "simulation
         failed: could not find parent block"), four of none.
-      - **A rule for the feeder that holds wide transactions back is written and has not yet
-        acted** (2026-11-26; `builder/shadow-try`, `scripts/round-check-new`, neither
-        committed). It leaves out of a head's first round a transaction whose trace touches
-        more than 150 accounts, and later more than the time left allows. 40 slots here with
-        it (`/data/eth/shadow/wide25`, 23:41 to 23:48 UTC): 1,921 rounds all valid, and no
-        transaction held back, though six first rounds took 4.4 to 5.4 s over requests of 8
-        MB. Those were not wide by that count: a transaction of some 40M gas was in the pool
-        (the live feed's blocks of those slots used 44M to 57M gas), touching few accounts
-        and megabytes of their storage. **Open: count the storage a trace reads and not the
-        accounts alone; then see the rule act before it goes to the feed.**
+      - **The feeder holds wide transactions back until a round has room for them**
+        (2026-11-27; `builder/shadow`: `width_of`, `room_for`, `narrow`; `scripts/round-check`
+        has its cases). The slow first rounds were of two kinds: transactions that touch
+        hundreds of accounts, and, on the night of the 26th, several at once in the pool that
+        each read about 1,100 storage slots of six accounts (8.9M gas, a tip of 0.001 gwei; 33
+        of 8,129 transactions in 40 blocks; 6.6 MB of `eth_getProof`'s answer for one). A
+        transaction's width is its accounts and a quarter of the slots it read, known from its
+        last trace; 60 or less is always proposed (all but 1.3% of those 8,129 are under 150
+        by accounts and slots together); the wider ones of a round share its room in the order
+        proposed: 150 in a head's first round, then a hundred for each second left but the
+        last; those already in the block take none. A first try that counted accounts alone
+        did not act once in 40 slots (`/data/eth/shadow/wide25`), six of whose first rounds
+        took 4.4 to 5.4 s over 8 MB. **With storage counted, 60 slots here**
+        (`/data/eth/shadow/wide60`, 00:00 to 00:12 UTC): 2,985 rounds, all valid, a block sent
+        in every slot, none empty or late; it held transactions back in twelve slots, seven
+        from the first round of two of them, which then took 1.25 s and 1.14 s over 1.5 MB;
+        no first round over 2.2 s. The held ones went in later in those two slots, and their
+        blocks, at 47M gas, were then built from nothing every round: 11 and 4 rounds.
+        The feed takes it up at its hourly start, 00:53 UTC. **Open: what it does at the
+        relays (the count of slots built and nothing sent); whether such transactions, which
+        pay next to nothing and cost the rounds after them, should go in at all.**
       - **On Compute Engine from 2026-11-26 19:15 to 23:48 UTC** (`evm-os` `b1f0683b…868877bc`,
         4,057,600 bytes, commit 224624c: headers checked once, a bid's message made a point by
         this project's arithmetic; in place of `a07875d4…`). **Its 1,000 slots here first**

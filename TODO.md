@@ -1912,11 +1912,19 @@ by the guest itself.
           trust" for a sender, because what the unmeasured feeder can learn of a sealed
           transaction by choosing the rest of the block has never been tried. It asks for
           that trial, by a party other than the feeder, with what the feeder recovered.
+          **Accepted, 2026-11-27 (the owner's decision):** the report's claim is the narrow
+          one. "The claim" now says in a paragraph of its own that it is about what is
+          inside the trust domain and not about what a sender has to trust in all, and
+          "What is not done" has the untried question as an item. The trial itself is not
+          begun and is for someone other than the feeder.
         - Nothing says who wrote the code or how, which a reader weighing eleven days of
-          TLS and TCP wants to know. That is the owner's to say.
+          TLS and TCP wants to know. The owner's decision, 2026-11-27: not added.
         - The relays' lists could bear out the 83,410 blocks if the ten keys the guest has
-          had were listed with their hours; they are in the feed's records, which are not
-          published.
+          had were listed with their hours. **Done, 2026-11-27:** all eleven keys, with the
+          first and last slot bid under each, are in the report under "Check it yourself"
+          (`builder/tools/keys.py`); one slot each of the first, ninth and last key was
+          looked up at Flashbots' and Aestus' lists and found. The feed's records and the
+          quotes of the ten earlier keys stay unpublished (the owner's decision).
         - The last section is in the order it was written, not of time. The report says
           THREAT_MODEL.md is right where the two differ, and does not say where they do.
           Not answered in it: what the console line tells the host, which parts of the

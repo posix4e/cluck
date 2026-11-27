@@ -4,7 +4,7 @@ A report on [`evm/`](evm/README.md), for people who build Ethereum blocks in tru
 environments. Written 2026-11-24 and revised on the 25th, 26th and 27th. The runs the numbers come from are recorded in
 [TODO.md](TODO.md), most with their commands; some figures were counted from the runs' own records for
 this report and stand nowhere else. Those records are files on the machine that made them and are not
-published; the programs that count them are (`evm/builder/tools/`). What is weak is said here in short. It is said at length in the part of
+published; the programs that count them are (`evm/builder/tools/`), and so are the keys every bid was signed with (under "Check it yourself"). What is weak is said here in short. It is said at length in the part of
 [THREAT_MODEL.md](THREAT_MODEL.md) headed "The EVM service", which is kept as a dated record and is
 right where the two differ; the rest of that file is about the same OS on other machines.
 
@@ -30,6 +30,14 @@ frame, no request and no certificate. (Compiled Lean also carries small function
 header inside it, which count references and reach into objects. They are counted here as Lean, and by
 instructions they are most of the compiled code: the figure is under what is inside, below.)
 
+What is claimed is narrow. It is about what is inside the trust domain, and so can read a transaction
+there: one program of this size and kind, and not a Linux image. It is not a claim that someone who
+sends this builder a sealed transaction has less to trust in all. The machine that feeds the guest is
+outside it and measured by nobody, and it chooses every other transaction of every block: it can put
+its own before and after a sealed one as often as it likes, and what it can learn about a sealed
+transaction that way nobody has tested. Until someone other than the feeder has, read "less inside"
+here, and not "less to trust".
+
 It runs today in a TDX trust domain on Google Cloud, builds a block about three times a second from the public
 pool while it has a block to build on (about twenty blocks a slot), signs its bids with a key drawn inside the trust domain, and posts them itself to Flashbots,
 Ultrasound, Aestus and Titan. Anyone can follow one of those bids from a relay's public list (three of the four gave one when
@@ -45,9 +53,7 @@ the trust domain and hands the guest transactions with proofs of the state they 
 the inside be small. It also means the machine that feeds it, which nobody measures, sees the public
 flow and chooses what the builder sees of it. Private flow has to be sealed to the guest, which is
 shown here for single transactions that this project sent to itself. Sealing hides a transaction's
-bytes from that machine and not what it does: the machine chooses every other transaction of the
-block, can put its own before and after a sealed one as often as it likes, and how much it learns
-that way has not been measured. The relays are sent every block whole, as any builder's relays are. So the 4.2 MB is the size of a
+bytes from that machine and not what it does, which is the limit of the claim said above. The relays are sent every block whole, as any builder's relays are. So the 4.2 MB is the size of a
 builder that does not yet do a winning builder's work. And it is not old or reviewed: the repository's
 first commit is of 2026-11-16, the network stack, TLS and signing in it were written in the days since,
 and nobody outside the project has read any of it.
@@ -475,6 +481,30 @@ the key is its own. So a bid can be followed back to source with nothing from us
    each passed; GitHub shows a run's log, with the hashes in it, to whoever is signed in. It runs
    again whenever the files under `docs/live` change.
 
+**The keys it has bid under.** A guest draws its key when it starts, so each start on Google Cloud
+has had another. These are all eleven since the first bid from there, with the first and last slot
+a bid under each was sent and its time (UTC, November 2026), from the feed's records by
+`evm/builder/tools/keys.py`. A relay's public list of the blocks it received for a slot
+(`/relay/v1/data/bidtraces/builder_blocks_received?slot=`) has rows with these in `builder_pubkey`:
+looked up for one slot each of the first key, the ninth and the last, Flashbots' list had them all
+and Aestus' two of the three (for the third slot it lists nothing from anyone). How long a relay keeps that list is its own affair. Only the last
+key has its quote published here, so that the ten before it were a guest's is our word; what the
+lists bear out is what was bid under them.
+
+| Key | First bid | Last bid | Slots bid in |
+|---|---|---|---|
+| `0x85cbb82a2f9a25ff1220b164e68977cd10fbe643c3fe0828d5eb8c3ef2a47bc786e4c6d859438e3d0be39ddfe5643258` | 15726753, 11-24 18:30 | 15727166, 11-24 19:53 | 406 |
+| `0x94ab682bd1c6938cb037dc5677593ec103fef1ceec5068aaa4dbba28366fa023144f15273359e21fba3558997e91ce20` | 15727192, 11-24 19:58 | 15728088, 11-24 22:57 | 885 |
+| `0xb24238012deaafaabb33383829c79fa1eea5fac9f9051060ffe32f6a2d491603b7c82195fa3d6b31b0db0f748ca2f661` | 15728092, 11-24 22:58 | 15728391, 11-24 23:58 | 295 |
+| `0x820f042ab980414482dd6d8421c8a975e4594c22369fdcef50351ee359412ee1be4292c424462ad4b81db47da8e09bd9` | 15728395, 11-24 23:59 | 15728993, 11-25 01:58 | 584 |
+| `0x999e5d1ebf3f8fc6c5a3de2e59ed8f659b2a3adc5d83d936a24bc29d64e20ce12976948107551a3021a77e6e4b9a7703` | 15728997, 11-25 01:59 | 15729714, 11-25 04:23 | 703 |
+| `0x928980a909925197c1cd07b1ebdc451c7297cb529df3382b038a88d2d9dd1c8eef5b6a2f6fe91f339a5cd7758f9ff6e8` | 15729739, 11-25 04:28 | 15732215, 11-25 12:43 | 2,427 |
+| `0x894ed5e6c7a96a91cbfbb0ec8e35801e6d16ff1177f4143e89dc82010f0820e1106816b16005d808c41ba16dfd463d72` | 15732239, 11-25 12:48 | 15733526, 11-25 17:05 | 1,254 |
+| `0xad9525cc5a6bb1309158387b2f018f1e9001e1eb82d21791ed94dcd06a5a3177da679e244148fc334cdfcd9111501e4f` | 15733563, 11-25 17:12 | 15740171, 11-26 15:14 | 4,012 |
+| `0xac318193e0b77b32c167bbb0ae6fa37c50c29cae567ba6db18f2f6b7ec81fd38c60f197b50ed273a4bcdea55bbc7635a` | 15740197, 11-26 15:19 | 15741351, 11-26 19:10 | 1,144 |
+| `0xb46fe0fe7332bf88bc9ee36536e325bf81de98508421f50eb505cadb1f33ef736da1400bc07663874f612e0ce378f826` | 15741375, 11-26 19:15 | 15742742, 11-26 23:48 | 1,311 |
+| `0x96b099d9343e6b97e8bbfd3f9e9bd4f8c0791e921e679d89d855c30cb58712c0b1bb447bf84560c6ed55b970928e3604` | 15742766, 11-26 23:53 | running | |
+
 Where this is thinner than it looks:
 
 - The image has been built on two machines, ours and GitHub's (Ubuntu 26.04 and 24.04), with the
@@ -507,6 +537,11 @@ Where this is thinner than it looks:
 - **It does not win.** No private order flow, no bundles, no blobs, nothing paid to the proposer beyond
   what the block earns. None of that is shown, and bundles and a payment signed inside would be new code
   inside; how much has not been measured.
+- **Nobody has tested what the feeder can learn about a sealed transaction.** The feeder sees no
+  sealed transaction's bytes. It does choose the rest of each block the transaction is tried in, as
+  often as it likes, and is told of each such block what is said under what a relying party trusts.
+  How much that gives away has not been tried, and the one to try it is somebody other than the
+  feeder. Until then the claim is the narrow one at the top.
 - **It is not fast.** One core, one block at a time, a third of a second a round. Its last bid of a
   slot reaches a relay about 0.4 s after the slot begins; of 88 taken bids looked up, 85 reached
   theirs later than 0.85 s after (under the numbers).

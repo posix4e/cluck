@@ -1325,7 +1325,11 @@ by the guest itself.
       1,698 sent, every one valid; no round empty; no slot outside the press carried a
       payment; afterwards the button said nothing armed and nothing spoken for. The
       stand-in's copies were removed.
-      Not run: the feed with `--button`; a press against the running builder, which spends;
+      **The feed on Google Cloud runs with `--button` since 2026-11-27 15:52 UTC** (the test
+      wallet's key, which held 0.227 ETH then): its first nine slots had a bid each, 182
+      blocks sent, all valid, no payment in any, and the button said nothing armed. No
+      press has been made there.
+      Not run: a press against the running builder, which spends;
       a press that is taken, and the feed going on after it. Not built: a page with the button on
       it (it is a command), and anything that tells a sender their transaction went in.
     - **The door is open** (2026-11-25 18:41 UTC; `scripts/gce-door`, which says what it makes):

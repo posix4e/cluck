@@ -1788,6 +1788,33 @@ by the guest itself.
         answers, 38,514 of 200, 6,034 of 202, five of 429, five of 400 (two "unknown parent
         hash", one "submission for wrong slot", one "bid_slot … delivering", one "simulation
         failed: could not find parent block"), four of none.
+      - **The first hour of `03394a79…` at the relays** (23:53 UTC on 2026-11-26 to 00:53;
+        `builder/tools/day.py`, `gap.py`): 300 slots, a bid in 295, five with no registration,
+        none built and nothing sent; 5,795 blocks built, 5,166 sent, all judged valid; 5,388
+        rounds went on; none late, none empty; 19 rounds a slot, a round 0.34 s (0.21 s of it
+        asking the guest), the last bid 0.80 s before the slot; 14,339 answers, 13,174 of 200,
+        1,164 of 202, one of 429. Against the taken blocks (255 slots a relay listed): 41.0%
+        at the median, 29.8% summed, 89.6% at best. The feed began its next hour at 00:53:22
+        on the feeder with the rule for wide transactions (item below).
+      - **The whole record at the relays, 2026-11-24 18:30 to 11-26 23:48 UTC** (`day.py` on
+        the 50 records): 15,991 slots, a bid in 13,028; 2,706 with no record, 201 with no
+        registration, 54 built and nothing sent, two not built; 83,410 blocks sent, 83,377
+        judged valid and 33 not judged; 262,063 answers (189,992 of 200, 71,707 of 202, 166
+        of 400, 75 of 429, 68 of 500 or more, 55 of none); ten keys.
+      - **A cold reader's 29 points on the report** (2026-11-27; a reader given the report
+        and nothing else): the contradictions and the stale "image now running" are put
+        right, what was buried has items of its own (no page rights beyond the hole under
+        the stack; the relays read every block; the feeder sets the date certificates are
+        judged at; what "Lean" means; how young the code is), and the numbers begin with what
+        runs now and the record whole. **Open from it: the Numbers section is still a list of
+        eight images' hours and wants cutting to what runs now with the history elsewhere;
+        the three passages it found most tangled ("one slot in twenty", "a full pool, or one
+        transaction", "built and nothing sent") are corrected and not yet made simple.**
+      - **Ethereum's suites on the source of the image that runs** (2026-11-27 00:19 to
+        00:24 UTC; `scripts/run-eest`, all eight, 24 at a time, at commit d80ba28's Lean):
+        4,723 files of 4,723 pass (prague 2,341, osaka 2,333, bpo1 11, bpo2 11, the four
+        changes of fork 11, 9, 4 and 3). The engine's fix, the receipts' root by this
+        project's trie and the state root that writes without looking are all in what they ran.
       - **The feeder holds wide transactions back until a round has room for them**
         (2026-11-27; `builder/shadow`: `width_of`, `room_for`, `narrow`; `scripts/round-check`
         has its cases). The slow first rounds were of two kinds: transactions that touch

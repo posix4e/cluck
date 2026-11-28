@@ -456,9 +456,17 @@ going that much later is worth about a tenth. Looked up again in 86 slots of thr
 day (from 05:14, 13:13 and 22:52): the last of ours that Flashbots' or Ultrasound's relay lists
 reached it 0.40 s after the slot began at the median, and the 45 taken bids with a time reached
 their relays 1.02 s after it, four of them by 0.85 s and none before the slot.
-It still ends half a second or more before most of the taken bids were in, and what going later
-again would be worth has not been measured: since 02:58 UTC on the 28th the rounds go on 0.3 s
-longer, and that has no numbers yet.
+That still ended half a second or more before most of the taken bids were in. Since 02:58 UTC on
+the 28th the rounds go on 0.3 s longer. Over the ten hours that followed (a bid in 2,949 of 2,996
+slots) the answer to a slot's last bid came 0.84 s after the slot began at the median, and by the
+same count the last block paid 15.3% more, summed (11.8% at the median), where the same ten hours
+of the day before gave 12.0% and 9.9%: about three points of the bid for 0.3 s. It bid in the same
+share of slots and every block sent was judged valid. What it cost: in 26 slots a relay refused
+the last block as coming after the slot was over, against three such refusals in the same hours
+the day before; 22 of the 26 were rounds whose answers came 1.15 s or more after the slot began,
+and the bids before them in those slots stood. In 40 slots looked up, the last of ours a relay
+lists reached it 0.63 s after the slot began and the 21 taken bids with a time 1.31 s after: ours
+still end before most of the taken bids are in. Later than that has not been tried.
 
 The summed figure is the truer one: the slots that pay are far above the median, and in those ours is
 furthest behind. Of what the taken blocks held that was public a second before the slot, ours held 84%
@@ -577,8 +585,8 @@ Where this is thinner than it looks:
   How much that gives away has not been tried, and the one to try it is somebody other than the
   feeder. Until then the claim is the narrow one at the top.
 - **It is not fast.** One core, one block at a time, a third of a second a round. Its last bid of a
-  slot reaches a relay about 0.4 s after the slot begins; of 88 taken bids looked up, 85 reached
-  theirs later than 0.85 s after (under the numbers).
+  slot reaches a relay about 0.6 s after the slot begins (0.4 s until 2026-11-28); of 88 taken
+  bids looked up, 85 reached theirs later than 0.85 s after (under the numbers).
 - **A slot's last round can come to nothing, and the bid before it then stands.** A slot's last
   round is begun as late as will fit. On earlier images its block sometimes came out with nothing in
   it and was kept back, and the slot's last bid was then about three seconds old: in one slot of

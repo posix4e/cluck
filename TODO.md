@@ -1927,10 +1927,37 @@ by the guest itself.
           command; the owner's go of 11-27, to follow the day of numbers). What it rests on:
           none of 912 rounds back 0.7 to 1 s after the slot was refused for coming late, and
           the taken bids reach their relays at 1.02 s. What it risks: more last rounds past
-          Titan's 1.3 s. To be judged after 300 slots by the same count inside the slot, the
-          refusals and `reached.py`; back to 0.6 s, and said here, if it gains nothing or
-          costs bids. Not looked at: whether a bid that reaches a relay that late is judged
+          Titan's 1.3 s. Not looked at: whether a bid that reaches a relay that late is judged
           by it in time to be offered.
+        - **Judged over its first ten hours and kept** (02:58 to 12:57 UTC on 11-28, ten runs,
+          against the ten runs from 03:14 to 13:13 the day before at 0.6 s;
+          `builder/tools/day.py`, `gapday.py`). A bid in 2,949 of 2,996 slots, 98.4%, as the
+          day before (2,950 of 2,997); 66,422 blocks sent, all judged valid; the answer to a
+          slot's last bid 0.84 s after the slot began at the median, a tenth past 1.04 s
+          (0.53 s and 0.69 s the day before). Inside the slot, the last block against the
+          last whose answer was back 0.7 s before the slot: 15.3% more summed, 11.8% at the
+          median, a quarter of the slots under 5.4% and a quarter over 23.1% (the day before
+          12.0%, 9.9%, 4.4%, 17.7%). So 0.3 s later is worth about three points of the bid.
+          Against the taken blocks a relay lists (2,551 slots): ours 47% of the taken block at
+          the median (44% the day before), 14% summed (20%; the summed figure follows a few
+          large blocks).
+          What it costs: in 26 slots the last block was refused for coming after the slot was
+          over, 33 refusals, against three such refusals in the same hours the day before.
+          Titan refused in 25 of the 26 and alone in 22, the 22 whose rounds' answers came
+          1.15 s or more after the slot began; in the other four, back 0.76 to 0.93 s after
+          it, Flashbots' relay refused, with others in three. The bids before them in those slots
+          stood, and no slot went without a bid for it. In 40 slots of the first hour
+          looked up (`reached.py`) the last of ours a relay lists reached it 0.63 s after the
+          slot began, and the 21 taken bids with a time 1.31 s after. The hours differ one
+          from another by about a point, so one hour could not have told this; the first hour
+          alone showed no gain.
+          Seen in these hours and not before: Titan's and Aestus' "block validation: submission
+          for wrong slot. expected: N+1, got: N" for a late block (the feeder goes by when a refusal
+          comes, not its words, and stopped for the slot as it should), the same with the
+          numbers the other way round twice before a slot began, and "delivering payload:
+          bid_slot: N+1, delivering: N" twice, one block each, the slot's other blocks taken.
+          No block of ours was taken; the button was not pressed. Not tried: later than
+          0.9 s, or stopping a round that cannot be back by about 1.1 s.
         - Found on the way: of the 0.21 s the guest takes over a round on Compute Engine, about
           0.16 s is its waiting for the relays' answers before it answers the feeder (0.05 s
           here, where the stand-in answers at once). Answering first and telling the relays'
@@ -2218,7 +2245,7 @@ by the guest itself.
     transactions go in, which this builder has not made so far), or fees to an account of the
     guest's own and a last transaction signed in the guest that pays the proposer (new code
     inside, and that transaction's gas comes out of every bid).
-  - Spent so far on Compute Engine for this: about thirty dollars by 2026-11-28 03:00 UTC (of
+  - Spent so far on Compute Engine for this: about thirty-two dollars by 2026-11-28 13:00 UTC (of
     the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine
     is 23 cents an hour, about 170 dollars a month, and the door's about ten a month. A subnet (`silo-10-0-2`), a
     firewall rule for this machine's address alone (`silo-test-from-home`), a second network

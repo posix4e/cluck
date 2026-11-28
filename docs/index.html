@@ -92,6 +92,7 @@
     <span class="name">cluck</span>
     <nav>
       <a href="#guest">The guest</a><a href="#proof">Attestation</a><a href="#evm">Ethereum blocks</a>
+      <a href="builder.html">The builder, explained</a>
       <a href="live.html">The builder, live</a><a href="send.html">Send it a transaction</a>
       <a href="https://github.com/posix4e/cluck">GitHub</a>
     </nav>
@@ -223,7 +224,11 @@
       </div>
     </div>
 
-    <h3 id="builder">Building blocks: one is on mainnet</h3>
+    <h3 id="builder">Building blocks: four are on mainnet</h3>
+    <p class="wide"><strong>The builder now has <a href="builder.html">a page of its own</a></strong>, with
+      what runs today: since 26 November 2026 it bids from a trust domain on Google Cloud in every slot, and
+      on 28 November a block built there, 26513991, was proposed (paid for, like the three below). What
+      follows here is the record of its first days, on one machine.</p>
     <p class="wide">Since 21 November 2026 the guest also builds. Each slot, a program on the host hands it
       the transactions pending in public and proofs of the state they touch. The guest orders them by what
       they pay the proposer, runs them, throws out any that read something the proofs do not cover, and

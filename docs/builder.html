@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cluck: a block builder with far less inside it</title>
+<meta name="description" content="An Ethereum block builder that is one Lean program of 4.2 MB in an Intel TDX trust domain on Google Cloud, with no Linux under it. What it is, what it has done, what you still have to trust, and how to check it.">
+<meta property="og:title" content="A block builder in a trust domain, with far less inside it">
+<meta property="og:description" content="One Lean program of 4.2 MB in an Intel TDX trust domain on Google Cloud: no kernel, no C library, no shell. It bids at four relays all day, and a block it built is on mainnet. What that shows and what it does not.">
+<meta property="og:image" content="https://posix4e.github.io/cluck/demo-dark.png">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --paper: #f6f4ef; --card: #fffdf9; --ink: #1b1d1c; --soft: #5d635f; --line: #dcd8cd;
+    --accent: #0f6b52; --accent-ink: #ffffff; --good-bg: #e2f1ea; --warn: #8a6100; --warn-bg: #f7ecd0;
+    --code: #f0ede5;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #121514; --card: #1a1e1c; --ink: #e9ebe7; --soft: #9aa39d; --line: #2c3330;
+      --accent: #43c59e; --accent-ink: #06231a; --good-bg: #12322a; --warn: #e6bd5a; --warn-bg: #33290f;
+      --code: #0e1110;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.6 var(--sans); }
+  main { max-width: 900px; margin: 0 auto; padding: 28px 16px 80px; }
+  a { color: var(--accent); }
+  .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+         font-size: 0.88rem; color: var(--soft); }
+  .top .name { font: 600 1rem var(--mono); color: var(--ink); text-decoration: none; }
+  .top nav a { margin-left: 16px; text-decoration: none; }
+  .top nav a:first-child { margin-left: 0; }
+  h1 { font-size: clamp(2rem, 6vw, 3.1rem); line-height: 1.06; letter-spacing: -0.03em; margin: 44px 0 18px;
+       max-width: 19ch; }
+  h2 { font-size: 1.45rem; letter-spacing: -0.015em; line-height: 1.2; margin: 0 0 10px; }
+  h3 { font-size: 1rem; margin: 0 0 6px; }
+  p { margin: 0 0 14px; }
+  .lede { font-size: 1.16rem; color: var(--soft); max-width: 62ch; }
+  .lede strong { color: var(--ink); font-weight: 600; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin: 24px 0 8px; }
+  .button { display: inline-block; font-weight: 600; text-decoration: none; padding: 11px 18px;
+            border-radius: 10px; border: 1px solid var(--line); color: var(--ink); background: var(--card); }
+  .button.main { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 34px 0 0; }
+  .fact { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+  .fact b { display: block; font-size: 1.5rem; letter-spacing: -0.02em; line-height: 1.15; }
+  .fact span { color: var(--soft); font-size: 0.86rem; display: block; margin-top: 4px; }
+  section { margin-top: 58px; }
+  .eyebrow { font: 600 0.72rem/1 var(--mono); letter-spacing: 0.1em; text-transform: uppercase;
+             color: var(--accent); margin-bottom: 10px; }
+  .wide { max-width: 64ch; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 18px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+  .card p { color: var(--soft); font-size: 0.94rem; margin: 0; }
+  .card .when { font: 0.74rem var(--mono); color: var(--accent); margin-bottom: 6px; display: block; }
+  .card.out .when { color: var(--warn); }
+  .block { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px;
+           margin-top: 18px; }
+  .block dl { display: grid; grid-template-columns: minmax(110px, 170px) 1fr; gap: 6px 18px; margin: 0; }
+  .block dt { color: var(--soft); font-size: 0.9rem; }
+  .block dd { margin: 0; overflow-wrap: anywhere; }
+  code { font: 0.86em var(--mono); background: var(--code); padding: 1px 5px; border-radius: 4px;
+         overflow-wrap: anywhere; }
+  pre { margin: 14px 0 0; padding: 14px 16px; background: var(--code); border-radius: 10px; overflow-x: auto;
+        font: 0.82rem/1.55 var(--mono); }
+  .table { overflow-x: auto; margin-top: 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 8px 14px 8px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--soft); font-weight: 500; border-top: 0; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .note { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 12px 16px;
+          font-size: 0.94rem; margin-top: 18px; }
+  .note strong { font-weight: 600; }
+  ul.plain, ol.plain { margin: 12px 0 0; padding-left: 22px; max-width: 64ch; }
+  ul.plain li, ol.plain li { margin-bottom: 9px; }
+  footer { margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--soft);
+           font-size: 0.86rem; }
+  @media (max-width: 520px) {
+    .block dl { grid-template-columns: 1fr; gap: 0; }
+    .block dd { margin-bottom: 10px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <a class="name" href="./">cluck</a>
+    <nav>
+      <a href="#how">How it works</a><a href="#block">The block</a><a href="#numbers">Numbers</a>
+      <a href="#trust">Trust</a><a href="#check">Check it</a>
+      <a href="live.html">Live</a><a href="https://github.com/posix4e/cluck">GitHub</a>
+    </nav>
+  </div>
+
+  <h1>A block builder in a trust domain, with far less inside it.</h1>
+  <p class="lede">A builder in a TEE asks whoever sends it transactions to trust what is inside the TEE.
+    Where builders have said what that is, it is a Linux image: a kernel, an init system, a C library, a
+    TLS library, an execution client and the builder. This one is <strong>a single program of 4.2 MB,
+    written in Lean, with nothing else above the firmware</strong>. It runs in an Intel TDX trust domain
+    on Google Cloud, bids at four relays in every slot, and a block it built there is on mainnet.</p>
+  <div class="actions">
+    <a class="button main" href="live.html">Check the running one in your browser</a>
+    <a class="button" href="https://github.com/posix4e/cluck/blob/main/REPORT.md">The report, with every number</a>
+    <a class="button" href="https://github.com/posix4e/cluck">Source</a>
+  </div>
+
+  <div class="facts">
+    <div class="fact"><b>4.2 MB</b><span>the whole guest: one EFI program. No kernel, no C library, no OpenSSL, no shell, one listening port</span></div>
+    <div class="fact"><b>0.8% C</b><span>and that C reads no frame, no request and no certificate. The rest is Lean</span></div>
+    <div class="fact"><b>24 blocks a slot</b><span>built, signed and posted to four relays, about three a second, all day</span></div>
+    <div class="fact"><b>Block 26513991</b><span>built in the trust domain on Google Cloud and proposed, 28 November 2026. It was paid for</span></div>
+  </div>
+
+  <section id="claim">
+    <div class="eyebrow">The claim, and how narrow it is</div>
+    <h2>Less inside. Not yet "less to trust".</h2>
+    <p class="wide">The claim is about what sits inside the trust domain and can therefore read a
+      transaction there: one program of this size and kind, and not a Linux image. The network card's
+      driver, Ethernet, IP, TCP, DNS, TLS 1.3, X.509, HTTP, the EVM, the Merkle-Patricia trie, BLS signing
+      and the builder itself are all Lean in that one program. Lean is a language in which a program cannot
+      reach memory it was not given. That is all "Lean" means here: it does not mean proved, and nothing
+      proved covers the builder.</p>
+    <p class="wide">It is not a claim that somebody who sends this builder a sealed transaction has less
+      to trust in all. The machine that feeds the guest is outside it, measured by nobody, and chooses
+      every other transaction of every block. What it can learn about a sealed transaction that way has
+      not been tested by anyone. Until someone other than us has tried, read "less inside", and not "less
+      to trust".</p>
+  </section>
+
+  <section id="how">
+    <div class="eyebrow">How it works</div>
+    <h2>The node stays outside. That is what lets the inside be small.</h2>
+    <p class="wide">A builder normally carries a whole execution client and the chain's state. This one
+      holds no state. Each round it is handed transactions together with proofs of the state they touch,
+      checks the proofs, and builds on that.</p>
+    <div class="cards">
+      <div class="card out"><span class="when">1 · outside, ours, unmeasured</span><h3>The feeder</h3>
+        <p>An ordinary machine with an ordinary node. About three times a second it sends the guest the
+          transactions pending in public and proofs of the state they read. It sees the public flow and
+          chooses what the guest sees of it.</p></div>
+      <div class="card"><span class="when">2 · inside the trust domain</span><h3>The guest</h3>
+        <p>Checks the proofs, orders the transactions by what they pay, runs them, and signs a bid for
+          the block with a key it drew when it started and that never leaves it. Then it posts the block
+          to the relays itself, over its own TLS.</p></div>
+      <div class="card out"><span class="when">3 · outside, as for any builder</span><h3>Four relays</h3>
+        <p>Flashbots, Ultrasound, Aestus and Titan. Each sees every block whole, as it does from any
+          builder, and publishes every bid beside the key that signed it.</p></div>
+      <div class="card out"><span class="when">4 · outside</span><h3>The proposer</h3>
+        <p>Takes the best bid a relay offers it. Ours is taken when it pays most, which, from the public
+          pool alone, it does not.</p></div>
+    </div>
+    <p class="wide" style="margin-top:18px">Private flow has to be sealed to the guest, so that the feeder
+      carries it without reading it. Anybody can do that through a <a href="send.html">door</a> that hands
+      the guest a sealed transaction and nothing else. Nobody outside this project has yet.</p>
+
+    <div class="table"><table>
+      <tr><th>What is in the 4.2 MB</th><th class="n">Share</th><th>Whose</th></tr>
+      <tr><td>The builder: engine, trie, TLS, bids, relays</td><td class="n">37.8%</td><td>this project's Lean</td></tr>
+      <tr><td>Lean's own library</td><td class="n">32.4%</td><td>Lean's</td></tr>
+      <tr><td>What is left of Jaune, an executable specification of the EVM</td><td class="n">18.6%</td><td>a third party's Lean, in a fork</td></tr>
+      <tr><td>The OS: card drivers, Ethernet to TCP, DNS</td><td class="n">9.0%</td><td>this project's Lean</td></tr>
+      <tr><td>Start-up, constants, relocations</td><td class="n">1.5%</td><td>the compiler's and linker's</td></tr>
+      <tr><td>C: allocator, reference counts, entry from firmware, device registers, the TDX calls</td><td class="n">0.8%</td><td>this project's</td></tr>
+    </table></div>
+  </section>
+
+  <section id="block">
+    <div class="eyebrow">What it has done</div>
+    <h2>A block built on Google Cloud is on mainnet</h2>
+    <div class="block">
+      <dl>
+        <dt>Block</dt><dd><a href="https://etherscan.io/block/26513991">26513991</a>, slot 15754002, 28 November 2026, 13:20:47 UTC</dd>
+        <dt>Hash</dt><dd><code>0x584d6d7822c32cdd7fa383f254038426fcc3c643565ec28edee3d3a8269ed0b2</code></dd>
+        <dt>Extra data</dt><dd><code>cluck</code></dd>
+        <dt>Holds</dt><dd>107 transactions, 45.7 million gas</dd>
+        <dt>Built by</dt><dd>the guest on a Google Cloud TDX machine (<code>c3-standard-4</code>, us-central1), the same one that bids today</dd>
+        <dt>Signed by</dt><dd>the guest's builder key <code>0x96b099d9…928e3604</code>, the key <a href="live.html">its quote names</a></dd>
+        <dt>Listed by</dt><dd>
+          <a href="https://boost-relay.flashbots.net/relay/v1/data/bidtraces/proposer_payload_delivered?slot=15754002">Flashbots' relay</a> and
+          <a href="https://us-global.titanrelay.xyz/relay/v1/data/bidtraces/proposer_payload_delivered?slot=15754002">Titan's</a>,
+          as delivered under that key</dd>
+        <dt>Bid</dt><dd>0.01176 ETH, of which 0.01 was a payment added on purpose</dd>
+      </dl>
+    </div>
+    <p class="wide" style="margin-top:18px"><strong>It won because it was paid for.</strong> The project's
+      owner told the feeder to add 0.01 ETH to the bids of five slots, and the first of the five was
+      taken. The payment is the block's first transaction. It was signed outside the guest, by the feeder,
+      with a test wallet's key: the guest signs no payment and does not know one from any other
+      transaction. Without it the block was worth 0.00176 ETH, and the best other bid Titan lists for
+      that slot was 0.00422 ETH.</p>
+    <p class="wide"><strong>What it shows:</strong> a block built in that guest, on that cloud, is one that
+      relays pass on and a proposer signs, and it is valid on the chain. <strong>What it does not
+      show:</strong> that such a block wins unpaid. No sealed transaction was in it.</p>
+    <p class="wide">Three earlier blocks (26463293, 26465583 and 26470277, 21 and 22 November) were built
+      by earlier images on a machine of the project's own, each paid for with 0.02 ETH. Two of them hold
+      a transaction that was sealed to the guest and that the feeder carried without seeing. In both the
+      sender and the feeder were the same program on the same machine, so they show that the parts fit,
+      and nothing about an adversary.</p>
+  </section>
+
+  <section id="numbers">
+    <div class="eyebrow">Numbers</div>
+    <h2>A day of bids, unpaid</h2>
+    <p class="wide">From 02:14 UTC on 27 November to 02:51 on the 28th, 24.6 hours, on Google Cloud, with
+      nothing added to any bid:</p>
+    <div class="facts" style="margin-top:14px">
+      <div class="fact"><b>7,277 of 7,384</b><span>slots with a bid sent. In 106 of the rest no relay we post to held the proposer's registration</span></div>
+      <div class="fact"><b>160,542</b><span>blocks sent to relays. A node's validator judged every one valid afterwards</span></div>
+      <div class="fact"><b>0.35 s</b><span>a round: request in, block built, signed and posted. 24 rounds a slot at the median</span></div>
+      <div class="fact"><b>82 of 438,503</b><span>answers from relays were refusals, 13 of them for a bid that came after its slot was over</span></div>
+    </div>
+    <div class="table"><table>
+      <tr><th>Against the block the proposer took, over 6,290 slots a relay lists</th><th class="n">Ours</th><th class="n">Taken</th></tr>
+      <tr><td>Worth, at the median</td><td class="n">0.0028 ETH</td><td class="n">0.0065 ETH</td></tr>
+      <tr><td>Worth, summed over the day</td><td class="n">21 ETH</td><td class="n">166 ETH</td></tr>
+      <tr><td>Ours as a share of the taken block</td><td class="n" colspan="2">45% at the median, 13% summed</td></tr>
+      <tr><td>Slots where ours was worth as much or more</td><td class="n" colspan="2">1</td></tr>
+    </table></div>
+    <p class="wide" style="margin-top:16px">The summed figure is the truer one: the slots that pay are far
+      above the median, and in those ours is furthest behind. The reason is what it sees. A winning block
+      is mostly transactions sent to builders in private, and this builder has only the public pool.</p>
+    <p class="wide"><strong>When the bids are made.</strong> The taken bids that relays give a time for
+      reached their relay about a second after the slot began. Ours stopped about a second before the slot
+      until 27 November, then went on to 0.6 s after it, and since 02:58 UTC on the 28th to 0.9 s after.
+      Inside each slot, the last block of the later rule against the last one the first rule would have
+      sent: 12% more at 0.6 s, and 15% more at 0.9 s over ten hours. The later rule cost 26 refusals for
+      lateness in those ten hours, and no slot went without a bid for it.</p>
+  </section>
+
+  <section id="trust">
+    <div class="eyebrow">Trust</div>
+    <h2>Who you are still trusting</h2>
+    <ol class="plain">
+      <li><strong>Intel:</strong> the processor, the TDX module, the quoting enclave. The processor's
+        random numbers are the only source the keys are drawn from.</li>
+      <li><strong>Google's firmware.</strong> It starts the guest, stays in its address space, and could
+        read its keys. It is measured, and Google signs for the measurement, which is checked. What it
+        does is Google's word: nobody else builds it.</li>
+      <li><strong>The image</strong>, whose measurement anyone can work out from the file.</li>
+      <li><strong>Four certificate roots</strong> the image holds for the relays' names.</li>
+      <li><strong>What built the image:</strong> Lean's compiler, the C compiler and linker that come
+        with it, and the ready-made modules it links against.</li>
+    </ol>
+    <p class="wide" style="margin-top:16px">Not trusted with a transaction's bytes: Google as host (but
+      for its firmware), the cloud's network, and the feeder. What they can still do is said at length in
+      the <a href="https://github.com/posix4e/cluck/blob/main/THREAT_MODEL.md">threat model</a>. In short:
+      any of them can starve the guest, and the feeder chooses the rest of every block.</p>
+
+    <div class="note"><strong>What this is not.</strong>
+      It is not a competitive builder: it sees only the public pool, and the one block proposers have
+      taken from Google Cloud was paid for.
+      It guards nothing private yet: the running instance holds a key for signing bids, which guards no
+      money, and no stranger has sent it a sealed transaction.
+      It is not the same shape as a builder with its node inside: one machine outside chooses every other
+      transaction of the block, and what it can find out about a sealed one by doing so is unmeasured.
+      Sealing hides a transaction's bytes from that machine, not what the transaction does.
+      It is not fast: one core, one block at a time, a third of a second a round.
+      And it is not old or reviewed: the first commit is of 16 November 2026, and nobody outside the
+      project has read any of it.</div>
+  </section>
+
+  <section id="check">
+    <div class="eyebrow">Check it yourself</div>
+    <h2>From a bid at a relay back to the source</h2>
+    <p class="wide">A relay lists every bid it is sent beside the key that signed it. The guest says, in a
+      TDX quote, that the key is its own. So a bid can be followed back to source with nothing from us but
+      the repository.</p>
+    <ol class="plain">
+      <li><strong>The bid.</strong> Ask a relay for the bids under the builder's key.
+        <a href="live/builder.txt"><code>live/builder.txt</code></a> has the key and a link.</li>
+      <li><strong>The key is the guest's.</strong> <a href="live.html">This page</a> checks the quote in
+        your browser, with nothing sent anywhere, as far as a page can: it takes the image's measurement
+        from a file of ours.</li>
+      <li><strong>The guest is this program, on Google's firmware.</strong> Build the image from the
+        commit <code>live/builder.txt</code> names and run <code>scripts/gce-check</code> on it. It asks
+        whether the quote's signatures lead to Intel's root, whether Intel calls the platform up to date
+        today, whether the measurement in the quote is what Google's firmware measures for that file,
+        whether Google signed for the firmware, and whether the quote is of that key.</li>
+      <li><strong>The program is this source.</strong> Built from nothing on a machine of GitHub's, the
+        image is the same file byte for byte, and the quote passes against the file built there. The
+        runs are <a href="https://github.com/posix4e/cluck/actions/workflows/image.yml">public</a>.</li>
+    </ol>
+    <p class="wide" style="margin-top:16px">Every key the builder has bid under on Google Cloud, eleven so
+      far, is in <a href="https://github.com/posix4e/cluck/blob/main/REPORT.md#check-it-yourself">the
+      report</a>, with the first and last slot bid under each.</p>
+
+    <h3 style="margin-top:28px">Build it</h3>
+    <p class="wide">Linux on x86-64 and Lean through elan. The image comes out the same file each time.</p>
+<pre>git clone https://github.com/posix4e/cluck && cd cluck/evm
+# fetch mathlib's ready-made modules first: the command is in evm/README.md
+lake build
+scripts/build-efi tdx                 # .lake/build/efi/tdx/evm-os/BOOTX64.EFI</pre>
+    <p class="wide" style="margin-top:14px">Starting it on a TDX machine of your own or on Google Cloud,
+      checking a quote against the file, and feeding it from a node are each a few commands, under
+      <a href="https://github.com/posix4e/cluck/blob/main/REPORT.md#reproduce-it">"Reproduce it"</a> in
+      the report.</p>
+  </section>
+
+  <footer>
+    <p>Written 28 November 2026. The numbers here are from
+      <a href="https://github.com/posix4e/cluck/blob/main/REPORT.md">REPORT.md</a>, which has the rest of
+      them and says where each comes from; where this page and the report differ, the report is right.
+      What is weak is said at length in
+      <a href="https://github.com/posix4e/cluck/blob/main/THREAT_MODEL.md">THREAT_MODEL.md</a>, and what
+      is done and not done in <a href="https://github.com/posix4e/cluck/blob/main/TODO.md">TODO.md</a>.
+      <a href="./">The OS underneath</a> has a page of its own.</p>
+  </footer>
+</main>
+</body>
+</html>

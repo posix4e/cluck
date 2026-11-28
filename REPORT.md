@@ -1,7 +1,7 @@
 # A block builder in a trust domain, with far less inside it
 
 A report on [`evm/`](evm/README.md), for people who build Ethereum blocks in trusted execution
-environments. Written 2026-11-24 and revised on the 25th, 26th and 27th. The runs the numbers come from are recorded in
+environments. Written 2026-11-24 and revised on the 25th, 26th, 27th and 28th. The runs the numbers come from are recorded in
 [TODO.md](TODO.md), most with their commands; some figures were counted from the runs' own records for
 this report and stand nowhere else. Those records are files on the machine that made them and are not
 published; the programs that count them are (`evm/builder/tools/`), and so are the keys every bid was signed with (under "Check it yourself"). What is weak is said here in short. It is said at length in the part of
@@ -313,8 +313,25 @@ Three blocks built in the guest are on mainnet. One (26463293) was built from th
 without seeing. All three won because a test wallet paid the proposer 0.02 ETH, in a transaction the
 feeder signed and proposed with the rest; the guest signs no payment. In both sealed cases the sender and the feeder were one program on one
 machine, so they show that the parts fit and nothing about an adversary. They were built on one machine
-here, where host and feeder are the same machine, by the images of 2026-11-21 and 22. No block built on
-Google Cloud, or by the code now running, has been proposed.
+here, where host and feeder are the same machine, by the images of 2026-11-21 and 22.
+
+A fourth was built in the trust domain on Google Cloud, by the image now running, and proposed: block
+26513991, slot 15754002, 13:20:47 UTC on 2026-11-28, hash
+`0x584d6d7822c32cdd7fa383f254038426fcc3c643565ec28edee3d3a8269ed0b2`, extra data `cluck`. It holds
+107 transactions and used 45.7 million gas. Flashbots' relay and Titan's list it as delivered under
+the builder key `0x96b099d9…928e3604`, the key in the table under "Check it yourself" and the one
+the running guest's quote names. It was taken because it was paid for, like the three before it. The
+owner told the feeder to add 0.01 ETH to the bids of five slots (the button `THREAT_MODEL.md`
+describes), and the first of the five was taken: the bid was 0.01176 ETH, of which 0.01 was that
+payment, the block's first transaction, signed by the feeder with the test wallet's key and proposed
+with the rest from the public pool. The guest signs no payment and does not know one from any other
+transaction. Without it the block was worth 0.00176 ETH, and the highest bid not ours that Titan's
+list holds for the slot was 0.00422 ETH. The slot was one of the few where the guest starts over on
+a large block: three rounds and not twenty-five, the last answered 0.42 s before the slot began and
+at Flashbots' relay 1.03 s before it. The next four slots' bids carried no payment, and the feed went
+on as before. What this shows: a block built in that guest, on that cloud, is one that relays hand on
+and a proposer signs, and it is valid on the chain. What it does not show: that such a block wins
+unpaid. No sealed transaction was in it.
 
 ## Numbers
 
@@ -586,7 +603,8 @@ Where this is thinner than it looks:
   feeder. Until then the claim is the narrow one at the top.
 - **It is not fast.** One core, one block at a time, a third of a second a round. Its last bid of a
   slot reaches a relay about 0.6 s after the slot begins (0.4 s until 2026-11-28); of 88 taken
-  bids looked up, 85 reached theirs later than 0.85 s after (under the numbers).
+  bids looked up, 85 reached theirs later than 0.85 s after (under the numbers). The one block of
+  its own that a proposer took from Google Cloud was paid for (under what it does).
 - **A slot's last round can come to nothing, and the bid before it then stands.** A slot's last
   round is begun as late as will fit. On earlier images its block sometimes came out with nothing in
   it and was kept back, and the slot's last bid was then about three seconds old: in one slot of

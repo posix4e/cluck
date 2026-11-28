@@ -1327,10 +1327,34 @@ by the guest itself.
       stand-in's copies were removed.
       **The feed on Google Cloud runs with `--button` since 2026-11-27 15:52 UTC** (the test
       wallet's key, which held 0.227 ETH then): its first nine slots had a bid each, 182
-      blocks sent, all valid, no payment in any, and the button said nothing armed. No
-      press has been made there.
-      Not run: a press against the running builder, which spends;
-      a press that is taken, and the feed going on after it. Not built: a page with the button on
+      blocks sent, all valid, no payment in any, and the button said nothing armed.
+      **Pressed once, by the owner, and a block taken from Google Cloud** (2026-11-28
+      13:20:36 UTC: `builder/press /data/eth/shadow/gce-live KEY.pem 0.01 5`, slots 15754002
+      to 15754006). The first of the five was taken: block 26513991, slot 15754002, 13:20:47
+      UTC, hash `0x584d6d7822c32cdd7fa383f254038426fcc3c643565ec28edee3d3a8269ed0b2`, extra
+      data `cluck`, 107 transactions, 45,673,701 gas, fee recipient `0x156ffF06…7c7ED0`.
+      - Checked: the node here has the block under that hash, and the hash is the one in the
+        feed's record of the slot (`landed`); Flashbots' relay and Titan's list it as
+        delivered, slot, hash, 107 transactions and value 0.011759120049559639 ETH, under
+        the running guest's key `0x96b099d9…928e3604`; Ultrasound's, Aestus' and
+        Agnostic's list nothing for the slot. The payment is the block's first transaction
+        (`0x9ebbf0e8…a434537`), 0.01 ETH from the test wallet, status 1, 60,717 gas at 2.04
+        gwei, 0.000124 ETH; the wallet went from 0.22714 to 0.21702 ETH. The same payment
+        hash stands in all three rounds of the slot (signed once, as mended on 11-27).
+      - The slot: three rounds, for the guest was starting over on large blocks (the second
+        used 56 million gas): answers 8.64, 5.63 and 0.42 s before the slot began, worth
+        0.01029, 0.01043 and 0.01176 ETH with the payment in each, all four relays answering
+        200 to each. Flashbots' list has the last at 1.03 s before the slot and no bid of
+        any other builder for it; Titan's has 2,897 bids of 36 builders, the highest not
+        ours 0.00422 ETH. Without the payment ours was worth 0.00176.
+      - After: the four slots that followed carried no payment (a press ends when a block
+        of it is taken), the button says nothing armed and 0.01 of 0.05 ETH spoken for in
+        24 hours, the feed bid on in every slot looked at (to 15754008), and the service
+        did not stop.
+      - Not shown by it: a block winning unpaid; a sealed transaction in a block from
+        Google Cloud; a press that is not taken in any of its slots and runs out; when the
+        proposer asked.
+      Not built: a page with the button on
       it (it is a command), and anything that tells a sender their transaction went in.
     - **The door is open** (2026-11-25 18:41 UTC; `scripts/gce-door`, which says what it makes):
       <https://35-225-124-179.sslip.io>, on an e2-micro with Debian 12 beside the guest

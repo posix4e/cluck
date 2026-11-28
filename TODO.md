@@ -1888,11 +1888,49 @@ by the guest itself.
           the median (a tenth under 0.67, a tenth over 1.43), half of it waiting and half the
           round, which takes 0.51 s where the others take 0.33 s. So from about 0.45 s before
           the slot to 0.55 s after it one bid is made, at the end.
-        - Not done: later than 0.6 s. Three taken bids of 88 were in by 0.73 s, and what
-          relays answered above says they would take ours later; a last bid back at 0.9 s
-          would be 0.3 s later, 2% to 3% of its worth at the 8% a second. Left as it is for
-          the day of numbers. Not looked at: whether a bid that reaches a relay that late is
-          judged by it in time to be offered.
+        - **The day of numbers at 0.6 s**, 02:14:35 UTC on the 27th to 02:51:11 on the 28th
+          (25 records; `day.py`, and `gapday.py`, which asks each relay for its list by the
+          page and so can take a day at once): 7,384 slots, a bid in 7,277 (98.6%), 106 with
+          no registration, one built and nothing sent (the slot the feed first began in),
+          none with no record. 174,950 blocks built, 166,271 gone on, 160,542 sent, all
+          judged valid. 24 rounds a slot, a round 0.35 s (a tenth over 0.58 s, 0.21 s of it
+          the guest's), the last bid's answer 0.54 s after the slot began. 438,503 answers:
+          401,107 of 200, 37,267 of 202, 47 posts unanswered, 82 refusals (25 of 429; 23
+          "trusted list"; five "blacklisted address"; 13 for a past slot; four "payload
+          attributes not (yet) known"; two "could not find parent block"; ten of 500, 502,
+          503 or 520). No block taken by a proposer; no press; the feed never stopped itself.
+          - By how late the answers were back (after the slot began): under 0.5 s, 1,873
+            rounds, 5,629 answers of 200 or 202 and one for a past slot ("submission for past
+            slot", a third wording, at 0.42 s); 0.5 to 0.7 s, 4,178 rounds, 13,368 and four
+            (0.53 s from two relays in slot 15749308, 0.62 and 0.68 s); 0.7 to 1 s, 912
+            rounds, 3,019 and none; later, 81 rounds, 246 and eight, all Titan's "late sim,
+            already on next slot" at 1.30 to 1.63 s. So the refusals under a second are a
+            relay knowing the slot's block already, and Titan's begin at 1.3 s.
+          - Against the taken blocks (6,290 slots a relay lists): 44.6% at the median, 12.8%
+            summed (0.00282 against 0.00653 ETH at the median, 21.2 against 166.0 summed).
+            Worth more once: slot 15748374, ours 0.00555 with its answer back at 0.55 s, the
+            taken one 0.00549 through agnostic-relay.net, which is not posted to. With
+            0.005 ETH added ours would have been above in 4,134 (66%), with 0.01 in 5,163
+            (82%); the hour of 02:14 alone had given 48% and 70%.
+          - Inside the slots (7,234): the last bid 12.1% more summed than the last one whose
+            answer was back 0.7 s before the slot, 9.9% at the median, 1.47 s apart.
+          - `reached.py`, 30 slots in each of the hours from 05:14, 13:13 and 22:52 (86 with
+            a bid): our last listed at Flashbots' or Ultrasound's relay 0.40 s after the
+            slot began at the median, 66 of the 86 after it; the 45 taken bids with a time
+            1.02 s after, a tenth by 0.86 s, four by 0.85 s, none before the slot.
+          - Last rounds with nothing in them, outside the slots a feed's hour began in: three
+            (15745769 above, 15747155, 15750747). Slots with a block past half the gas cap:
+            89 of 7,384 (1.2%), six rounds at the median. Not mended. In 11 of the 24 hourly
+            restarts the new run's first round for the slot it began in was empty; the run
+            before it had bid in that slot.
+        - **Later: 0.9 s, since 02:58:31 UTC on 2026-11-28** (`--into 0.9` in the service's
+          command; the owner's go of 11-27, to follow the day of numbers). What it rests on:
+          none of 912 rounds back 0.7 to 1 s after the slot was refused for coming late, and
+          the taken bids reach their relays at 1.02 s. What it risks: more last rounds past
+          Titan's 1.3 s. To be judged after 300 slots by the same count inside the slot, the
+          refusals and `reached.py`; back to 0.6 s, and said here, if it gains nothing or
+          costs bids. Not looked at: whether a bid that reaches a relay that late is judged
+          by it in time to be offered.
         - Found on the way: of the 0.21 s the guest takes over a round on Compute Engine, about
           0.16 s is its waiting for the relays' answers before it answers the feeder (0.05 s
           here, where the stand-in answers at once). Answering first and telling the relays'
@@ -2180,7 +2218,7 @@ by the guest itself.
     transactions go in, which this builder has not made so far), or fees to an account of the
     guest's own and a last transaction signed in the guest that pays the proposer (new code
     inside, and that transaction's gas comes out of every bid).
-  - Spent so far on Compute Engine for this: about twenty-three dollars by 2026-11-27 00:00 UTC (of
+  - Spent so far on Compute Engine for this: about thirty dollars by 2026-11-28 03:00 UTC (of
     the 500 a month agreed; reckoned from hours run, not read off a bill); the builder's machine
     is 23 cents an hour, about 170 dollars a month, and the door's about ten a month. A subnet (`silo-10-0-2`), a
     firewall rule for this machine's address alone (`silo-test-from-home`), a second network

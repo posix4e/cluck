@@ -320,7 +320,7 @@ Google Cloud, or by the code now running, has been proposed.
 
 **What runs now, and the record whole.** The image described above has bid since 23:53 UTC on
 2026-11-26, and since 02:14 on the 27th its rounds go on into the slot; the list after this paragraph
-has its numbers, which are of hours and not yet of days. All
+has its numbers, a day of them among them. All
 the images together, from 18:30 UTC on 2026-11-24 to 23:48 on the 26th: 15,991 slots went by and a bid
 was sent in 13,028. Of the 2,963 without, 2,706 have no record (the feed was stopped, 2,515 of them
 from 06:40 to 15:03 on the 26th, or an image was being changed), in 201 no relay held a
@@ -364,6 +364,26 @@ win:
   no more for a slot once a relay says so. So in three hours no relay refused by the clock.
   (The next came at 09:46: Titan's relay, "late sim, already on next slot", to a bid whose
   answers were back 1.35 s after its slot began.)
+- **A day of that**, 02:14 UTC on the 27th to 02:51 on the 28th, 24.6 hours in 25 runs of the
+  feed (`builder/tools/day.py`): 7,384 slots went by and a bid was sent in 7,277, 98.6%. In 106
+  no relay held a registration from the proposer, and one was the slot the feed first began in;
+  none has no record. 174,950 blocks built, 166,271 of them going on from the block before, and
+  160,542 sent, every one judged valid afterwards. 24 rounds a slot, 0.35 s a round (one in ten
+  over 0.58 s), and the answer to the slot's last bid back 0.54 s after the slot began, at the
+  median. Of 438,503 answers 401,107 were 200 and 37,267 were 202; 82 were refusals and 47 posts
+  had no answer. The refusals: 25 of 429 ("too many requests"); 23 "builder not in proposer's trusted
+  list" and five "blacklisted address", which are about the proposer and the block; 13 that
+  said the slot was past; four "payload attributes not (yet) known" and two "could not find
+  parent block"; ten of 500 or more. The 13 are all the refusals for coming late in the day:
+  eight from Titan's relay, each to a bid whose answers were back 1.3 s or more after its slot
+  began, and five from two other relays at 0.42 to 0.68 s, in four slots. Of the 912 rounds
+  whose answers were back 0.7 to 1 s after the slot began none was refused so. In three slots
+  besides the one the feed began in, the last round came out with nothing in it and the slot's
+  bid was an earlier one; 89 slots (1.2%) had a block past half the gas cap, which the guest
+  builds from nothing each round, and those had six rounds at the median. No proposer took a
+  block, and nothing was paid for one. (The feeder can add a payment to the proposer to a slot's
+  blocks when its owner tells it to, as `THREAT_MODEL.md` says; from 15:52 it ran able to, and
+  was not told to.)
 - **Before it went there, 1,000 slots where this is developed**, in a trust domain against the test relay,
   on the image's twin for that relay (the same code but for the list of relays and their
   certificates' roots, so another file with another measurement)
@@ -387,9 +407,17 @@ win:
   from nothing and 34 ms going on. Of the 34, at the median of each part: 1 to read the request, 12 to the last
   transaction, 13 to end the block (the state root, mostly) and 9 to sign.
 
-**Against the blocks proposers took**, as relays' public lists give what each paid. Measured eleven
-times, over up to 875 slots a relay listed each: ours was 18% to 41% of theirs at the median, and 4.5% to 31%
-summed. Eight of them, the largest and the latest:
+**Against the blocks proposers took**, as relays' public lists give what each paid. Measured twelve
+times, over up to 6,290 slots a relay listed each: ours was 18% to 45% of theirs at the median, and 4.5% to 31%
+summed. Nine of them, the largest and the latest:
+
+- From Google Cloud over a day, the rounds going on into the slot (02:14 UTC on the 27th to 02:51 on
+  the 28th; 6,290 slots a relay listed of the 7,276 bid in, `builder/tools/gapday.py`): ours 45% of
+  theirs at the median and 13% summed. The taken blocks paid 0.0065 ETH at the median and 166 ETH in
+  all, ours 0.0028 and 21. In one slot ours was worth more, 0.00555 ETH against 0.00549, and the
+  proposer took the other, through a relay this builder does not post to. With 0.005 ETH added ours
+  would have been above the taken block in 66% of the slots, and with 0.01 ETH in 82%; that is
+  reckoned, and no bid was made with anything added.
 
 - From Google Cloud on the image that runs now (its first hour, from 23:53 UTC on 2026-11-26; 255
   slots a relay listed): ours 41% of theirs at the median and 30% summed; 90% at best, never more.
@@ -422,9 +450,15 @@ measured against. Since then the last of ours that Flashbots' relay lists reache
 the slot began, at the median of 57 slots looked up. What that is worth is measured inside each
 slot, where the hour's prices cancel: over 283 slots of the first hour after 02:14, the slot's last
 block paid 11% more, summed, than the last one that would have been sent under the old rule (8.8%
-at the median; the two blocks were 1.5 s apart). So going that much later is worth about a tenth.
+at the median; the two blocks were 1.5 s apart), and over 7,234 slots of the whole day from 02:14
+12% more (9.9% at the median, a quarter of the slots under 4.8% and a quarter over 17.7%). So
+going that much later is worth about a tenth. Looked up again in 86 slots of three hours of that
+day (from 05:14, 13:13 and 22:52): the last of ours that Flashbots' or Ultrasound's relay lists
+reached it 0.40 s after the slot began at the median, and the 45 taken bids with a time reached
+their relays 1.02 s after it, four of them by 0.85 s and none before the slot.
 It still ends half a second or more before most of the taken bids were in, and what going later
-again would be worth has not been measured.
+again would be worth has not been measured: since 02:58 UTC on the 28th the rounds go on 0.3 s
+longer, and that has no numbers yet.
 
 The summed figure is the truer one: the slots that pay are far above the median, and in those ours is
 furthest behind. Of what the taken blocks held that was public a second before the slot, ours held 84%
